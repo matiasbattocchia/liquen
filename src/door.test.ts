@@ -1,8 +1,8 @@
 /**
  * door.test.ts — the syscall boundary (§9): every verb a script speaks — send and search
- * alike — is a gated tool_use in the caller's name, settled by the existing act machinery
- * on the caller's scoped port. One path: a policy on any tool rules scripts and model
- * alike, and the answers land in the log for the mind, never in the script.
+ * alike — is a gated tool_use in the caller's name, answered by the branch act answers a
+ * fresh call with, on the caller's scoped port. One path: a policy on any tool rules
+ * scripts and model alike, and the script reads the answer the model would have read.
  *
  * Every test that speaks through the door runs with `sanitizeResources: false`: the client
  * holds its socket for the life of the process — a script's exit is its hang-up, and the
@@ -19,10 +19,10 @@ import {
 import { installDoors, MAX_PENDING_LINES, type Status, type Tune } from "./door.ts";
 import { wire } from "./attach.ts";
 import { bind, type Mu } from "./script.ts";
-import { type Log, openLog } from "./store/log.ts";
+import { openLog } from "./store/log.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { NOTHING, scoped } from "./policy.ts";
-import { type AgentConfig, xi } from "./xi.ts";
+import { type AgentConfig, answerCall, type Gate, relevant } from "./xi.ts";
 import { scripted } from "./testing.ts";
 import { textOf } from "./render.ts";
 import { lineOf } from "./describe.ts";
@@ -61,11 +61,23 @@ function cardFor(use: string): Draft<PermissionRequestEvent> {
   } as Draft<PermissionRequestEvent>;
 }
 
-async function up(policy?: Parameters<typeof scoped>[1]) {
+async function up(policy?: Parameters<typeof scoped>[1], gate: Gate = () => "allow") {
   const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
   const log = await openLog(`${dir}/log`);
   const slog = policy ? scoped(log, policy) : log;
-  const doors = await installDoors(dir, [{ ...AGENT, port: () => Promise.resolve(slog) }]);
+  const config: AgentConfig = {
+    ...AGENT,
+    model: "claude-test",
+    maxTokens: 1000,
+    gate, // the clinic's standing rule, compiled (§9)
+  };
+  const ports = { log: slog, docs: openFileDocs(dir), transport: scripted([]).transport };
+  const doors = await installDoors(dir, [{
+    ...AGENT,
+    port: () => Promise.resolve(slog),
+    // what main wires: the session's runner answers the call
+    answer: (_session, use, signal) => answerCall(use, config, ports, signal),
+  }]);
   // the client exactly as a script builds it: this module, bound to the folder it sits in
   const mu: Mu = bind(`${dir}/agents/ana`);
   const down = async () => {
@@ -73,20 +85,7 @@ async function up(policy?: Parameters<typeof scoped>[1]) {
     await log.close();
     await Deno.remove(dir, { recursive: true });
   };
-  return { dir, log, slog, mu, down };
-}
-
-/** One ordinary act invocation on the agent's own port — no model script: pendingOf finds
- *  the queued uses, the gate rules them, execute answers into the log (§2, §9). */
-async function act(dir: string, log: Log) {
-  const config: AgentConfig = {
-    agentId: "ana",
-    sessionId: "mind",
-    model: "claude-test",
-    maxTokens: 1000,
-    gate: () => "allow", // the clinic's standing rule, compiled (§9)
-  };
-  await xi(config, { log, docs: openFileDocs(dir), transport: scripted([]).transport });
+  return { dir, log, slog, mu, config, ports, down };
 }
 
 /** A world message, as a connector lands one — what a script's search reads back. */
@@ -105,24 +104,27 @@ function msg(address: string, text: string): Draft<MessageEvent> {
 }
 
 Deno.test({
-  name: "door: a script send is a tool_use in the agent's name, under a job turn",
+  name: "door: a script send is a tool_use in the agent's name, landed with its answer",
   sanitizeResources: false,
   async fn() {
     const { log, mu, down } = await up();
     try {
       const q = await mu.send({ to: "wa:+34600", text: "recordatorio" });
-      assertEquals(q.status, "queued");
       const [use] = await log.read({ types: ["tool_use"] }) as ToolUseEvent[];
       assertEquals(use.id, q.id);
       // identity is the runtime's (§9): the socket stamped it, the script never could
       assertEquals(use.agent, { id: "ana", session_id: "mind" });
-      // a turn no session ever held — act reads the use as fresh work, never as stolen
+      // a turn no session ever held: no step of the mind claims it
       assertMatch(use.payload.turn_id, /^job:/);
       assertEquals(use.envelope.conversation.address, "mind@ana");
       assertEquals(use.parts[0].data, {
         name: "send",
         input: { to: "wa:+34600", text: "recordatorio" },
       });
+      // the answer is the script's, and the log's, in the same write as its use
+      const [res] = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
+      assertEquals(res.payload.ref_id, q.id);
+      assertEquals(res.parts[0].data.output, q.output);
       // one connection, one run: a second send shares the turn
       const q2 = await mu.send({ to: "wa:+34600", text: "otra" });
       const uses = await log.read({ types: ["tool_use"] }) as ToolUseEvent[];
@@ -136,24 +138,19 @@ Deno.test({
 });
 
 Deno.test({
-  name: "door: a script search queues like its send — act answers it into the log",
+  name: "door: a script search answers with the page the model would read",
   sanitizeResources: false,
   async fn() {
-    const { dir, log, mu, down } = await up();
+    const { log, mu, down } = await up();
     try {
       await log.publish(msg("wa:+34600", "la cita es mañana"));
       await log.publish(msg("wa:+34611", "otra cosa"));
-      // never the rows: the ask is in the log, the answer belongs to the next turn
       const q = await mu.search({ text: "cita" });
-      assertEquals(q.status, "queued");
       const [use] = await log.read({ types: ["tool_use"] }) as ToolUseEvent[];
       assertEquals(use.parts[0].data, { name: "search", input: { text: "cita" } });
-      await act(dir, log);
-      const [res] = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
-      assertEquals(res.payload.ref_id, q.id);
       // the page is the window's grammar: the room by address, the sender as the window
       // marks them, the line as the window prints it
-      const page = res.parts[0].data.output as string;
+      const page = q.output as string;
       assertStringIncludes(page, 'address="wa:+34600">');
       assertStringIncludes(page, 'external="Juan"');
       assertStringIncludes(page, ">la cita es mañana</msg>");
@@ -168,7 +165,7 @@ Deno.test({
   name: "door: the scoped port is the door's law — writes refused, reads filtered (§6)",
   sanitizeResources: false,
   async fn() {
-    // the policy refuses the write ⇒ NOTHING lands — a search's ask is a write too
+    // the policy refuses the write ⇒ NOTHING lands — a search's call is a write too
     const denied = await up({ check: NOTHING });
     try {
       await assertRejects(() => denied.mu.send({ to: "x", text: "no" }), Error, "not writable");
@@ -176,23 +173,152 @@ Deno.test({
     } finally {
       await denied.down();
     }
-    // what the agent may not see, its scripts may not search up: act runs the queued
-    // search on the agent's own scoped port, so the hits are the agent's eyes, no wider
+    // what the agent may not see, its scripts may not search up: the search runs on the
+    // agent's own scoped port, so the hits are the agent's eyes, no wider
     const blind = await up({
       using: { sql: "events.conversation_address <> 'wa:secret'", params: {} },
     });
     try {
       await blind.log.publish(msg("wa:secret", "callado"));
       await blind.log.publish(msg("wa:+34600", "visible"));
-      const q = await blind.mu.search({});
-      await act(blind.dir, blind.slog);
-      const [res] = await blind.log.read({ types: ["tool_result"] }) as ToolResultEvent[];
-      assertEquals(res.payload.ref_id, q.id);
-      const page = res.parts[0].data.output as string;
+      const page = (await blind.mu.search({})).output as string;
       assertStringIncludes(page, ">visible</msg>");
       assertEquals(page.includes("callado"), false);
     } finally {
       await blind.down();
+    }
+  },
+});
+
+Deno.test({
+  name: "search: every line says where the session holds it — window, checkpoint, never",
+  sanitizeResources: false,
+  async fn() {
+    const { log, mu, down } = await up();
+    try {
+      const [old] = await log.publish([msg("wa:+34600", "presupuesto viejo")]);
+      // a muted chat's line: silenced, so no window or checkpoint ever held it
+      await log.publish({ ...msg("wa:+34611", "presupuesto callado"), extra: { muted: true } });
+      // the checkpoint stands for everything up to here
+      await log.publish({
+        ts: new Date().toISOString(),
+        type: "summary",
+        agent: { id: "ana", session_id: "mind" },
+        envelope: {
+          service: "local",
+          connection_address: "default",
+          conversation: { address: "mind@ana" },
+        },
+        payload: { covers: [old.id, (await log.read()).at(-1)!.id] },
+        parts: [{ type: "text", kind: "text", text: "Juan pidió presupuesto." }],
+      } as Draft<Event>);
+      await log.publish(msg("wa:+34600", "presupuesto nuevo"));
+      const page = (await mu.search({ text: "presupuesto" })).output as string;
+      assertMatch(page, /seen="checkpoint">presupuesto viejo</);
+      assertMatch(page, /seen="never">presupuesto callado</);
+      assertMatch(page, /seen="window">presupuesto nuevo</);
+    } finally {
+      await down();
+    }
+  },
+});
+
+Deno.test({
+  name: "search: calls are pages of their own, and an id reads one whole",
+  sanitizeResources: false,
+  async fn() {
+    const { log, mu, down } = await up();
+    try {
+      await log.upsertConnections([{ service: "whatsapp", address: "34911", agentId: "ana" }]);
+      await mu.send({ to: "wa:+34600", connection: "34911", text: "hola Juan" });
+      const failed = await mu.send({ to: "wa:+34699", text: "hola nadie" });
+      assertEquals(failed.is_error, true);
+      // the call or its answer matches, newest last, each line its handle and its answer
+      const page = (await mu.search({ calls: true, text: "hola" })).output as string;
+      const lines = page.split("\n");
+      assertEquals(lines.length, 2);
+      assertMatch(lines[0], /^<call id="[0-9a-f]{6}" at="[^"]+" seen="window">send\(to: /);
+      assertStringIncludes(lines[0], "→ sent · id");
+      assertStringIncludes(lines[1], "— wa:+34699 is new here");
+      assertEquals(
+        ((await mu.search({ calls: true, text: "is new here" })).output as string)
+          .split("\n").length,
+        1,
+      );
+      // messages' own filters are not a call's
+      const wrong = await mu.search({ calls: true, in: "wa:+34600" });
+      assertEquals(wrong.is_error, true);
+      assertStringIncludes(String(wrong.output), "narrow messages");
+      // a call by its handle, or by its answer's, whole
+      const handle = lines[1].match(/id="([0-9a-f]{6})"/)![1];
+      const one = (await mu.search({ id: handle })).output as string;
+      assertStringIncludes(one, "which of your accounts writes to them");
+      const [res] = (await log.read({ types: ["tool_result"] })).filter((r) =>
+        r.payload?.ref_id === failed.id
+      );
+      assertEquals((await mu.search({ id: res.id })).output, one);
+      // a line by its handle, with its neighbours
+      const sent = (await log.read({ conversation: "wa:+34600" }))[0];
+      const line = (await mu.search({ id: sent.id.replaceAll("-", "").slice(-6) }))
+        .output as string;
+      assertStringIncludes(line, ">hola Juan</msg>");
+    } finally {
+      await down();
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a call that asks answers pending_approval, and the card is up",
+  sanitizeResources: false,
+  async fn() {
+    const { log, mu, down } = await up(undefined, (name) => name === "send" ? "ask" : "allow");
+    try {
+      await log.upsertConnections([{ service: "whatsapp", address: "34911", agentId: "ana" }]);
+      const q = await mu.send({ to: "wa:+34600", connection: "34911", text: "¿confirmo?" });
+      assertEquals((q.output as { status: string }).status, "pending_approval");
+      const [card] = await log.read({ types: ["permission_request"] }) as PermissionRequestEvent[];
+      assertEquals(card.payload.ref_id, q.id);
+      // nothing went out: the ruling, and the run it allows, are the mind's
+      assertEquals(await log.read({ conversation: "wa:+34600" }), []);
+    } finally {
+      await down();
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a call that names its bash call carries it, and its answer wakes nobody",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { dir, log, config, down } = await up();
+    try {
+      const client = await rawClient(dir);
+      const bad = await client.request({ op: "call", tool: "search", bash: 3 });
+      assertEquals(bad.ok, false);
+      const bash = "01a0fd7f-cde6-7000-8000-412733bbb999";
+      const r = await client.request({ op: "call", tool: "search", input: {}, bash });
+      assertEquals(r.ok, true);
+      const [use] = await log.read({ types: ["tool_use"] }) as ToolUseEvent[];
+      const [res] = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
+      assertEquals(use.extra?.bash, bash);
+      assertEquals(res.extra?.bash, bash);
+      // neither row is a reason to look: the script holds the answer
+      assertEquals(relevant(config, use), false);
+      assertEquals(relevant(config, res), false);
+      client.conn.close();
+      // a script inside a bash call names it without being told: the job's own variable
+      Deno.env.set("LIQUEN_JOB", "01a0fd7f-cde6-7000-8000-412733bbb998");
+      try {
+        await bind(`${dir}/agents/ana`).search({});
+      } finally {
+        Deno.env.delete("LIQUEN_JOB");
+      }
+      const uses = await log.read({ types: ["tool_use"] }) as ToolUseEvent[];
+      assertEquals(uses.at(-1)!.extra?.bash, "01a0fd7f-cde6-7000-8000-412733bbb998");
+    } finally {
+      await down();
     }
   },
 });
@@ -514,30 +640,21 @@ Deno.test({
 });
 
 Deno.test({
-  name: "door → act: the existing machinery gates, executes, and answers a script's send",
+  name: "door: a script's send goes out by the branch act runs, and its search reads it back",
   sanitizeResources: false,
   async fn() {
-    const { dir, log, mu, down } = await up();
+    const { log, mu, down } = await up();
     try {
       // first contact names the account it goes out on
       await log.upsertConnections([{ service: "whatsapp", address: "34911", agentId: "ana" }]);
       const q = await mu.send({ to: "wa:+34600", connection: "34911", text: "mañana a las 10" });
-      await act(dir, log);
-      const [res] = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
-      assertEquals(res.payload.ref_id, q.id);
-      assertMatch(
-        String(res.parts[0].data.output),
-        /^sent · id [0-9a-f]{6} — the service delivers it/,
-      );
+      assertMatch(String(q.output), /^sent · id [0-9a-f]{6} — the service delivers it/);
       const sent = (await log.read({ conversation: "wa:+34600" })) as MessageEvent[];
       // the dispatched message carries the job turn — the model's voice rules apply (§3)
       assertMatch(String(sent[0].payload?.turn_id), /^job:/);
-      // and a script's search reads its own work back — through the same door, next turn
+      // and the next call reads that work back at once
       const qs = await mu.search({ in: "wa:+34600" });
-      await act(dir, log);
-      const results = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
-      const found = results.find((r) => r.payload.ref_id === qs.id)!;
-      assertStringIncludes(found.parts[0].data.output as string, ">mañana a las 10</msg>");
+      assertStringIncludes(qs.output as string, ">mañana a las 10</msg>");
     } finally {
       await down();
     }

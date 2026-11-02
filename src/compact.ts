@@ -37,6 +37,7 @@ import {
   mediaTokens,
   outcomeLine,
   ownVoice,
+  scripted,
   silenced,
   silent,
   textOf,
@@ -263,6 +264,8 @@ function transcript(
   let previous: string | undefined;
   const lines: string[] = [];
   for (const e of worldCapped(covered, session, compactAt)) {
+    // a script's calls are the bash call's, whose output says what the script found
+    if (scripted(e) !== undefined) continue;
     if (e.type === "summary") {
       previous = e.parts.map((p) => p.text).join("\n");
     } else if (e.type === "message") {
@@ -331,6 +334,8 @@ export async function buildSummary(
       conversation: { address: input.session.conversation },
     }, // harness-authored: no `agent` (§3)
     parts: [{ type: "data", kind: "error", data: { error: `checkpoint failed: ${why}` } }],
+    // what the checkpoint's request read through: the window it could not record
+    ...(input.events.length ? { extra: { consumed: input.events.at(-1)!.id } } : {}),
   });
 
   // the instruction is read lazily: only a window that actually compacts pays the read

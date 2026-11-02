@@ -862,6 +862,40 @@ Deno.test("an errand's outcome is a result like any other, unless its tool marke
   assertEquals(decide([call, pending, closed, outcome(true)], SESSION, WAKE, NOON), "ignore");
 });
 
+Deno.test("a script's answers wake nobody; the bash call that ran it still owes its step", () => {
+  const bash = ev("tool_use", { ...SELF, ts: at(9), payload: { turn_id: "T1" } } as Partial<Event>);
+  const call = (turn = "job:J") => {
+    const u = ev("tool_use", {
+      ...SELF,
+      ts: at(8),
+      payload: { turn_id: turn },
+      extra: { bash: bash.id },
+    } as Partial<Event>);
+    const r = ev("tool_result", {
+      ...SELF,
+      ts: at(8),
+      payload: { turn_id: turn, ref_id: u.id },
+      extra: { bash: bash.id },
+    } as Partial<Event>);
+    return [u, r];
+  };
+  const answered = ev("tool_result", {
+    ...SELF,
+    ts: at(7),
+    payload: { turn_id: "T1", ref_id: bash.id },
+  } as Partial<Event>);
+  const closed = ev("message", {
+    ...SELF,
+    ts: at(6),
+    payload: { turn_id: "T1b" },
+    extra: { consumed: answered.id },
+  } as Partial<Event>);
+  // inside the call: its answer is what continues the turn, whatever the script made
+  assertEquals(decide([bash, ...call(), answered], SESSION, WAKE, NOON), "think");
+  // a script that outlived the call: its answers, landing after the turn closed, are no news
+  assertEquals(decide([bash, answered, closed, ...call()], SESSION, WAKE, NOON), "ignore");
+});
+
 Deno.test("alarm: once a turn has read past it, it stops asking — the horizon rules", () => {
   const a = alarm(5);
   // the closing message carries the horizon it consumed (§2): the alarm is behind it

@@ -19,7 +19,7 @@ import type { ReadQuery, UsageRow } from "./store/log.ts";
 import { changedInputs, type Inputs } from "./inputs.ts";
 import { type Cost, costOfAll, dollars, type Price } from "./prices.ts";
 import { sessionAddress } from "./session.ts";
-import { ownComplex, ownVoice, shortId, textOf } from "./render.ts";
+import { ownComplex, ownVoice, scripted, shortId, textOf } from "./render.ts";
 import { userInfo } from "node:os";
 
 /** Token counts, summed over usage rows. */
@@ -104,7 +104,8 @@ export function openerOf(e: Event, ref: SessionRef): Opener | undefined {
   const at = { id: e.id, ts: e.ts };
   const turn = e.payload?.turn_id;
   if (typeof turn === "string" && turn.startsWith("job:")) {
-    if (e.type !== "tool_use") return undefined;
+    // a script's call inside a bash call opens nothing: its answer wakes nobody
+    if (e.type !== "tool_use" || scripted(e) !== undefined) return undefined;
     return { kind: "call", ...at, text: String(e.parts?.[0]?.data?.name ?? "") };
   }
   switch (e.type) {

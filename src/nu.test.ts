@@ -62,6 +62,26 @@ Deno.test("nu: persistent step failure → a single harness-authored error event
   assertEquals(err.agent, undefined); // harness-authored (§3)
 });
 
+Deno.test("nu: a failed request's error names the last row it read", async () => {
+  const asked: MessageEvent = {
+    id: "e1",
+    ts: "2026-11-02T10:00:00Z",
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "default",
+      conversation: { address: "mind@a1" },
+      sender: { address: "ana" },
+    },
+    parts: [{ type: "text", kind: "text", text: "¿y?" }],
+  };
+  const [err] = await nu(
+    { events: [asked], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
+    () => Promise.reject(new Error("overloaded")),
+  );
+  assertEquals(err.extra?.consumed, "e1");
+});
+
 Deno.test("nu: refusal surfaces as an error event alongside the emissions", async () => {
   const out = await rows(nu(
     { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },

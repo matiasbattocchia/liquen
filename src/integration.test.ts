@@ -3362,7 +3362,7 @@ Deno.test("search hands back the line the window shows, and pages on the oldest 
       assertStringIncludes(page, '<conv kind="group" name="Gira Norte" address="gira">');
       assertMatch(
         page,
-        /<image id="\w{6}" external="Germán" address="german" at="4 Sep 2026 12:01" name="a.jpg" path="\/media\/a.jpg"\/>/,
+        /<image id="\w{6}" external="Germán" address="german" at="4 Sep 2026 12:01" seen="window" name="a.jpg" path="\/media\/a.jpg"\/>/,
       );
       assertStringIncludes(page, '>nafta <image name="b.jpg" path="/media/b.jpg"/></msg>');
       assertEquals(page.includes("310.000"), false);
@@ -3487,9 +3487,9 @@ Deno.test("search around: a match among its neighbours, stretches merged, the ga
         "aceite y nafta",
         "fin",
       ]);
-      // the matches, and only they, wear the mark
+      // the matches, and only they, wear the mark, before where the session holds them
       assertEquals(
-        [...text.matchAll(/<msg [^>]* match>([^<]*)</g)].map((m) => m[1]),
+        [...text.matchAll(/<msg [^>]* match seen="window">([^<]*)</g)].map((m) => m[1]),
         ["nafta", "nafta de nuevo", "aceite y nafta"],
       );
       assertStringIncludes(JSON.stringify(refused.parts), "around must be an integer from 0 to");

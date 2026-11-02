@@ -2188,6 +2188,89 @@ Deno.test("an update narrates the call it tells about, flags and all, and stays 
   assertEquals(read.map(txt).some((s) => s.includes("12 passed")), true);
 });
 
+/** A call a script made through the door inside bash call `bash`, and its answer. */
+function scriptCall(
+  id: string,
+  ts: string,
+  bash: string,
+  name: string,
+  input: Json,
+  output: Json,
+  is_error = false,
+): Event[] {
+  const use = { ...toolUseE(id, ts, "job:J", name, input), extra: { bash } };
+  const res = toolResultE(`${id}r`, ts, "job:J", output, id);
+  if (is_error) res.parts[0].data.is_error = true;
+  return [use, { ...res, extra: { bash } }];
+}
+
+Deno.test("a script's calls fold into the bash call that ran it: counts and failures", () => {
+  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
+  const window = [
+    mindMsg("e00", t(0), "avisale a los tres", false),
+    toolUseE("e01", t(0), "T1", "bash", { command: "deno run -A recordar.ts" }),
+    ...scriptCall("e02", t(1), "e01", "search", { in: "padres" }, "<conv>…</conv>"),
+    ...scriptCall("e03", t(1), "e01", "send", { to: "Juan", text: "hola" }, "no such room", true),
+    ...scriptCall("e04", t(1), "e01", "send", { to: "Ana", text: "hola" }, {
+      status: "pending_approval",
+      id: "e04",
+    }),
+    toolResultE("e05", t(2), "T1", "avisé a 1 de 3", "e01"),
+  ];
+  const blocks = blocksOf(
+    render({ events: window, docs: [], session: SESSION, zone: "UTC", now: t(3) }).messages,
+  );
+  // the script's pairs draw nothing of their own: one call, one answer
+  assertEquals(blocks.filter((b) => b.type === "tool_use").length, 1);
+  const results = blocks.filter((b): b is Anthropic.ToolResultBlockParam =>
+    b.type === "tool_result"
+  );
+  assertEquals(results.length, 1);
+  assertEquals(
+    results[0].content,
+    "avisé a 1 de 3\n\n" +
+      "the script made 3 calls (search 1, send 2): 1 failed, 1 asked your principal\n" +
+      "· send(to: Juan, text: hola) — no such room",
+  );
+});
+
+Deno.test("a script that outlives its bash call folds under the job's final word, once", () => {
+  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
+  const answer: ToolResultEvent = {
+    ...toolResultE("e02", t(0), "T1", "running in the background", "e01"),
+    payload: { turn_id: "T1", ref_id: "e01", async: true },
+  };
+  const final: ToolResultEvent = {
+    ...toolResultE("e06", t(4), "T1", "exit 0", "e01"),
+    payload: { turn_id: "T1", ref_id: "e01", update: true, final: true },
+    parts: [{
+      type: "data",
+      kind: "tool_result",
+      data: { output: "exit 0" },
+      text: "bash(deno run -A recordar.ts &)",
+    }],
+  };
+  const before = [
+    mindMsg("e00", t(0), "avisale a todos", false),
+    toolUseE("e01", t(0), "T1", "bash", { command: "deno run -A recordar.ts &" }),
+    answer,
+    mindMsg("e03", t(1), "lo dejé corriendo", true, "T1b"),
+  ];
+  const calls = [
+    ...scriptCall("e04", t(2), "e01", "send", { to: "Juan", text: "hola" }, "sent"),
+    ...scriptCall("e05", t(3), "e01", "send", { to: "Ana", text: "hola" }, "sent"),
+  ];
+  const view = (events: Event[]) =>
+    render({ events, docs: [], session: SESSION, zone: "UTC", now: t(5) }).messages;
+  // while the script runs its calls draw nothing: the window is what it was
+  assertEquals(strip(view([...before, ...calls])), strip(view(before)));
+  const texts = blocksOf(view([...before, ...calls, final])).map(txt);
+  assert(texts.includes(
+    '<system kind="tool_result" update final>bash(deno run -A recordar.ts &amp;) → exit 0\n' +
+      "the script made 2 calls (send 2)</system>",
+  ));
+});
+
 /* ── the principal's channel: wrapped, steering hidden, never capped ───── */
 
 Deno.test("a principal's answer draws no block, and the run flows across it — one room, one element", () => {

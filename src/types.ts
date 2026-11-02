@@ -400,7 +400,9 @@ export interface Payload {
  *  session messages: the last event id the step's window read — the coalescing horizon
  *  `unanswered` measures against, §2; and on a tool step's first event, beside `anchor`:
  *  what that step's request held, so render keeps what landed later out from under its
- *  replayed thinking, §5), `via` (mirror provenance, §4), `timer` (alarm provenance, §10: the row that fired,
+ *  replayed thinking, §5), `bash` (on a script's tool_use and its answer: the id of the bash
+ *  call whose script made it through the door, §9 — the answer wakes nobody, and the window
+ *  folds the pair into that call), `via` (mirror provenance, §4), `timer` (alarm provenance, §10: the row that fired,
  *  who armed it and when), and per-service provenance under the service name —
  *  how the wire said it, not what the event means (`slack: {subtype, authorizations}`,
  *  `raw`). */
@@ -637,7 +639,11 @@ export interface AlarmEvent extends EventBase {
   parts: [TextPart & { kind: "alarm" }];
 }
 
-/** Permanent mu failure — rendered `system` (model awareness) + Stream (operator) (§2). */
+/** Permanent mu failure — rendered `system` (model awareness) + Stream (operator) (§2).
+ *  Each names what it ended: a failed request (the model's, or a checkpoint's) the last
+ *  event that request read (`extra.consumed`, a step's own horizon); a word about one call
+ *  that call (`payload.ref_id` → its tool_use); a line that settled no card that line
+ *  (`payload.ref_id`). */
 export interface ErrorEvent extends EventBase {
   type: "error";
   /** `origin: "model"` — the model call failed (the provider's answer); absent — the
@@ -779,6 +785,10 @@ export interface SearchArgs {
   /** N lines of its conversation either side of every match, the matches marked `match`,
    *  a `…` line where two stretches do not meet. 0 (the default) is the matches alone. */
   around?: number;
+  /** The agent's own calls in place of messages: each hit is a call and its answer. */
+  calls?: boolean;
+  /** One row by its handle (a line's `id`, a call's `id`), whole: a call's answer unclipped. */
+  id?: string;
 }
 /** The page `search` answers with is a STRING in the window's grammar (render's
  *  `renderHits`, §6): `<conn>`/`<conv>`-grouped `<msg>` lines, ids, marks, markers and

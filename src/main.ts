@@ -32,7 +32,15 @@
  * holds a token.
  */
 
-import { type AgentConfig, type Decision, OWN_TOOLS, relevant, xi, type XiPorts } from "./xi.ts";
+import {
+  type AgentConfig,
+  answerCall,
+  type Decision,
+  OWN_TOOLS,
+  relevant,
+  xi,
+  type XiPorts,
+} from "./xi.ts";
 import { ownComplex } from "./render.ts";
 import { LOCAL_CONNECTION, MIND, sessionAddress } from "./session.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
@@ -526,8 +534,8 @@ export async function start(
   // the door (§9): a script's syscalls, as gated tool_use events in the caller's name. The
   // one boundary piece that HOLDS something in main — the sockets ARE the boundary; each
   // serves its agent's scoped ports, so even the door writes under §6 visibility. A
-  // request that names a session speaks through THAT session's port — asking for one is
-  // what births it.
+  // request that names a session speaks through THAT session's port, and a call is answered
+  // with that session's runner — asking for one is what births it.
   const doors = await installDoors(
     dir,
     roster.map((p): DoorAgent => {
@@ -540,6 +548,12 @@ export async function start(
             sessionId === a.config.sessionId
               ? a.log
               : (await runnerOf(a.config.agentId, sessionId))!.log,
+          answer: async (sessionId, use, signal) => {
+            const r = sessionId === a.config.sessionId
+              ? a
+              : (await runnerOf(a.config.agentId, sessionId))!;
+            return answerCall(use, r.config, r.ports, signal);
+          },
           // where the principal stands is where the session's shell starts (§9)
           stand: (session, path) => sandbox.forAgent(a.config.agentId).session(session).stand(path),
           tune: (session, settings) => tune(a.config.agentId, session, settings),

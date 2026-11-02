@@ -6046,6 +6046,57 @@ Open: whether the API keeps every anchor and thinking block through a long day i
 on `liquen start`'s stderr (`[anthropic] turn …` drops). Memory (cards, compaction, memory
 instructions, unloading) is the batch after.
 
+### A script reads its calls' answers, and they fold into its bash call (2026-11-02) — LANDED
+
+Compared against code mode in pi (`codemode`, QuickJS) and DeepSeek Harness (`run_code`,
+a sandboxed Node process): both hand the program each nested call's result and show the
+model only what the program prints, while both still record every nested call. The door
+answered `queued` for every call, search included, because the script runs inside the
+bash call that holds the turn lease, and the use waited for a later invocation to run it.
+So a script could fan out sends and never read what it had asked for. Decided with the
+user:
+
+- **The door answers.** `answerCall` (xi) is the branch `act` answers a fresh call with,
+  pulled out as `answerer` so both run it: the same checks, table, card and execute, on
+  the session's runner, outside the lease. The use is minted with its id and published
+  with its card and result in one write, so no invocation finds it pending. The script
+  gets `{id, output, is_error?}`: the page, the receipt, `pending_approval`.
+- **Late words stay the mind's.** A ruling, the errand it allows, a send's fate: each
+  wakes the agent as before. Only the answer in the call's own step goes to the script.
+- **`extra.bash`.** The client sends `LIQUEN_JOB`, the bash call's id every process of
+  its job carries; the use and its answer carry it. Such an answer is `quiet`, and
+  `relevant` drops both rows, so a script that outlives its bash call wakes nobody per
+  call. A late result of the call does not carry it.
+- **The fold.** The window draws a script's pairs nowhere. One line under the bash call's
+  answer (calls before it) or the job's final word (calls after it) counts the calls by
+  tool, the failures and the asks, and quotes each failure clipped to 300 characters,
+  named by its call. Compaction's transcript skips the pairs too; the bash output stands
+  for them.
+
+With it, `search` grew three things (dsh's session-query tools were the reference):
+
+- **`calls`.** The agent's own calls, from any of its sessions, as `<call>` lines: the
+  call as a card names it and its answer clipped to `CALL_CLIP`. `text` matches either
+  half; `in`/`from`/`connection` are refused. Searches are left out: a page quotes other
+  rows, and the search asking matched its own words.
+- **`id`.** One line or call whole, by its handle or its whole id (an answer's id names its
+  call); a line takes `around`.
+- **`seen`** on every line and call: `window`, `checkpoint` (in the checkpoint's span and
+  read back through the session's own port, so a sibling session's room is not this one's
+  record), `never`.
+
+Errors name what they ended: a failed request's error carries the horizon it read
+(`extra.consumed`, the model's and a checkpoint's), a harness word about a call its
+`ref_id`, a line that settled no card its `ref_id`. No `trace` tool reads them yet.
+
+Open: a call already being answered when its script hangs up or
+the principal cancels finishes (its signal never aborts): its effects may be under way. A
+crash between a send's dispatch and the door's write leaves the send's row with no use row
+beside it, where `act` leaves a pending use that a steal answers `orphaned`. Two ways to
+close it, undecided: the door writes the use first, xi leaves `job:` uses to the door, and
+main answers any it finds unanswered at boot `orphaned` (no connection outlives main); or a
+lock per call, which only pays once xi runs outside main (the edge tier).
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

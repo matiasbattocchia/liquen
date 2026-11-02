@@ -2,13 +2,15 @@
  * door.ts — the syscall boundary AND the attach seam (DESIGN §9): how anything in user
  * space — a script, an interface — reaches the log.
  *
- * One unix socket per agent, `agents/<name>/door.sock`, served by main. A `call` executes
- * nothing — the door publishes a DRAFT tool_use in the agent's name and replies with its
- * id — the same event the model's own call is, ruled by the same permission table,
- * executed by the same act branch on the agent's scoped port, wake and narration included
- * (§2, §9). Search rides it like any tool: the hits land in the log as the use's result,
- * for the mind — one path, so a policy on ANY tool rules scripts and model alike. The
- * door's whole authority is the agent's scoped port, so it never acts as root.
+ * One unix socket per agent, `agents/<name>/door.sock`, served by main. A `call` is a
+ * tool_use in the agent's name — the same event the model's own call is, ruled by the same
+ * permission table and answered by the same branch `act` answers a fresh call with, on the
+ * agent's scoped port (§2, §9) — and the door replies with its answer, the one the model
+ * would have read: search's hits, a send's receipt, `pending_approval` for an ask. One
+ * path, so a policy on ANY tool rules scripts and model alike. The use lands with its
+ * answer in one write, so no turn finds it unanswered. What is said of the call after that
+ * (a ruling, the run it allows, a send's fate) is the mind's, and wakes it. The door's
+ * whole authority is the agent's scoped port, so it never acts as root.
  *
  * IDENTITY IS THE SOCKET'S. The path fixes the agent — the door stamps `agent`, and the
  * protocol has no field that could claim another agent's session. The filesystem enforces
@@ -22,8 +24,13 @@
  * The wire, newline-JSON, requests answered in order per connection. Every verb takes an
  * optional `session` — the bare name of the session it speaks to (§4); absent, the mind.
  * Naming one is what births it:
- *   call                 {op, tool, input, session?}     → tool_use, gated as ever
- *                                                          → {ok, id, status: "queued"}
+ *   call                 {op, tool, input, session?,     → tool_use, gated as ever,
+ *                         bash?}                           answered → {ok, id, output,
+ *                                                          is_error?}. `bash` names the
+ *                                                          bash call whose script is
+ *                                                          calling (`Extra.bash`): its
+ *                                                          answer wakes nobody, and the
+ *                                                          window folds it into that call
  *   message              {op, text, sender?, session?}   → the principal's half of the
  *                                                          complex (no turn_id, §3) → {ok, id}
  *   permission_response  {op, text, sender?,  → the principal's `/y` · `/n` line, read
@@ -59,8 +66,8 @@
  *                                                  {usage} right after the step it paid for.
  *
  * One synthetic turn key per connection (`job:<id>`): a `call` run is a turn no session
- * ever held, so its uses read as fresh work to act, its results weld to their uses in the
- * next window, and the model wakes to narrate them.
+ * ever held. A call that names no bash call (a script someone ran by hand) welds to its
+ * answer in the next window, and the model wakes to narrate it.
  *
  * The live connections are the daemon's ATTACHMENTS: an interface killed and one that
  * quit are the same event here — a hang-up — so a lifetime derived from `attachments()`
@@ -78,6 +85,7 @@ import type {
   Event,
   Json,
   MessageEvent,
+  ToolResultEvent,
   ToolUseEvent,
 } from "./types.ts";
 import type { Log, UsageRow } from "./store/log.ts";
@@ -94,6 +102,14 @@ export interface DoorAgent {
   /** A SESSION's scoped port (§6): the door reads and writes as the session the request
    *  named, never wider. Asking for a session is what births it (main's runner). */
   port(sessionId: string): Promise<Pick<Log, "publish" | "subscribe" | "read" | "gates">>;
+  /** Answer a call in a SESSION the way `act` answers a fresh one (xi's `answerCall`): the
+   *  use and what its answer wrote, for the door to publish in one write. Absent on a
+   *  paused agent, which takes no call. */
+  answer?(
+    sessionId: string,
+    use: ToolUseEvent,
+    signal: AbortSignal,
+  ): Promise<Draft<Event>[]>;
   /** No session runs for this agent (`mind: false`, §4). The door still opens — a tail
    *  reads the rooms, a search answers — and REFUSES an order: a message, a call, a
    *  verdict, a control. Nobody would take it, and a row nobody takes reads as ignored. */
@@ -297,8 +313,8 @@ async function serve(
   cast: Set<Tailer>,
   busy: (session: string) => boolean,
 ) {
-  // one run, one synthetic turn (§2): a key no session ever held, so act classifies the
-  // run's uses as fresh work — and render welds use to result under it, like any turn's
+  // one run, one synthetic turn (§2): a key no session ever held, so no step of the mind
+  // claims the run's calls — and render welds use to answer under it, like any turn's
   const turnId = `job:${newId()}`;
   const decoder = new TextDecoder();
   let buffered = "";
@@ -423,21 +439,34 @@ async function handle(
     if (typeof tool !== "string" || tool === "") throw new Error("call needs a tool name");
     const input = req.input === undefined ? {} : req.input; // absent: a call with no arguments
     if (!isObject(input)) throw new Error("call input must be a JSON object");
-    const use = await port.publish(
-      {
-        ts: new Date().toISOString(),
-        type: "tool_use",
-        payload: { turn_id: turnId },
-        agent: { id: agent.agentId, session_id: session },
-        envelope,
-        parts: [{
-          type: "data",
-          kind: "tool_use",
-          data: { name: tool, input: input as Json },
-        }],
-      } satisfies Draft<ToolUseEvent>,
+    if (req.bash !== undefined && (typeof req.bash !== "string" || req.bash === "")) {
+      throw new Error("bash names the bash call whose script is calling, by its id");
+    }
+    if (!agent.answer) throw new Error(`${agent.agentId} takes no calls here`);
+    // the id is minted here, so the answer can name its use before either is stored
+    const use: ToolUseEvent = {
+      id: newId(),
+      ts: new Date().toISOString(),
+      type: "tool_use",
+      payload: { turn_id: turnId },
+      agent: { id: agent.agentId, session_id: session },
+      envelope,
+      parts: [{
+        type: "data",
+        kind: "tool_use",
+        data: { name: tool, input: input as Json },
+      }],
+      ...(typeof req.bash === "string" ? { extra: { bash: req.bash } } : {}),
+    };
+    // a call already being answered finishes, whoever hangs up: its effects may be under way
+    const written = await agent.answer(session, use, new AbortController().signal);
+    await port.publish(written);
+    const answer = written.find((e): e is Draft<ToolResultEvent> =>
+      e.type === "tool_result" && e.payload?.ref_id === use.id
     );
-    return { ok: true, id: use!.id, status: "queued" };
+    if (!answer) throw new Error(`${tool} was not answered`);
+    const { output, is_error } = answer.parts[0].data;
+    return { ok: true, id: use.id, output, ...(is_error ? { is_error: true } : {}) };
   }
   // the principal's line (§3): agent.id = whose mind, session_id = entered through the
   // harness, signed by whoever the request says. No turn_id, ever: that is the model's

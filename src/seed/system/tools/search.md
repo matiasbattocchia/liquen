@@ -18,6 +18,13 @@ at it is asked of the accounts whose service can tell: a `<profile>` line under 
 `<conn>` says whether that address is an account there (`exists`) and the `name` it shows, if
 any. That is how to learn who a number reaches before writing to it.
 
+Every line and call says where you hold it, after its stamp: `seen="window"` is in front of
+you now, `seen="checkpoint"` is behind your checkpoint, which is all you have of it, and
+`seen="never"` is a line you have not read: a muted chat, one from before you started, one
+another of your sessions holds. With `calls`, the page is your own calls instead, from any
+of your sessions, each a `<call>` line with its answer cut at {{call_clip}} characters; the
+calls a script made are there too. With `id`, the page is that one line or call, whole.
+
 - in: one conversation: its address, or a name (a group's, or the person a direct chat is
   with; any part of it, case doesn't matter)
 - from: one sender: their address, or any part of the name they go by. Or the key a line
@@ -37,3 +44,6 @@ any. That is how to learn who a number reaches before writing to it.
 - around: lines of the conversation to show either side of each match (0–{{around_max}};
   optional, default 0). With it, each match wears `match` after its stamp, and a `…` line
   stands where lines between two stretches are not shown
+- calls: true to search your own calls instead of messages; `text` then matches the call or
+  its answer, `before`/`after`/`limit` work as for lines, `in`/`from`/`connection` do not apply
+- id: one line or call by its `id`, whole; with `around`, a line's neighbours too

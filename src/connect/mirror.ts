@@ -272,6 +272,7 @@ async function fanIn(
       await deps.publish({
         ts: now(),
         type: "error",
+        payload: { ref_id: e.id }, // the line that settled nothing
         envelope: {
           service: "local",
           connection_address: LOCAL_CONNECTION,

@@ -274,12 +274,15 @@ export async function nu(
   const self = { id: config.agentId, session_id: config.sessionId };
   const { session, here, turnId, attempt, env } = turnOf(input, transport);
   const ts = () => new Date().toISOString();
+  // what the request this error ends read through: the same horizon a step records (§5)
+  const horizon = input.events.at(-1)?.id;
   const errorEvent = (error: string): Draft<Event> => ({
     ts: ts(),
     type: "error",
     envelope: here, // harness-authored: no `agent` (§3)
     // the model call itself failed, past its retries: the provider's error, not the harness's
     parts: [{ type: "data", kind: "error", data: { error, origin: "model" } }],
+    ...(horizon ? { extra: { consumed: horizon } } : {}),
   });
 
   const now = ts();

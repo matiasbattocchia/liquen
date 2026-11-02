@@ -97,11 +97,15 @@ import {
   BEFORE_READ,
   type BeforePool,
   bookEl,
+  CALL_CLIP,
+  callLine,
   cutStands,
+  drawnIn,
   GAP_READ,
   HANDLE,
   hhmm,
   type HitsOpts,
+  isLate,
   isUpdate,
   type Member,
   namedRoom,
@@ -114,6 +118,8 @@ import {
   roomKey,
   roomNames,
   type Roster,
+  scripted,
+  type Seen,
   shortId,
   silenced,
   type Surface,
@@ -512,8 +518,10 @@ export function relevant(config: AgentConfig, event: Event): boolean {
     case "message": // a peer's IS the work; our own closing message is the self-poke that
       return !silenced(event); //   catches whatever landed mid-turn (§2)
     case "tool_use":
-    case "tool_result": // never react to others' tools — ownership is the PAIR (§4)
-      return ownComplex(event, { agentId: config.agentId, id: config.sessionId });
+    case "tool_result": // never react to others' tools — ownership is the PAIR (§4); a
+      //                   script's call lands answered, and its answer is the script's
+      return scripted(event) === undefined &&
+        ownComplex(event, { agentId: config.agentId, id: config.sessionId });
     case "permission_response": // the human moved — the settlement is derivable now
     case "alarm": // the universal poke (§2)
       return true;
@@ -601,11 +609,13 @@ export function owedOf(events: Event[], session: Session): Owed[] {
   return out;
 }
 
-/** The harness's own voice (§2): an `error` the mirror carries to the principal's surfaces. */
-function harness(error: string, hereEnv: Envelope): Draft<ErrorEvent> {
+/** The harness's own voice (§2): an `error` the mirror carries to the principal's surfaces,
+ *  `ref_id` the call it is said of. */
+function harness(error: string, hereEnv: Envelope, use: EventId): Draft<ErrorEvent> {
   return {
     ts: new Date().toISOString(),
     type: "error",
+    payload: { ref_id: use },
     envelope: hereEnv,
     parts: [{ type: "data", kind: "error", data: { error } }],
   };
@@ -672,7 +682,7 @@ async function standingDenies(
     const [use] = await ports.log.read({ beforeId: `${ref}0`, limit: 1 });
     if (use?.id !== ref || use.type !== "tool_use") continue;
     const said = await remembered(use, e.parts[0].data, self, ports);
-    if (said) out.push(harness(said, here));
+    if (said) out.push(harness(said, here, use.id));
   }
   return out;
 }
@@ -708,9 +718,10 @@ function newsOf(events: Event[], session: Session): News[] {
   return events.slice(from + 1).filter(news);
 }
 
-/** A late result its tool marked quiet (`Payload.quiet`): news, no reason to wake. */
+/** A result that is no reason to wake: a late one its tool marked quiet (`Payload.quiet`),
+ *  or the answer to a script's call, which the script already holds (`Extra.bash`). */
 function quiet(e: Event): boolean {
-  return e.type === "tool_result" && e.payload.quiet === true;
+  return e.type === "tool_result" && (e.payload.quiet === true || scripted(e) !== undefined);
 }
 
 /** A lapse: the deny nobody gave. News, no reason to wake. */
@@ -1150,14 +1161,8 @@ export async function xi(
     agentId: config.agentId,
     conversation: sessionAddress(config.agentId, config.sessionId),
   };
-  // policy is a TABLE (§9), compiled from two halves: the remembered rows (standing
-  // verdicts — the principal's rulings outrank the base) over the configured base. No
-  // tool is special.
-  const gate = config.gate ??
-    gateOf([
-      ...(await ports.log.remembered(config.agentId)).map(ruleOf),
-      ...(config.rules ?? DEFAULT_RULES),
-    ]);
+  // policy is a TABLE (§9): no tool is special
+  const gate = await gateFor(config, ports);
   // 3. decide, under the lease and from a fresh window — so it can't act on a stale verdict
   //    (another holder may have finished this very work while we were being invoked).
   //    The port is scoped (§6): visibility applies inside the read, so the floor is this
@@ -1672,6 +1677,87 @@ async function act(
   ports: XiPorts,
   signal: AbortSignal,
 ): Promise<Draft<Event>[]> {
+  const pending = pendingOf(events, session);
+  const owed = await ports.log.owed(session.agentId, session.id);
+  const a = await answerer(session, config, gate, ports, signal, [
+    ...pending,
+    ...owed.map((o) => o.use),
+  ]);
+  const runnable: { use: ToolUseEvent; call?: string }[] = [];
+
+  // (a) the fresh batch: EVERY use is answered in the turn that made it — including a gated
+  //     one, whose answer is `pending_approval`. Asking is part of executing, so the chain
+  //     closes and the mind stays free while the principal decides (§9).
+  for (const use of pending) {
+    if (await a.fresh(use, events, stolen)) runnable.push({ use });
+  }
+
+  // (b) the errand: asks the principal has allowed since. The tool_use is spent, so the
+  //     outcome cannot be a `tool_result` block — it comes back as the harness's own line
+  //     (§5), which is also what reaches the principal's surfaces.
+  for (const { use, verdict } of owed) {
+    await a.standing(use, verdict);
+    const call = a.describe(use);
+    if (stolen) {
+      a.out.push(await a.orphaned(use, call));
+    } else {
+      runnable.push({ use, call });
+    }
+  }
+
+  // the batch runs in parallel — the lock serializes the mind, not the tools (§2). The
+  // turn's interrupt is the principal's cancel (§2): a tool it cuts reports `cancelled`,
+  // one it reaches first never starts, and their row standing behind these results is what
+  // keeps the agent idle instead of narrating what it was told to drop.
+  a.out.push(...await Promise.all(runnable.map(({ use, call }) => a.run(use, call))));
+  return a.out;
+}
+
+/** The permission table a session's calls are ruled by (§9): the remembered rows (standing
+ *  verdicts, the principal's rulings outrank the base) over the configured base. */
+async function gateFor(config: AgentConfig, ports: XiPorts): Promise<Gate> {
+  return config.gate ??
+    gateOf([
+      ...(await ports.log.remembered(config.agentId)).map(ruleOf),
+      ...(config.rules ?? DEFAULT_RULES),
+    ]);
+}
+
+/**
+ * A call a script made through the door (§9), answered the moment it is made, by the branch
+ * that answers a fresh call in `act`: the same checks, the same table, the same card, the
+ * same execute. What comes back is the use and everything its answer wrote — the card when
+ * it asks, and its result — for the door to publish in one write, so no turn ever finds the
+ * use unanswered and runs it a second time. An ask answers `pending_approval` here as it
+ * does to the model; the ruling and the run it allows come later, to the mind.
+ */
+export async function answerCall(
+  use: ToolUseEvent,
+  config: AgentConfig,
+  ports: XiPorts,
+  signal: AbortSignal,
+): Promise<Draft<Event>[]> {
+  const session: Session = {
+    id: config.sessionId,
+    agentId: config.agentId,
+    conversation: sessionAddress(config.agentId, config.sessionId),
+  };
+  const a = await answerer(session, config, await gateFor(config, ports), ports, signal, [use]);
+  if (await a.fresh(use, [], false)) a.out.push(await a.run(use));
+  return [use, ...a.out];
+}
+
+/** What answering a batch of calls takes (§9): one rendering for every call it touches, the
+ *  ruling of a fresh call, and its run — shared by `act` and the door, so a script's call
+ *  and the model's are answered by the same code. */
+async function answerer(
+  session: Session,
+  config: AgentConfig,
+  gate: Gate,
+  ports: XiPorts,
+  signal: AbortSignal,
+  uses: ToolUseEvent[],
+) {
   const self = { id: config.agentId, session_id: config.sessionId };
   // one session, one place (§4): the harness's own rows land where the session speaks
   const here = {
@@ -1703,9 +1789,13 @@ async function act(
       duration_ms: Math.round(run.ms),
       bytes: run.facts.bytes ?? sizeOf(output),
     };
+    // a script's call is answered in the script (`Extra.bash`): its answer says so, and wakes
+    // nobody. What is said of it later is the mind's, and wakes it like any late word.
+    const bash = call === undefined ? use.extra?.bash : undefined;
     const extra = {
       ...(Object.keys(pinned).length ? { media: pinned } : {}),
       ...(exec ? { exec } : {}),
+      ...(typeof bash === "string" ? { bash } : {}),
     };
     return {
       ts: ts(),
@@ -1756,35 +1846,29 @@ async function act(
     return await resultOf(use, "orphaned by a crashed turn", { is_error: true }, call);
   };
 
-  // every write this act produces is collected and committed ONCE, with the lease release
-  // (§2) — the barrier completes atomically, and no half-batch can wake anyone
+  // every write an answer produces is collected and committed ONCE: by `act` with the lease
+  // release (§2), so the barrier completes atomically and no half-batch can wake anyone; by
+  // the door with the use itself
   const out: Draft<Event>[] = [];
-  const runnable: { use: ToolUseEvent; call?: string }[] = [];
-  const pending = pendingOf(events, session);
-  const owed = await ports.log.owed(session.agentId, session.id);
-  // one rendering for every call this act touches — the card, the anchor and the deferred
+  // one rendering for every call this batch touches — the card, the anchor and the deferred
   // report all read it, and resolving addresses to names takes the log (§9)
   const describers = describersOf(ports);
-  const resolve = await nameResolver(
-    ports.log.read,
-    [...pending, ...owed.map((o) => o.use)].map((u) => u.parts[0].data),
-  );
+  const resolve = await nameResolver(ports.log.read, uses.map((u) => u.parts[0].data));
   const describe = (use: ToolUseEvent, full = false) =>
     describeCall(use.parts[0].data, { resolve, full, tools: describers });
 
   const standing = async (use: ToolUseEvent, v: PermissionVerdict): Promise<void> => {
     const said = await remembered(use, v, self, ports);
-    if (said) out.push(harness(said, here));
+    if (said) out.push(harness(said, here, use.id));
   };
 
-  // (a) the fresh batch: EVERY use is answered in the turn that made it — including a gated
-  //     one, whose answer is `pending_approval`. Asking is part of executing, so the chain
-  //     closes and the mind stays free while the principal decides (§9).
-  for (const use of pending) {
+  /** Answer a fresh use, or say it is to run: true when the ruling lets it run. `events` is
+   *  what the window holds of it — a verdict already given, a card already up. */
+  const fresh = async (use: ToolUseEvent, events: Event[], stolen: boolean): Promise<boolean> => {
     if (signal.aborted) {
       // cut before it was asked or run: nothing goes to the principal, nothing runs
       out.push(await resultOf(use, NOT_RUN, { is_error: true, cancelled: true }));
-      continue;
+      return false;
     }
     const { name, input } = use.parts[0].data;
     // a send AT THE PRINCIPAL is refused before it is gated: the assistant channel already
@@ -1797,7 +1881,7 @@ async function act(
       await unsaveable(name, input, self, ports);
     if (nowhere) {
       out.push(await resultOf(use, nowhere, { is_error: true }));
-      continue;
+      return false;
     }
     const verdict = verdictOf(events, use.id);
     if (verdict) await standing(use, verdict);
@@ -1811,7 +1895,7 @@ async function act(
           is_error: true,
         }),
       );
-      continue;
+      return false;
     }
     if (ruling === "ask") {
       // the card goes to the principal-DM and crosses to their surfaces (mirror, §4);
@@ -1851,66 +1935,49 @@ async function act(
         );
       }
       out.push(await resultOf(use, pendingApproval(use)));
-      continue;
+      return false;
     }
     if (verdict?.behavior === "deny") {
       out.push(await resultOf(use, refused(verdict), { is_error: true, refused: true }));
-      continue;
+      return false;
     }
     if (stolen) {
       out.push(await orphaned(use));
-      continue;
+      return false;
     }
-    runnable.push({ use });
-  }
+    return true;
+  };
 
-  // (b) the errand: asks the principal has allowed since. The tool_use is spent, so the
-  //     outcome cannot be a `tool_result` block — it comes back as the harness's own line
-  //     (§5), which is also what reaches the principal's surfaces.
-  for (const { use, verdict } of owed) {
-    await standing(use, verdict);
-    const call = describe(use);
-    if (stolen) {
-      out.push(await orphaned(use, call));
-    } else {
-      runnable.push({ use, call });
+  /** Run a call the ruling let through, and answer it: `call` set for an errand's run. */
+  const run = async (use: ToolUseEvent, call?: string): Promise<Draft<ToolResultEvent>> => {
+    if (signal.aborted) {
+      return await resultOf(use, NOT_RUN, { is_error: true, cancelled: true }, call);
     }
-  }
+    // an exec tool's run is measured (§9): its wall time here, the rest as it reports
+    const ran = ports.exec?.[use.parts[0].data.name] !== undefined;
+    const facts: ExecFacts = {};
+    const report = (f: ExecFacts) => Object.assign(facts, f);
+    const began = performance.now();
+    const measure = () => (ran ? { facts, ms: performance.now() - began } : undefined);
+    try {
+      const outcome = await execute(use, signal, self, config, gate, ports, report);
+      return await resultOf(use, outcome, undefined, call, measure());
+    } catch (err) {
+      const measured = measure();
+      return await resultOf(
+        use,
+        err instanceof Error ? err.message : String(err),
+        {
+          is_error: true,
+          ...(signal.aborted ? { cancelled: true } : {}),
+        },
+        call,
+        measured,
+      );
+    }
+  };
 
-  // the batch runs in parallel — the lock serializes the mind, not the tools (§2). The
-  // turn's interrupt is the principal's cancel (§2): a tool it cuts reports `cancelled`,
-  // one it reaches first never starts, and their row standing behind these results is what
-  // keeps the agent idle instead of narrating what it was told to drop.
-  out.push(
-    ...await Promise.all(runnable.map(async ({ use, call }) => {
-      if (signal.aborted) {
-        return await resultOf(use, NOT_RUN, { is_error: true, cancelled: true }, call);
-      }
-      // an exec tool's run is measured (§9): its wall time here, the rest as it reports
-      const ran = ports.exec?.[use.parts[0].data.name] !== undefined;
-      const facts: ExecFacts = {};
-      const report = (f: ExecFacts) => Object.assign(facts, f);
-      const began = performance.now();
-      const run = () => (ran ? { facts, ms: performance.now() - began } : undefined);
-      try {
-        const outcome = await execute(use, signal, self, config, gate, ports, report);
-        return await resultOf(use, outcome, undefined, call, run());
-      } catch (err) {
-        const measured = run();
-        return await resultOf(
-          use,
-          err instanceof Error ? err.message : String(err),
-          {
-            is_error: true,
-            ...(signal.aborted ? { cancelled: true } : {}),
-          },
-          call,
-          measured,
-        );
-      }
-    })),
-  );
-  return out;
+  return { out, describe, standing, orphaned, fresh, run };
 }
 
 /** What a gated call returns THE MOMENT it is made (§9). The model is told plainly that the
@@ -3526,6 +3593,7 @@ async function execute(
           ),
         ),
         zone,
+        seen: (rows) => seenBy(rows, config, ports),
       },
     );
   }
@@ -3733,12 +3801,52 @@ async function referent(
 const SEARCH_LIMIT = 50;
 
 /** What a search page is rendered with: whose eyes (`session`), the roster's names, the
- *  accounts' names (`<conn name>`), the org's clock — the window's own inputs. */
+ *  accounts' names (`<conn name>`), the org's clock — the window's own inputs — and where
+ *  the asking session holds each row (`seenBy`). */
 interface SearchView {
   session: SessionRef;
   roster: Roster;
   connections: Record<string, string>;
   zone?: string;
+  seen?: (rows: Event[]) => Promise<Map<EventId, Seen>>;
+}
+
+/**
+ * Where the asking session holds each row of a page (§5, `Seen`): its window draws it
+ * now, or its checkpoint stands for it, or neither. A checkpoint stands for the rows of
+ * its span the session's own view holds — its window was made of nothing else — so a row
+ * in the span counts only once the session's port reads it back; what a sibling session's
+ * room said is in the agent's history, and in no record of this session.
+ */
+async function seenBy(
+  rows: Event[],
+  config: AgentConfig,
+  ports: XiPorts,
+): Promise<Map<EventId, Seen>> {
+  const out = new Map<EventId, Seen>();
+  if (rows.length === 0) return out;
+  const session: Session = {
+    id: config.sessionId,
+    agentId: config.agentId,
+    conversation: sessionAddress(config.agentId, config.sessionId),
+  };
+  const window = await windowOf(ports.log, config.since);
+  const drawn = drawnIn(window, session, config.compactAt);
+  const floor = window.find((e): e is SummaryEvent => e.type === "summary");
+  for (const e of rows) {
+    if (drawn.has(e.id)) {
+      out.set(e.id, "window");
+      continue;
+    }
+    const [from, to] = floor?.payload.covers ?? [];
+    const spanned = from !== undefined && e.id >= from && e.id <= to! && !silenced(e);
+    // the newest row the session reads at or below this one IS this one: it is the
+    // session's (ids are fixed-width, so nothing sorts between an id and the id + "0")
+    const held = spanned && (await ports.log.read({ beforeId: `${e.id}0`, limit: 1 }))[0]?.id ===
+        e.id;
+    out.set(e.id, held ? "checkpoint" : "never");
+  }
+  return out;
 }
 
 /**
@@ -3774,6 +3882,14 @@ async function search(
   if (!Number.isInteger(limit) || limit < 1) {
     throw new Error(`limit must be a positive integer, got ${JSON.stringify(args.limit)}`);
   }
+  const around = args.around ?? 0;
+  if (!Number.isInteger(around) || around < 0 || around > AROUND_MAX) {
+    throw new Error(
+      `around must be an integer from 0 to ${AROUND_MAX}, got ${JSON.stringify(args.around)}`,
+    );
+  }
+  if (args.id !== undefined) return await searchId(log, String(args.id), around, view);
+  if (args.calls) return await searchCalls(log, self, args, limit, view);
   // the filters narrow by ADDRESS; a name is only ever a way to find one (§6). The account
   // is the agent's own, named as `send` names it, and an ambiguous name is refused there
   // an author key the window prints (`self`, `principal`, …) names who among us wrote a
@@ -3835,25 +3951,159 @@ async function search(
     const rest = page.filter((e) => e.ts !== rows[0].ts);
     if (rest.length > 0) page = rest;
   }
-  const around = args.around ?? 0;
-  if (!Number.isInteger(around) || around < 0 || around > AROUND_MAX) {
-    throw new Error(
-      `around must be an integer from 0 to ${AROUND_MAX}, got ${JSON.stringify(args.around)}`,
-    );
-  }
   const { lines, opts } = around > 0
     ? await surround(log, page, around)
     : { lines: page, opts: {} };
   const mine = contacts === undefined && profiles.length === 0 ? [] : await accounts(self, ports);
   const books = contacts === undefined ? [] : bookLines(mine, contacts);
-  const lines_ = page.length === 0
-    ? []
-    : [renderHits(lines, view.session, view.roster, view.zone, view.connections, opts)];
+  const seen = await view.seen?.(lines);
+  const lines_ = page.length === 0 ? [] : [
+    renderHits(lines, view.session, view.roster, view.zone, view.connections, {
+      ...opts,
+      ...(seen ? { seen } : {}),
+    }),
+  ];
   const older = more
     ? [`— older matches not shown — search again with before="${page[0].ts}" to read on —`]
     : [];
   const out = [...books, ...profileLines(mine, profiles), ...lines_, ...older];
   return out.length === 0 ? "nothing matched" : out.join("\n");
+}
+
+/** The answer a call got in its own step (§9): the first result naming it that is not a
+ *  late word. Results land right after their use, so the walk from the use is short. */
+async function answerOf(
+  log: Pick<Reader, "read">,
+  use: ToolUseEvent,
+): Promise<ToolResultEvent | undefined> {
+  const [r] = await log.read({
+    types: ["tool_result"],
+    afterId: use.id,
+    first: 1,
+    filter: (e) => e.type === "tool_result" && e.payload.ref_id === use.id && !isLate(e),
+  });
+  return r as ToolResultEvent | undefined;
+}
+
+/** The row a handle names (a line's `id`, a call's `id`), or the row a whole id is. */
+async function rowNamed(log: Pick<Reader, "read">, id: string): Promise<Event> {
+  const rows = HANDLE.test(id)
+    ? await log.read({ handle: id, limit: 2 })
+    : (await log.read({ beforeId: `${id}0`, limit: 1 })).filter((e) => e.id === id);
+  if (rows.length === 0) throw new Error(`no line or call "${id}" in your log`);
+  if (rows.length > 1) throw new Error(`"${id}" names more than one row — pass the whole id`);
+  return rows[0];
+}
+
+/**
+ * `search({id})` (§6): one row whole, where the asking session holds it marked. A line is
+ * drawn as a page draws it, with `around` lines of its conversation either side; a call
+ * (named by its own handle or by its answer's) with its answer unclipped.
+ */
+async function searchId(
+  log: Pick<Reader, "read">,
+  id: string,
+  around: number,
+  view: SearchView,
+): Promise<string> {
+  let row = await rowNamed(log, id);
+  if (row.type === "tool_result") row = await rowNamed(log, row.payload.ref_id);
+  if (row.type === "tool_use") {
+    const seen = await view.seen?.([row]);
+    const held = seen?.get(row.id);
+    return callLine(row, await answerOf(log, row), view.zone, {
+      ...(held ? { mark: `seen="${held}"` } : {}),
+      ...(row.agent?.session_id !== view.session.id ? { session: row.agent?.session_id } : {}),
+    });
+  }
+  if (row.type !== "message") throw new Error(`"${id}" names a ${row.type}, not a line or a call`);
+  const { lines, opts } = around > 0
+    ? await surround(log, [row], around)
+    : { lines: [row], opts: {} };
+  const seen = await view.seen?.(lines);
+  return renderHits(lines, view.session, view.roster, view.zone, view.connections, {
+    ...opts,
+    ...(seen ? { seen } : {}),
+  });
+}
+
+/**
+ * `search({calls: true})` (§6): the agent's own calls, from any of its sessions, each with
+ * its answer clipped to `CALL_CLIP`. `text` matches the call as a card names it or its
+ * answer; `before`/`after` bound it like a line. A script's calls are here too: the window
+ * folds them, and this is where each one is read.
+ */
+async function searchCalls(
+  log: Pick<Reader, "read">,
+  self: { id: string },
+  args: SearchArgs,
+  limit: number,
+  view: SearchView,
+): Promise<string> {
+  if (args.in !== undefined || args.from !== undefined || args.connection !== undefined) {
+    throw new Error("`in`, `from` and `connection` narrow messages; a call is yours alone");
+  }
+  const [before, after] = await Promise.all([
+    edgeOf(log, args.before, undefined),
+    edgeOf(log, args.after, undefined),
+  ]);
+  const bounds = {
+    before: before.at,
+    beforeId: before.id,
+    after: after.at,
+    afterId: after.id,
+    limit: limit + 1,
+  };
+  const needle = args.text?.toLowerCase();
+  const has = (s: string) => needle === undefined || s.toLowerCase().includes(needle);
+  const text = (output: Json) => typeof output === "string" ? output : JSON.stringify(output);
+  // a search is what the agent read, not what it did: its page quotes other rows, and the
+  // search asking would match its own words
+  const done = (e: ToolUseEvent) => e.agent?.id === self.id && e.parts[0].data.name !== "search";
+  const [uses, answers] = await Promise.all([
+    log.read({
+      ...bounds,
+      types: ["tool_use"],
+      filter: (e) =>
+        e.type === "tool_use" && done(e) && has(describeCall(e.parts[0].data, { full: true })),
+    }) as Promise<ToolUseEvent[]>,
+    needle === undefined ? Promise.resolve([] as ToolResultEvent[]) : log.read({
+      ...bounds,
+      types: ["tool_result"],
+      filter: (e) =>
+        e.type === "tool_result" && e.agent?.id === self.id && !isLate(e) &&
+        has(text(e.parts[0].data.output)),
+    }) as Promise<ToolResultEvent[]>,
+  ]);
+  // a call matches by its line or by its answer; the page is the newest calls either way
+  const found = new Map(uses.map((u) => [u.id, u]));
+  const pairs: { use: ToolUseEvent; answer?: ToolResultEvent }[] = [];
+  for (const id of new Set([...found.keys(), ...answers.map((a) => a.payload.ref_id)])) {
+    const use = found.get(id) ?? (await rowNamed(log, id)) as ToolUseEvent;
+    if (use.type === "tool_use" && done(use)) pairs.push({ use });
+  }
+  const ids = pairs.map((p) => p.use.id).sort().slice(-(limit + 1));
+  const more = ids.length > limit;
+  const page = more ? ids.slice(1) : ids;
+  if (page.length === 0) return "nothing matched";
+  const byId = new Map(pairs.map((p) => [p.use.id, p.use]));
+  const shown = await Promise.all(page.map(async (id) => {
+    const use = byId.get(id)!;
+    return { use, answer: await answerOf(log, use) };
+  }));
+  const seen = await view.seen?.(shown.map((p) => p.use));
+  const lines = shown.map(({ use, answer }) => {
+    const held = seen?.get(use.id);
+    return callLine(use, answer, view.zone, {
+      clip: CALL_CLIP,
+      ...(held ? { mark: `seen="${held}"` } : {}),
+      ...(use.agent?.session_id !== view.session.id ? { session: use.agent?.session_id } : {}),
+    });
+  });
+  const older = more
+    ? [`— older calls not shown — search again with before="${shortId(page[0])}" to read on —`]
+    : [];
+  return [...lines, ...older].join("\n");
 }
 
 /** A search bound (§6): a moment, or a line's id, which bounds by the log's own order and
@@ -4105,10 +4355,12 @@ export const OWN_TOOLS: ToolShape[] = [
           text: { type: "string" },
           limit: { type: "integer" },
           around: { type: "integer" },
+          calls: { type: "boolean" },
+          id: { type: "string" },
         },
       },
     },
-    vars: { search_limit: SEARCH_LIMIT, around_max: AROUND_MAX },
+    vars: { search_limit: SEARCH_LIMIT, around_max: AROUND_MAX, call_clip: CALL_CLIP },
   },
   {
     spec: {

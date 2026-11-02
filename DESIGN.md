@@ -805,7 +805,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; `<permission_response re verdict>` in the session room — the ask itself draws nothing, its `pending_approval` result carries the handle | act on an allow; think on the principal's deny; a lapse wakes nobody | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
 | `summary` | nu, in the idle gap after a turn (§5) | leading text block (§5) | look again (idle, or the think a dead turn left owed) | parts(text) · payload{covers} |
 | `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `<system kind="alarm">` carrying the note | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
-| `error` | nu | **system** + Stream | ignore | parts(data:{error}) |
+| `error` | nu · xi · the checkpoint · the mirror | **system** + Stream | ignore | parts(data:{error}) · extra{consumed} — what a failed request read (the model's, a checkpoint's) · payload{ref_id} — the call a word is said of, or the line that settled no card |
 | `delta` | main (presence, §9): the mind is at work and somebody is waiting | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
 | `anchor` | nu, with a step's first row, when the state moved since the last (§5) | `mid_conv_system` where its step read it: the sections that moved; crosses to no surface | ignore | parts(text, kind anchor: `now:` and the ambient lines) · payload{turn_id} |
 
@@ -2458,7 +2458,7 @@ its SQL side (5 tools: `executeSql`/`getDbSchema`/`sampleTableRows`/`selectAsCsv
 | tool | plane | signature → returns |
 |---|---|---|
 | `send` | control (dedicated, nu-mediated) | `send(to?, parts, re?, react?, action?)` → `sent · id <handle> — <what comes next>`, in words. `to` defaults to the triggering conversation. `re` is a rendered line's `id` (§5) — text beside it replies on the wire; `react` lands a glyph on it; `action` names the verb (`create` · `edit` · `delete` · `add` · `remove` — `create` and `add` are what a body and a glyph already mean, and the two mutating ones reach only the account's own messages). **The only dispatch path** — which is why every one of these is a send and not a tool of its own — and the only call the default rule table asks about (§3: policy is data; no tool is special). |
-| `search` | control (dedicated) | `search({in?, from?, connection?, before?, after?, text?, limit?, around?})` → the page as a string in the window's grammar (`<conn>`/`<conv>`/`<msg>`, dated), RLS-scoped, closed by the next page's `before` when cut. Clean sugar over the control-plane log read (SELECT / ripgrep). |
+| `search` | control (dedicated) | `search({in?, from?, connection?, before?, after?, text?, limit?, around?, calls?, id?})` → the page as a string in the window's grammar (`<conn>`/`<conv>`/`<msg>`, dated), RLS-scoped, closed by the next page's `before` when cut. Every line and call wears `seen`: `window` (the session's window draws it), `checkpoint` (its checkpoint stands for it: in the span, and read back through the session's own port), `never`. `calls` pages the agent's own calls from any of its sessions, searches aside, as `<call>` lines with the answer clipped; `text` matches the call or its answer. `id` reads one line or call whole. Clean sugar over the control-plane log read (SELECT / ripgrep). |
 | `conversation` | control (dedicated) | `conversation(action?, which?, who?, name?)` → the room (`name`, `kind`, `address`, `members`), or `{rooms}` for a bare `show`. A room's members and name (§6): `join` · `leave` · `add` · `remove` · `rename` · `show`. Locally the tool says each change in the room; on a wire each verb goes through the service's rooms port (`XiPorts.rooms`, one per service whose API has it), as the agent on the account, and the wire says the change. Either way the room holds one `room` data part from whoever made it — `joined`, `left` or the new `name` — rendered `<room>`; a local room `send` makes opens with one, its founding members joined. |
 | `bash` | exec + durable-on-files | `bash(command, wait?, wake?)` → the output, or — still running when its wait ran out — the output so far, with updates to follow (the exec plane, below). The **filesystem** substrate's one primitive; always present (scratch/task work). Capability via **binaries**: `aread` · `awrite` · `aedit` (Agent-SDK `Read`/`Write`/`Edit` semantics) + unix search/nav `grep` · `glob` · `ls`. |
 | `read` · `write` · `edit` | durable-on-db | The **database** substrate's primitive, by handle: `read(handle, offset?, limit?)` → the text head-truncated with `aread`'s footer · `write(handle, content)` · `edit(handle, spec)` with `aedit`'s conflict-marker spec. Present only where the docs live in the table (the sandbox can't touch the DB, §9 invariant). The model writes no SQL. On Postgres each call is a function of the store (`docs_read · docs_write · docs_edit`, the binaries' contracts in PL/pgSQL) that the harness calls with bound parameters under the agent role, so one `NOLOGIN` role serves every agent and the row-level policy is the whole rule; on SQLite each is the store's own call, the owner its handle resolves to always the asker. |
@@ -2629,14 +2629,14 @@ is helpers (binaries/functions) + skill.
 
 A script an agent runs (`deno run job.ts`, foreground or `&`) reaches the log the way the
 model does: **as a gated tool call**. `agents/<name>/door.sock` — one unix socket per
-agent, served by main — takes `{tool, input}` and publishes a **draft `tool_use`** in that
+agent, served by main — takes `{tool, input, bash?}` and makes a **`tool_use`** in that
 agent's name under a synthetic turn key (`job:<id>`, one per connection: a turn no session
-ever held, so act reads the run's uses as fresh work). Nothing executes at the door: the
-same permission table rules the use, the same act branch runs it, the same wake machinery
-then wakes the model — which narrates the outcome to its principal ("sent 5 reminders; the
-one for Juan Pérez failed"). One gate, one table, one audit trail; the door's whole
-authority is `publish(draft, as: this socket's agent)`, and it holds the agent's **scoped**
-port (§6), so even the boundary writes under visibility.
+ever held, so no step of the mind claims it). The same permission table rules the use and
+the same branch `act` answers a fresh call with answers it, and the script reads that
+answer; the model reads what the script printed, and narrates it to its principal ("sent
+5 reminders; the one for Juan Pérez failed"). One gate, one table, one audit trail; the
+door's whole authority is the session's runner acting as this socket's agent, and it holds
+the agent's **scoped** port (§6), so even the boundary writes under visibility.
 
 **Identity is the socket's.** The protocol has no field a script could claim an identity
 in; the door stamps `agent` from the path it serves. Under the container split each
@@ -2785,20 +2785,33 @@ configuration to find the socket, and it can only ever find its own. A stub gene
 the folder instead would be one more artifact to keep in sync, and it read as furniture the
 agent walks past rather than a capability it reaches for — nothing announced it. What
 teaches a capability is a skill. The client is the
-model's own two-verb vocabulary (`SendArgs`/`SearchArgs`, one set of types), and **every
-verb is the same wire op**: publish the gated tool_use, return `{id, status: "queued"}`
-the moment the ask is in the log — never the outcome, not even search's rows. The answer
-belongs to the next turn: a foreground script runs *inside* the very turn that would
-answer it (bash holds the turn lease), so a waiting call could only deadlock there, and
-the API has none — a script fires and forgets; act runs the use on the agent's scoped
-port, the result lands in the log, and the model narrates. One path means one law: a
-policy of `ask` on *any* tool — search included — rules a script's call exactly as it
-rules the model's, and a search executes with the agent's eyes, no wider. Asks settle
-after the script's turn ends — pending tool uses make the next invocation an act, results
-make the one after that the narrating think. A gated ask crosses to the principal as the
-usual card, and a verdict hours later runs through the errand path (§9 gating) — the
-script is never re-run (a script that needed those rows simply ran too early: re-run it,
-or let the mind carry on with the result).
+model's own vocabulary (`SendArgs`/`SearchArgs`/`ContactArgs`, one set of types), and
+**every verb is the same wire op**: the door answers the call with the branch `act`
+answers a fresh call with (`answerCall` — the same checks, the same table, the same card,
+the same execute, on the session's runner) and replies with the answer the model would
+have read: search's page, a send's receipt, `pending_approval` for an ask. The use and
+everything its answer wrote land in **one write**, so no turn ever finds the use
+unanswered and runs it again. The door answers outside the turn lease, which is what lets
+a foreground script wait: it runs *inside* a bash call that holds the lease, and a call
+that waited on the next turn would wait on itself. One path means one law: a policy of
+`ask` on *any* tool — search included — rules a script's call exactly as it rules the
+model's, and a search executes with the agent's eyes, no wider. **What comes after the
+answer is the mind's**: a gated ask crosses to the principal as the usual card, a verdict
+hours later runs through the errand path (§9 gating), and a send's fate arrives as an
+update; each wakes the agent, and the script is never re-run.
+
+**A script's calls fold into its bash call.** Every process of a bash call's job carries
+the call's id (`LIQUEN_JOB`), and the client sends it with each call: the use and its
+answer carry it as `extra.bash`. Such an answer is no reason to wake (`quiet`, and
+`relevant` lets neither row invoke anyone), because the script already holds it and what
+the script prints is the bash call's own output. The window draws the pairs nowhere and
+folds them into one line under the row that closes them: the bash call's answer for the
+calls made before it, the job's final word for those a script that outlived the answer
+made after it. The line counts the calls by tool, says how many failed and how many asked,
+and quotes each failure, named by its call. Each fold counts only what the log held
+before the row it sits under, so the window only grows. A call that names no bash call (a
+script someone ran by hand) welds to its answer like any call, and wakes the mind to
+narrate it.
 
 ### Storage ports & backends (SQLite ⟺ Postgres — one SQL substrate, two coordinators)
 

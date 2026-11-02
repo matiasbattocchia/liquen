@@ -19,6 +19,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { INLINE_CAP, inlineable, isExternal, type MediaBlock, pathOf } from "./store/media.ts"; // pure helpers — no I/O
 import { MIND, routedSession } from "./session.ts";
 import { clipEnd } from "./exec/truncate.ts";
+import { describeCall } from "./describe.ts";
 import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
 import { MONTHS } from "./store/timers.ts";
 import { DEFAULT_COMPACT_AT } from "./config.ts";
@@ -1114,6 +1115,9 @@ function renderMessages(
       .map((r) => r.payload.ref_id),
   );
   const welded = new Set([...useById.keys()].filter((id) => resultRefs.has(id)));
+  // a script's calls draw nothing of their own: their answers went to the script, and they
+  // fold into the bash call that ran it (`foldsOf`)
+  const folds = foldsOf(events, useById);
   // a step still waiting on a result draws nothing yet: its call is being made
   const unanswered = new Set(
     [...useById.values()].filter((u) => !welded.has(u.id)).map((u) => u.payload.turn_id),
@@ -1143,7 +1147,7 @@ function renderMessages(
   // Weld faithfully. `weldOrder` makes each step contiguous (its uses, then its results)
   // and floats what landed in flight after it, so a tool_result is always FIRST in its user
   // message (openbsp's sortToolMessages rule); the emit builder handles role alternation.
-  for (const e of weldOrder(events)) {
+  for (const e of weldOrder(events.filter((e) => scripted(e) === undefined))) {
     if (e.type === "anchor") {
       placeAnchor(anchorDelta(anchored, e.parts[0].text));
       anchored = e.parts[0].text;
@@ -1167,9 +1171,12 @@ function renderMessages(
       // a call's outcome after its answer (§9): the principal ruled and the harness ran
       // it, or what it set in motion went on — told in the harness's own voice, because
       // the tool_use it answers is spent. Narration, so it can stand alone in any position.
-      place("user", { type: "text", text: lateLine(e) });
+      place("user", { type: "text", text: lateLine(e, folds.get(e.id)) });
     } else if (e.type === "tool_result" && welded.has(e.payload.ref_id)) {
-      place("user", toolResultBlock(e, useById.get(e.payload.ref_id)!, mediaBlocks(e)));
+      place(
+        "user",
+        toolResultBlock(e, useById.get(e.payload.ref_id)!, mediaBlocks(e), folds.get(e.id)),
+      );
     } else if (e.type === "message") {
       if (isSelf(e, me) && e.envelope.conversation.address === here) {
         // the agent's own words, a silent closing's included: it was a response like any
@@ -1563,6 +1570,26 @@ export function unreachedLine(
 export interface HitsOpts {
   match?: Set<EventId>;
   adjacent?: (a: MessageEvent, b: MessageEvent) => boolean;
+  /** Where the asking session holds each line (`Seen`), worn as `seen="…"`. */
+  seen?: Map<EventId, Seen>;
+}
+
+/** Where a session holds a row (§5): its window draws it now (`window`), its checkpoint
+ *  stands for it (`checkpoint`), or neither (`never`): a silenced row, one from before the
+ *  session's boot floor or the cap, one in a room only another session reads. */
+export type Seen = "window" | "checkpoint" | "never";
+
+/** The rows a session's window draws now (§5): past the checkpoint and the caps, a
+ *  script's calls aside, which the window folds into their bash call. */
+export function drawnIn(
+  window: Event[],
+  session: Session,
+  compactAt = DEFAULT_COMPACT_AT,
+): Set<EventId> {
+  return new Set(
+    regions(window, session, compactAt).events.filter((e) => scripted(e) === undefined)
+      .map((e) => e.id),
+  );
 }
 
 export const GAP = "… lines between, not shown";
@@ -1573,7 +1600,7 @@ export function renderHits(
   roster: Roster,
   zone?: string,
   connections: Record<string, string> = {},
-  { match, adjacent }: HitsOpts = {},
+  { match, adjacent, seen }: HitsOpts = {},
 ): string {
   const events = byConversation([...hits].sort(byTs)) as MessageEvent[];
   const names = roomNames(events);
@@ -1604,7 +1631,11 @@ export function renderHits(
       run = { conv: namedRoom(e, names), lines: [] };
       cluster.convs.push(run);
     } else if (adjacent && last && !adjacent(last, e)) run.lines.push(GAP);
-    const mark = match?.has(e.id) ? "match" : undefined;
+    const held = seen?.get(e.id);
+    const mark = [
+      ...(match?.has(e.id) ? ["match"] : []),
+      ...(held ? [`seen="${held}"`] : []),
+    ].join(" ") || undefined;
     run.lines.push(msgLine(e, session, roster, zone, { ref: refOf(e), dated: true, mark }));
     last = e;
   }
@@ -1962,10 +1993,119 @@ export function isUpdate(e: Event, session: SessionRef): e is ToolResultEvent {
 }
 
 /** A late result as the model reads it: the outcome line, wearing the flags that place it
- *  in its call's life (`Payload`) — `gated`, `async`, `update`, `final`, the ones it has. */
-function lateLine(e: ToolResultEvent): string {
+ *  in its call's life (`Payload`) — `gated`, `async`, `update`, `final`, the ones it has —
+ *  and the calls its script made since the call's answer, folded (`foldsOf`). */
+function lateLine(e: ToolResultEvent, fold?: string): string {
   const flags = (["gated", "async", "update", "final"] as const).filter((f) => e.payload[f]);
-  return systemEl("tool_result", outcomeLine(e), flags);
+  return systemEl("tool_result", fold ? `${outcomeLine(e)}\n${fold}` : outcomeLine(e), flags);
+}
+
+/** A script's call, or its answer (`Extra.bash`): the id of the bash call whose script made
+ *  it through the door (§9). */
+export function scripted(e: Event): EventId | undefined {
+  if (e.type !== "tool_use" && e.type !== "tool_result") return undefined;
+  const bash = e.extra?.bash;
+  return typeof bash === "string" ? bash : undefined;
+}
+
+/** How much of one failure a fold quotes, and of one answer a search page's call line. */
+export const CALL_CLIP = 300;
+
+/** `s` within `n` characters, a cut one ending on `…`. */
+function clipped(s: string, n: number): string {
+  return s.length > n ? `${clipEnd(s, n - 1)}…` : s;
+}
+
+/**
+ * A call as a search page shows it (§6): its handle, its stamp, the call as a card names it
+ * and its answer, `→` what happened and `—` what didn't — clipped to `clip` characters, or
+ * whole when it is 0. `mark` is a bare attribute after the stamp; `session` names the
+ * session that made the call when it is not the one asking.
+ */
+export function callLine(
+  use: ToolUseEvent,
+  answer: ToolResultEvent | undefined,
+  zone?: string,
+  { mark, clip = 0, session }: { mark?: string; clip?: number; session?: string } = {},
+): string {
+  const call = describeCall(use.parts[0].data, { full: true });
+  const output = answer?.parts[0].data.output;
+  const text = typeof output === "string" ? output : JSON.stringify(output) ?? "";
+  const said = answer === undefined
+    ? "— no answer yet"
+    : `${answer.parts[0].data.is_error ? "—" : "→"} ${clip > 0 ? clipped(text, clip) : text}`;
+  const where = session ? ` session="${escAttr(session)}"` : "";
+  const flag = mark ? ` ${mark}` : "";
+  return `<call id="${shortId(use.id)}" at="${hhmm(use.ts, zone, true)}"${where}${flag}>${
+    escText(`${call} ${said}`)
+  }</call>`;
+}
+
+/**
+ * A script's calls, folded into the bash call that ran it (§9), keyed by the result they
+ * fold under. The script read every answer itself, and what it printed is the bash call's
+ * own output, so the window holds the count and the failures, each named by its call. A
+ * fold sits under the bash call's answer for the
+ * calls made before it, and under the job's final word for those a script that outlived
+ * the answer made after it; each counts only what the log held before the row it sits
+ * under, so a request never redraws a line an earlier one held. Calls with neither row in
+ * the window draw nothing.
+ */
+function foldsOf(events: Event[], uses: Map<EventId, ToolUseEvent>): Map<EventId, string> {
+  const answers = events.filter((e): e is ToolResultEvent =>
+    e.type === "tool_result" && scripted(e) !== undefined
+  );
+  const out = new Map<EventId, string>();
+  if (answers.length === 0) return out;
+  // the rows a fold sits under, per bash call: its answer, and the job's final word
+  const under = new Map<EventId, ToolResultEvent[]>();
+  for (const e of events) {
+    if (e.type !== "tool_result" || scripted(e) !== undefined) continue;
+    if (isLate(e) && !(e.payload.update && e.payload.final)) continue;
+    under.set(e.payload.ref_id, [...under.get(e.payload.ref_id) ?? [], e]);
+  }
+  for (const [bash, rows] of under) {
+    let from = "";
+    for (const row of rows) {
+      const mine = answers.filter((a) => scripted(a) === bash && a.id > from && a.id < row.id);
+      from = row.id;
+      if (mine.length > 0) out.set(row.id, foldLine(mine, uses));
+    }
+  }
+  return out;
+}
+
+/** One fold: how many calls, of which tools, how many failed or wait on the principal, and
+ *  each failure in the tool's own words. */
+function foldLine(answers: ToolResultEvent[], uses: Map<EventId, ToolUseEvent>): string {
+  const tools = new Map<string, number>();
+  let asked = 0;
+  const failed: string[] = [];
+  for (const a of answers) {
+    const use = uses.get(a.payload.ref_id);
+    const name = use?.parts[0].data.name ?? "call";
+    tools.set(name, (tools.get(name) ?? 0) + 1);
+    const { output, is_error } = a.parts[0].data;
+    if (is_error) {
+      const call = use ? describeCall(use.parts[0].data) : name;
+      failed.push(`· ${call} — ${clipped(failureOf(a), CALL_CLIP)}`);
+    } else if (
+      typeof output === "object" && output !== null && !Array.isArray(output) &&
+      output.status === "pending_approval"
+    ) asked++;
+  }
+  const n = answers.length;
+  const each = [...tools].map(([t, k]) => `${t} ${k}`).join(", ");
+  const how = [
+    ...(failed.length ? [`${failed.length} failed`] : []),
+    ...(asked ? [`${asked} asked your principal`] : []),
+  ];
+  return [
+    `the script made ${n} call${n === 1 ? "" : "s"} (${each})${
+      how.length ? `: ${how.join(", ")}` : ""
+    }`,
+    ...failed,
+  ].join("\n");
 }
 
 /** The call's wire id is the provider's when the row kept one (`call_id`, §5): a tool cycle
@@ -1986,9 +2126,11 @@ function toolResultBlock(
   e: ToolResultEvent,
   use: ToolUseEvent,
   media: ContentBlockParam[],
+  fold?: string,
 ): Anthropic.ToolResultBlockParam {
   const { output, is_error } = e.parts[0].data;
-  const text = typeof output === "string" ? output : JSON.stringify(output);
+  const said = typeof output === "string" ? output : JSON.stringify(output);
+  const text = fold ? `${said}\n\n${fold}` : said;
   return {
     type: "tool_result",
     tool_use_id: wireId(use), // the specific tool_use this result answers, by ITS wire id
