@@ -808,6 +808,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `error` | nu · xi · the checkpoint · the mirror | **system** + Stream | ignore | parts(data:{error}) · extra{consumed} — what a failed request read (the model's, a checkpoint's) · payload{ref_id} — the call a word is said of, or the line that settled no card |
 | `delta` | main (presence, §9): the mind is at work and somebody is waiting | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
 | `anchor` | nu, with a step's first row, when the state moved since the last (§5) | `mid_conv_system` where its step read it: the sections that moved; crosses to no surface | ignore | parts(text, kind anchor: `now:` and the ambient lines) · payload{turn_id} |
+| `prefix` | nu, with a step's first row, when the live system prefix differs from the last since the checkpoint (§5) | the first since the checkpoint is the request's `system`; each later one a `mid_conv_system` notice where its step read it, the sections that changed; crosses to no surface | ignore | parts(data, kind prefix: {sections: [{key, text, doc?}]}) · payload{turn_id} |
 
 - **mu emits 3**: `message` (say) + `tool_use` + `thinking`. Everything else is world + runtime.
 - **Only inbound types: `message`, `control`.** Open-set holds: unknown → ignore, safe to add.
@@ -1540,6 +1541,15 @@ before plus new rows, until a checkpoint moves the floor:
   ended on. It renders where it was written, as a `mid_conv_system` block, showing the
   sections that moved since the anchor before it (`— none` for one that emptied); the first
   in the window shows whole.
+- **The system prefix is an event too** (`prefix`), the anchor's shape: nu writes it with a
+  step's first row, whole (the always-docs' bodies by handle, then `On-demand docs`,
+  `Programs`, `Environment`), when the live prefix differs from the last the window holds
+  since the checkpoint, or none is there yet. The first since the checkpoint is the
+  request's `system` until the next one, so a doc edit moves no byte the window was signed
+  over. Each later one renders where it was written, in the anchor's block, as the sections
+  that changed: `<handle> — edited` and a line diff, `— added` whole, `— removed`. One
+  written before the checkpoint stands for a prefix the checkpoint replaced, and renders
+  nothing. It weighs nothing toward `compactAt`: the system holds it.
 - **A line draws no delivery state.** A failure or a withdrawal lands late, and a line is
   drawn once: the session that sent it hears of both by update, and a search page — written
   once, a snapshot of its moment — keeps `status="failed"` and `status="withdrawn"`. A room's
@@ -1594,8 +1604,11 @@ budget-free); past it the oldest falls back to its marker, a rewrite accepted as
 The checkpoint weighs the pictures with the rows (`mediaTokens`), so a window heavy with
 them reaches `compactAt` sooner, at the API's own rates: an image a token per 28×28 patch,
 capped at 4,784 on the high-resolution tier, a PDF page its text and an image of the page.
-A part carries neither dimensions nor page count, so an image weighs the cap and a PDF's
-pages are guessed from its size.
+An image's part carries its pixels (`file.width`, `file.height`), read off its header when
+the bytes land: `saveMedia` reads the bytes it stores, `filePartOf` the file it attaches, and
+the WhatsApp webhook the files the bridge landed through `/media` before their batch. A
+sticker without them weighs WhatsApp's 512×512, any other image the cap. A part carries no
+page count, so a PDF's pages are guessed from its size.
 
 A tool's attachment is not a received file: its uri is a workspace path the agent keeps
 rewriting (`aread shot.png` after every fix), so the path cannot stand for the bytes the
@@ -1677,9 +1690,11 @@ sections are. Harness-authored, so no doc edit can lose any of it, and stable be
 grants, so the prefix stays cached. One cache breakpoint at the end — the
 first of the three the request carries; the other two are the window's (above) — so
 the whole prefix is a single region and the section order is the model's reading order,
-words before the facts they are spent on. An hour's TTL, not the default five minutes: docs
-change when a human edits one, so an agent that wakes every twenty minutes was paying to
-re-write this block on every wake.
+words before the facts they are spent on. An hour's TTL, not the default five minutes: an
+agent that wakes every twenty minutes reads it back on every wake. Between checkpoints the
+request reads the prefix the first `prefix` event since the checkpoint holds (above): a
+doc edit reaches the model as a notice where it was read, and the prefix at the next
+checkpoint.
 
 ### Inline system blocks (the narrator)
 

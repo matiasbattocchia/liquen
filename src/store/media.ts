@@ -100,6 +100,68 @@ export function sniffMime(bytes: Uint8Array): string | null {
   return null;
 }
 
+/** How much of a file `imageSizeOf` reads: a JPEG's frame header can sit behind an EXIF
+ *  block of up to 64KB. */
+const SIZE_HEAD = 64 * 1024 + 1024;
+
+/** An image's pixels from its header — PNG, JPEG, GIF and WebP — or null for anything
+ *  else or a header cut short. */
+export function imageSize(bytes: Uint8Array): { width: number; height: number } | null {
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const has = (n: number) => bytes.length >= n;
+  const size = (width: number, height: number) =>
+    width > 0 && height > 0 ? { width, height } : null;
+  switch (sniffMime(bytes)) {
+    case "image/png":
+      return has(24) ? size(v.getUint32(16), v.getUint32(20)) : null;
+    case "image/gif":
+      return has(10) ? size(v.getUint16(6, true), v.getUint16(8, true)) : null;
+    case "image/webp": {
+      const chunk = String.fromCharCode(...bytes.subarray(12, 16));
+      if (chunk === "VP8L") {
+        if (!has(25)) return null;
+        const b = v.getUint32(21, true);
+        return size((b & 0x3fff) + 1, ((b >> 14) & 0x3fff) + 1);
+      }
+      if (!has(30)) return null;
+      if (chunk === "VP8 ") {
+        return size(v.getUint16(26, true) & 0x3fff, v.getUint16(28, true) & 0x3fff);
+      }
+      if (chunk === "VP8X") {
+        const w = bytes[24] | bytes[25] << 8 | bytes[26] << 16;
+        const h = bytes[27] | bytes[28] << 8 | bytes[29] << 16;
+        return size(w + 1, h + 1);
+      }
+      return null;
+    }
+    case "image/jpeg": {
+      // walk the markers to the first start-of-frame (C0–CF, less DHT C4, JPG C8, DAC CC)
+      let at = 2;
+      while (has(at + 9)) {
+        if (bytes[at] !== 0xff) return null;
+        const marker = bytes[at + 1];
+        if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+          return size(v.getUint16(at + 7), v.getUint16(at + 5));
+        }
+        at += 2 + v.getUint16(at + 2);
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** A local image's pixels, from the head of its file; null when it is none or is gone. */
+export async function imageSizeOf(uri: string): Promise<{ width: number; height: number } | null> {
+  if (isExternal(uri)) return null;
+  try {
+    return imageSize(await head(pathOf(uri), SIZE_HEAD));
+  } catch {
+    return null;
+  }
+}
+
 /** The git/grep heuristic: a NUL in the head ⇒ not text. The last-resort classifier —
  *  an unknown binary reads as `[binary …]`, never as mojibake. */
 export function looksBinary(bytes: Uint8Array): boolean {
@@ -143,6 +205,7 @@ export async function saveMedia(
     uri: pathToFileURL(path).toString(),
     ...(meta.name ? { name: meta.name } : {}),
     size: bytes.length,
+    ...imageSize(bytes),
   };
 }
 
@@ -310,10 +373,17 @@ export async function filePartOf(ref: string, scope?: FileScope): Promise<FilePa
   }
   const size = (await Deno.stat(abs)).size;
   const mime = mimeOf(abs) ?? sniffMime(await head(abs)) ?? "application/octet-stream";
+  const uri = pathToFileURL(abs).toString();
   return {
     type: "file",
     kind: kindOf(mime),
-    file: { mime_type: mime, uri: pathToFileURL(abs).toString(), name: basename(abs), size },
+    file: {
+      mime_type: mime,
+      uri,
+      name: basename(abs),
+      size,
+      ...(mime.startsWith("image/") ? await imageSizeOf(uri) : {}),
+    },
   };
 }
 

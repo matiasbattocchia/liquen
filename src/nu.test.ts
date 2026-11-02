@@ -21,7 +21,8 @@ const once = (emissions: Emission[], stop: Anthropic.StopReason = "end_turn") =>
   Promise.resolve(canned(emissions, stop));
 
 /** A step's own rows, without the anchor its request ended on (written first when due). */
-const rows = async (out: Promise<Draft<Event>[]>) => (await out).filter((e) => e.type !== "anchor");
+const rows = async (out: Promise<Draft<Event>[]>) =>
+  (await out).filter((e) => e.type !== "anchor" && e.type !== "prefix");
 
 Deno.test("nu stamps emissions: one session, one place — all of them carry the turn", async () => {
   const out = await rows(nu(
@@ -543,21 +544,80 @@ Deno.test("nu: a step writes the anchor its request ended on, when the state mov
   });
   const last = (sent!.messages.at(-1)!.content as Anthropic.ContentBlockParam[]).at(-1)!;
   assert(last.type === "mid_conv_system");
-  // the anchor is a row of its own, first, the text the request ended on
-  const [anchor, thinking, use] = out;
+  // the prefix the request was made with, then the anchor it ended on, each a row of its own
+  const [prefix, anchor, thinking, use] = out;
+  assert(prefix.type === "prefix");
   assert(anchor.type === "anchor");
   assertEquals(anchor.parts[0].text, (last.content[0] as Anthropic.TextBlockParam).text);
   assertEquals(anchor.payload?.turn_id, thinking.payload?.turn_id);
+  assertEquals(prefix.payload?.turn_id, thinking.payload?.turn_id);
   assertEquals(thinking.extra?.consumed, "e1"); // the horizon: the last event it read
+  assertEquals(prefix.extra?.consumed, "e1"); // and the step's first row, which opens the turn
   assertEquals(use.extra, undefined); // once per step, on its first event
 
-  // a closing step records its horizon too, and writes no anchor while the state stands
+  // a closing step records its horizon too, and writes neither while the state stands
+  const frozen = { ...prefix, id: "e1a" } as Event;
   const standing = { ...anchor, id: "e2" } as Event;
   const stood = await nu(
-    { ...input, events: [principal, standing] },
+    { ...input, events: [principal, frozen, standing] },
     once([{ kind: "assistant", text: "nada" }]),
   );
+  assert(!stood.some((e) => e.type === "prefix"));
   if (stood.some((e) => e.type === "anchor")) return; // the minute turned between the two
   assertEquals(stood[0].type, "message");
   assertEquals(stood[0].extra?.consumed, "e2");
+});
+
+Deno.test("nu: a doc edit keeps the system and writes the prefix it changed to", async () => {
+  const sent: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const doc = (body: string) => ({
+    header: {
+      handle: "/org/memories/agenda.md",
+      scope: "agent" as const,
+      kind: "memory" as const,
+      name: "agenda",
+      load: "always" as const,
+    },
+    body,
+  });
+  const principal: Event = {
+    id: "e1",
+    ts: "2026-07-19T10:00:00Z",
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "default",
+      conversation: { address: "mind@a1" },
+      sender: { address: "ana", name: "Ana" },
+    },
+    parts: [{ type: "text", kind: "text", text: "anotá a Ringo" }],
+  };
+  const think = (events: Event[], body: string) =>
+    nu(
+      { events, docs: [doc(body)], tools: [], compactPrompt: PROMPT, config: CONFIG },
+      (params) => {
+        sent.push(params);
+        return Promise.resolve(canned([{ kind: "assistant", text: "listo" }]));
+      },
+    );
+  const first = await think([principal], "- mar 15:00 Franco");
+  const frozen = { ...first.find((e) => e.type === "prefix")!, id: "e1a" } as Event;
+  const second = await think([principal, frozen], "- jue 17:30 Ringo\n- mar 15:00 Franco");
+
+  // the second request reads the first one's system, byte for byte
+  assertEquals(sent[1].system, sent[0].system);
+  assert(JSON.stringify(sent[1].system).includes("mar 15:00 Franco"));
+  assert(!JSON.stringify(sent[1].system).includes("Ringo"));
+  // and is told what changed, at its tail
+  const tail = (sent[1].messages.at(-1)!.content as Anthropic.ContentBlockParam[])
+    .filter((b) => b.type === "mid_conv_system")
+    .map((b) => (b.content[0] as Anthropic.TextBlockParam).text);
+  assertEquals(
+    tail[0],
+    "/org/memories/agenda.md — edited\n  [/org/memories/agenda.md]\n+ - jue 17:30 Ringo\n  - mar 15:00 Franco",
+  );
+  // the step writes the prefix it was told of, whole
+  const written = second.find((e) => e.type === "prefix");
+  assert(written?.type === "prefix");
+  assert(written.parts[0].data.sections[0].text.includes("Ringo"));
 });

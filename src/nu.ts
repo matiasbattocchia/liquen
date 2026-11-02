@@ -36,12 +36,14 @@ import {
   type BeforePool,
   type Env,
   type Member,
+  prefixDue,
   render,
   type RenderInput,
-  renderSystem,
   type Roster,
   SILENCE,
   type Surface,
+  systemOf,
+  systemSections,
 } from "./render.ts";
 import { type Effort, type ModelTransport, mu, type StepInput, type StepResult } from "./mu.ts";
 
@@ -243,7 +245,7 @@ export async function checkpoint(
   const { session, turnId, attempt, env } = turnOf(input, transport);
   const now = new Date().toISOString();
   const summary = await buildSummary({
-    system: renderSystem(input.docs, env),
+    system: systemOf({ events: input.events, docs: input.docs, env }),
     tools: input.tools,
     window: (tail) => render({ ...renderInput(input, session, env, now), tail }).messages,
     events: input.events,
@@ -373,7 +375,8 @@ export async function nu(
     }
   }
 
-  // Every step records, on its first event, the last event its request read (`consumed`).
+  // Every step records, on its first word or call, the last event its request read
+  // (`consumed`): the closing carries it, where xi measures what is still owed.
   // Later requests replay this step's thinking, whose signature binds everything the
   // request held before it — so an event that landed after the horizon, while this step's
   // call was in flight, renders after the step rather than under its thinking (§5).
@@ -427,5 +430,21 @@ export async function nu(
       parts: [{ type: "text", kind: "anchor", text: anchor }],
     });
   }
+  // The request's own prefix, the same way: the first since the checkpoint, or the live one
+  // when a doc or the environment changed since the last the window holds (§5).
+  const sections = systemSections(input.docs, env);
+  if (events.length > 0 && prefixDue(input.events, sections)) {
+    events.unshift({
+      ts: now,
+      type: "prefix",
+      payload: { turn_id: turnId },
+      agent: self,
+      envelope: here,
+      parts: [{ type: "data", kind: "prefix", data: { sections } }],
+    });
+  }
+  // the step's first row, whichever it is, carries the horizon too: a reader names the
+  // turn's opener from the row that opens it
+  if (read && events.length > 0) events[0].extra = { ...events[0].extra, consumed: read.id };
   return events;
 }
