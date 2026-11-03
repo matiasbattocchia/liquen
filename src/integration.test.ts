@@ -4009,7 +4009,10 @@ Deno.test("a conditional doc loads while its conversation has an event in the wi
     await log.publish(principalMsg("hola"));
     await xi(CONFIG, ports);
     const system = (last!.system as { text: string }[]).map((b) => b.text).join("");
-    assertStringIncludes(system, `[${dir}/docs/agents/a1/ana.md]\nAna prefers short answers.`);
+    assertStringIncludes(
+      system,
+      `[${dir}/docs/agents/a1/ana.md] 1% of 2,200 chars\nAna prefers short answers.`,
+    );
     assertEquals(system.includes("Mars"), false, "a chat out of view loads nothing");
   } finally {
     await log.close();

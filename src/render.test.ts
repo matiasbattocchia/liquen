@@ -1247,8 +1247,7 @@ Deno.test("a doc edit leaves the system as the checkpoint froze it, and stands w
   assertEquals(two.system, one.system);
   assertEquals(
     blocksOf(two.messages).filter((b) => b.type === "mid_conv_system").map(sysText)[0],
-    "/org/data/agents/a1/agenda.md — edited\n  [/org/data/agents/a1/agenda.md]\n" +
-      "+ - jue 17:30 Ringo\n  - mar 15:00 Franco",
+    "/org/data/agents/a1/agenda.md — edited\n+ - jue 17:30 Ringo\n  - mar 15:00 Franco",
   );
   assert(prefixDue(first, systemSections(after)));
   assert(!prefixDue(first, systemSections(before)));
@@ -1314,13 +1313,57 @@ Deno.test("a doc edit the agent's own call wrote out is named alone", () => {
   );
 });
 
+Deno.test("a memory shows how full it is: on its heading, in its index line, on its notice", () => {
+  const sized = (d: DocEntry, chars: number): DocEntry => ({
+    ...d,
+    header: { ...d.header, chars },
+  });
+  const memories = (body: string) =>
+    sized(doc("agent", "memory", "memories", { load: "always" }, body), [...body].length);
+  const docs = [
+    memories("- Ana = Ana Pérez"),
+    sized(doc("shared", "memory", "trips", { description: "viajes", load: "lazy" }), 682),
+    sized(doc("shared", "memory", "bare", { load: "lazy" }), 0),
+    sized(doc("agent", "memory", "full", { load: "always" }, "x"), 2_640),
+    doc("agent", "instruction", "instructions", { load: "always" }, "Sé breve."),
+  ];
+  const text = systemSections(docs).map((s) => s.text).join("\n\n");
+  assertStringIncludes(text, "[/org/data/agents/a1/memories.md] 1% of 2,200 chars\n- Ana");
+  assertStringIncludes(text, "[/org/data/agents/a1/full.md] 120% of 2,200 chars\n");
+  assertStringIncludes(text, "- [/org/data/shared/trips.md] 31% of 2,200 chars · viajes");
+  assertStringIncludes(text, "- [/org/data/shared/bare.md] 0% of 2,200 chars\n");
+  // only a memory carries the figure
+  assertStringIncludes(text, "[/org/data/agents/a1/instructions.md]\nSé breve.");
+
+  // an edit's notice carries the new figure in its head, and the heading stays out of the
+  // lines a call is checked against
+  const grown = memories("- Ana = Ana Pérez\n- Beto = Alberto Gómez");
+  const path = "/org/data/agents/a1/memories.md";
+  assertEquals(
+    prefixDelta(systemSections([docs[0]]), systemSections([grown])),
+    `${path} — edited · 2% of 2,200 chars\n  - Ana = Ana Pérez\n+ - Beto = Alberto Gómez`,
+  );
+  assertEquals(
+    prefixDelta(
+      systemSections([docs[0]]),
+      systemSections([grown]),
+      new Set(["- Beto = Alberto Gómez"]),
+    ),
+    `${path} — edited by you · 2% of 2,200 chars`,
+  );
+  // a heading that changed alone, with the body as it was, is no change to tell
+  assertEquals(
+    prefixDelta(systemSections([docs[0]]), systemSections([sized(docs[0], 999)])),
+    "",
+  );
+});
+
 Deno.test("a prefix names a doc that came and one that went", () => {
   const was = systemSections([agenda("- a")]);
   const is = systemSections([doc("agent", "memory", "people", { load: "always" }, "- Ana")]);
   assertEquals(
     prefixDelta(was, is),
-    "/org/data/agents/a1/people.md — added\n[/org/data/agents/a1/people.md]\n- Ana\n\n" +
-      "/org/data/agents/a1/agenda.md — removed",
+    "/org/data/agents/a1/people.md — added\n- Ana\n\n/org/data/agents/a1/agenda.md — removed",
   );
 });
 

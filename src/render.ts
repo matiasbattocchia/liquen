@@ -243,18 +243,34 @@ function byCascade(a: DocEntry, b: DocEntry): number {
     (a.header.name < b.header.name ? -1 : a.header.name > b.header.name ? 1 : 0);
 }
 
+/** What a memory doc's body holds before it is due a merge or a prune, in characters. The
+ *  figure informs the agent, and nothing enforces it. */
+export const MEMORY_CHARS = 2_200;
+
+/** How full a memory is, as its heading and its index line show it: ` 20% of 2,200 chars`.
+ *  Empty for any other doc. */
+function fill(h: DocEntry["header"]): string {
+  if (h.chars === undefined) return "";
+  return ` ${Math.round(h.chars / MEMORY_CHARS * 100)}% of ${
+    MEMORY_CHARS.toLocaleString("en-US")
+  } chars`;
+}
+
 /** An inlined always-doc: a provenance header, then its body. The handle is the header's
- *  own — the same string the index prints and the read takes. */
+ *  own — the same string the index prints and the read takes; a memory's adds how full it
+ *  is. */
 function section(d: DocEntry): string {
-  return `[${d.header.handle}]\n${d.body ?? ""}`;
+  return `[${d.header.handle}]${fill(d.header)}\n${d.body ?? ""}`;
 }
 
 /** The pull-index: one pointer line per lazy doc — its handle in the brackets an inlined
- *  doc wears, and its description when it has one. The opening line says what the
- *  handle opens with, which is the substrate's. */
+ *  doc wears, how full a memory is, and its description when it has one. The opening line
+ *  says what the handle opens with, which is the substrate's. */
 function renderIndex(pointers: DocEntry[], on: Env["docs"] = "files"): string {
   const lines = pointers.map((d) => {
-    const tail = d.header.description ? ` ${d.header.description}` : "";
+    const fig = fill(d.header);
+    const desc = d.header.description;
+    const tail = fig && desc ? `${fig} · ${desc}` : desc ? ` ${desc}` : fig;
     return `- [${d.header.handle}]${tail}`;
   });
   const opener = on === "table"
@@ -363,33 +379,47 @@ export function prefixDelta(
   next: PrefixSection[],
   said: ReadonlySet<string> = new Set(),
 ): string {
-  const was = new Map(prev.map((s) => [s.key, s.text]));
+  const was = new Map(prev.map((s) => [s.key, s]));
   const is = new Set(next.map((s) => s.key));
-  // a section's first line is its heading, which no call writes
   const told = (lines: string[]) => {
     const solid = lines.filter((l) => l.trim());
     return solid.length > 0 && solid.every((l) => said.has(l.trimEnd()));
   };
   return [
     ...next.flatMap((s) => {
+      const now = framed(s);
       const old = was.get(s.key);
       if (old === undefined) {
+        // a harness section's first line is its heading, which no call writes either
+        const lines = now.body.split("\n").slice(s.doc ? 0 : 1);
         return [
-          told(s.text.split("\n").slice(1))
-            ? `${s.key} — added by you`
-            : `${s.key} — added\n${s.text}`,
+          told(lines)
+            ? `${s.key} — added by you${now.tag}`
+            : `${s.key} — added${now.tag}\n${now.body}`,
         ];
       }
-      if (old === s.text) return [];
-      const ops = diffOps(old, s.text);
+      if (old.text === s.text) return [];
+      const ops = diffOps(framed(old).body, now.body);
+      if (ops.every((o) => o.mark === " ")) return []; // the heading's figure alone
       return [
         told(ops.filter((o) => o.mark !== " ").map((o) => o.line))
-          ? `${s.key} — edited by you`
-          : `${s.key} — edited\n${lineDiff(ops)}`,
+          ? `${s.key} — edited by you${now.tag}`
+          : `${s.key} — edited${now.tag}\n${lineDiff(ops)}`,
       ];
     }),
     ...prev.filter((s) => !is.has(s.key)).map((s) => `${s.key} — removed`),
   ].join("\n\n");
+}
+
+/** A section as a notice compares it. A doc's heading is set apart: no call writes it, and
+ *  a memory's figure on it rides the notice's head (`· 97% of 2,200 chars`). A harness
+ *  section is compared whole. */
+function framed(s: PrefixSection): { tag: string; body: string } {
+  if (!s.doc) return { tag: "", body: s.text };
+  const nl = s.text.indexOf("\n");
+  const head = nl === -1 ? s.text : s.text.slice(0, nl);
+  const fig = head.slice(`[${s.key}]`.length).trim();
+  return { tag: fig ? ` · ${fig}` : "", body: nl === -1 ? "" : s.text.slice(nl + 1) };
 }
 
 /** Every line a call's input holds, its strings split and right-trimmed: what the agent

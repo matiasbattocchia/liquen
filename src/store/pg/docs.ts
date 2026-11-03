@@ -22,6 +22,7 @@ import {
   type DocRef,
   type DocScope,
   type DocTable,
+  entryOf,
   frontmatterOf,
   stripFrontmatter,
 } from "../docs.ts";
@@ -68,11 +69,10 @@ export async function openPgDocs(url: string, opts: { schema?: string } = {}): P
         if (frontmatter === null) continue; // a doc declares itself, as a file does (§8)
         const columns = columnsOf(frontmatter);
         if (!applies(columns, ctx)) continue;
-        const entry: DocEntry = {
-          header: { scope: r.scope, name: r.name, ...columns, handle: `${r.scope}/${r.name}` },
-        };
-        if (columns.load !== "lazy") entry.body = stripFrontmatter(r.text);
-        out.push(entry);
+        out.push(entryOf(
+          { scope: r.scope, name: r.name, ...columns, handle: `${r.scope}/${r.name}` },
+          stripFrontmatter(r.text),
+        ));
       }
       return out;
     },

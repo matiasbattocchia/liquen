@@ -67,6 +67,8 @@ export interface DocHeader extends DocRef {
   load: DocLoad;
   /** The conversation a `conditional` doc loads with. */
   when?: Where;
+  /** A memory's size, its body's characters: what its budget figure counts, loaded or not. */
+  chars?: number;
   /** The adapter's address for the doc — what render prints and what the agent's own read
    *  takes, one string. Files: the file's absolute path. */
   handle: string;
@@ -139,13 +141,10 @@ export function openFileDocs(root: string): Docs {
           if (frontmatter === null) continue; // no frontmatter ⇒ not a doc (workspace file)
           const columns = columnsOf(frontmatter);
           if (!applies(columns, ctx)) continue;
-          const entry: DocEntry = {
-            header: { scope, name, ...columns, handle: path },
-          };
-          if (columns.load !== "lazy") {
-            entry.body = stripFrontmatter(await Deno.readTextFile(path));
-          }
-          out.push(entry);
+          const body = columns.load !== "lazy" || columns.kind === "memory"
+            ? stripFrontmatter(await Deno.readTextFile(path))
+            : undefined;
+          out.push(entryOf({ scope, name, ...columns, handle: path }, body));
         }
       }
       return out;
@@ -187,6 +186,15 @@ export function columnsOf(
     ...(when ? { when } : {}),
     ...(typeof description === "string" && description.length > 0 ? { description } : {}),
   };
+}
+
+/** A listed doc from its header and its body, every adapter's: the body rides along when
+ *  the doc loads, and a memory's size is counted whether it loads or not. */
+export function entryOf(header: DocHeader, body: string | undefined): DocEntry {
+  const sized = header.kind === "memory" && body !== undefined
+    ? { ...header, chars: [...body].length }
+    : header;
+  return header.load === "lazy" ? { header: sized } : { header: sized, body };
 }
 
 /** Whether a doc belongs in the cascade the context resolves: every doc but a conditional

@@ -614,7 +614,7 @@ Deno.test("nu: a doc edit keeps the system and writes the prefix it changed to",
     .map((b) => (b.content[0] as Anthropic.TextBlockParam).text);
   assertEquals(
     tail[0],
-    "/org/memories/agenda.md — edited\n  [/org/memories/agenda.md]\n+ - jue 17:30 Ringo\n  - mar 15:00 Franco",
+    "/org/memories/agenda.md — edited\n+ - jue 17:30 Ringo\n  - mar 15:00 Franco",
   );
   // the step writes the prefix it was told of, whole
   const written = second.find((e) => e.type === "prefix");

@@ -156,6 +156,10 @@ Deno.test("a conditional doc is listed, whole, only while its conversation is in
     assertEquals(listed[0].body, "write in English");
     assertEquals(listed[2].header.load, "lazy");
     assertEquals(listed[2].body, undefined);
+    // a memory is sized whether its body rides along or not
+    assertEquals(listed[0].header.chars, 16);
+    assertEquals(listed[2].header.chars, 1);
+    assertEquals(listed[1].header.chars, undefined);
   });
 });
 

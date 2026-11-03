@@ -106,6 +106,9 @@ export function docsSuite(s: DocsSubstrate): void {
       assertEquals(by.get("anywhere/deep/note")!.kind, "skill");
       assertEquals(by.get("loose")!.kind, "memory");
       assertEquals(by.get("loose")!.description, "d");
+      // a memory is sized, lazy or not, in characters, not bytes; any other kind is not
+      assertEquals(by.get("loose")!.chars, 16);
+      assertEquals(by.get("anywhere/deep/note")!.chars, undefined);
       assertEquals(by.get("weird")!.kind, "memory");
       assertEquals(by.has("bare"), false); // no frontmatter ⇒ not a doc, as a file is not
       assertEquals(by.get("quoted")!.description, "ratio a:b, quoted");

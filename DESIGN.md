@@ -1553,7 +1553,9 @@ before plus new rows, until a checkpoint moves the floor:
   that changed: `<handle> — edited` and a line diff, `— added` whole, `— removed`. A
   change whose every line the agent's own calls since the prefix before wrote out (a call
   that ran: no error, no refusal, no `pending_approval`) is its head alone, `— edited by
-  you` or `— added by you`: the call above it already shows the lines. One
+  you` or `— added by you`: the call above it already shows the lines. A doc's heading
+  stays out of both the diff and that test, since no call writes it; a memory's figure on
+  it rides the head instead (`— edited by you · 97% of 2,200 chars`). One
   written before the checkpoint stands for a prefix the checkpoint replaced, and renders
   nothing. It weighs nothing toward `compactAt`: the system holds it.
 - **A line draws no delivery state.** A failure or a withdrawal lands late, and a line is
@@ -2225,6 +2227,11 @@ Registers (same substrate, different rules):
   marker + path. The PREPROCESSOR step (voice→transcription, image→described for
   non-vision paths) stays deferred to openbsp at the producer boundary. (Anthropic API:
   images + PDFs, not audio.)
+- **A memory shows its budget.** Its heading, inlined, or its index line, lazy, says how
+  full it is against `MEMORY_CHARS` (2,200 characters of body): `[<handle>] 94% of 2,200
+  chars`. Characters, so the model can judge them and the figure holds across models. The
+  figure informs and nothing enforces it; `instructions.md` says past 100% is time to merge
+  or prune.
 - Eviction = an **un-anchored maintenance step** (cron sweep): merge/supersede, size
   budget per scope, every eviction logged with cause.
 

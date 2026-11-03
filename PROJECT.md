@@ -6169,7 +6169,7 @@ question, took it to mean the send it had just made to Luciano, and explained th
   line's `ref_id` is provenance). Render draws it in a `<before>` ahead of the line, a call
   as `callLine` does with its answer, and the line points at it by `re`.
 
-### Three scopes, a doc per conversation, and no kind folders (2026-11-03) — LANDED
+### Three scopes, a doc per conversation, no kind folders, and a memory's budget (2026-11-03) — LANDED
 
 The `conversation` scope was the session's own room (`mind@matias`), which nobody wrote to,
 while what holds for one chat had nowhere to go: a session's memberships are whole
@@ -6181,6 +6181,10 @@ connections, so the WhatsApp account was one membership.
 - **A scope's two files**: `instructions.md` and `memories.md` at the root of `shared/` and
   of each agent's folder; `system/` holds `instructions.md`, `compaction.md`, `tools/` and
   `skills/`. Seeding lays a root file wherever it is absent and never a kind folder.
+- **A memory shows its budget**: `MEMORY_CHARS = 2_200`, Hermes's figure, counted on the
+  body in characters. The adapters size every memory, lazy ones too (`DocHeader.chars`), and
+  render prints `N% of 2,200 chars` on its heading or its index line. A notice compares a
+  doc's body alone and carries the new figure in its head.
 - **Open**: on the table only the agent's own scope takes a write, so a shared conditional
   doc there is the operator's to write. On files `shared/` is everyone's.
 

@@ -109,6 +109,8 @@ Guidelines:
 - Keep the one-liners in `memories.md`, and give a longer entry a lazy doc of its own.
 - What holds for one conversation alone goes in a conditional doc for it.
 - Date what you write into a memory, and prune from time to time.
+- A memory's heading says how full it is (`40% of 2,200 chars`). Past 100%, merge or prune
+  it before adding more.
 - Instructions usually load always and skills lazily, as a rule of thumb.
 - Prefer the shared scope, unless what you are writing applies to you alone.
 - Once a scope holds about ten docs, group them in folders: `skills/`, `memories/`.
