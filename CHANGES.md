@@ -1,4 +1,125 @@
-# Next batch
+# Next batch: storage and docs
+
+Decided 2 and 3 Nov 2026. Conversation files become an object store the log guards, and the
+docs drop their scaffolding and show their budget.
+
+## 1. Storage
+
+`data/conversations/` becomes `data/storage/`: the one folder that moves to R2, S3 or another
+object store, as `config.jsonc` names. It holds blobs, never docs.
+
+- **No docs in storage.** Discovery never walks it. A doc declares itself by its header, and
+  a received file can open with one (`conversations/5491133585694/media/81f9b45f1f6d1f8e.md`
+  does), so a contact could otherwise send in a doc.
+- **Three schemes, and no host path in the log:**
+  - `storage://media/<hash>.<ext>`: kept by the harness, resolved to the configured backend;
+  - `file://`: the agent's workspace, such as a file about to go out;
+  - `https://`: an outside link.
+
+  Render prints the URI and `aread` takes it, the rule docs already follow. `aread <uri>`
+  prints the text; `aread <uri> --to <path>` lands the bytes in the workspace, for a program
+  that needs a file.
+- **Content-addressed.** The hash is SHA-256 cut to 32 hex (128 bits), one namespace for the
+  org: a file forwarded to three chats is kept once.
+- **The extension is the bytes'.** When the wire says `application/octet-stream`,
+  `saveMedia` sniffs the bytes (`sniffMime`). The WhatsApp bridge's `CreateFormFile` labels
+  every upload octet-stream, which is why the org holds 4,276 `.bin` files that are ogg,
+  webp and mpeg. The bridge sets the part's `Content-Type` too (`open-bsp-whatsmeow`,
+  outside this repo).
+- **The log guards it.** An agent reads an object when an event it can read references it.
+  Publishing writes each URI an event carries into `refs(uri, event_id)`, and the check is an
+  `EXISTS` over `refs` joined to the agent's view: the policy on `storage.objects` on
+  Postgres, the door's own check on SQLite and files.
+- **A reference grants nothing.** Every `storage://` URI an event carries must already be
+  readable by its writer (`WITH CHECK`, and the publish path on SQLite). Bytes the agent
+  uploads are its own.
+- **References keep an object.** It goes when no event references it; an upload whose
+  message never landed has none.
+- **No mounts.** Bubbles and containers mount no storage: `aread` resolves `storage://`
+  through the agent's door. A program that needs the bytes (ffmpeg, a transcriber) gets them
+  through `--to`, the same door.
+- **The transcript caches go.** A transcript is an event already. The `<hash>.txt` beside an
+  audio only spared a forwarded audio a second pass, and `refs` answers that: an event that
+  references the same URI and has its transcript.
+- **The bridge keeps its order.** It uploads before the message, and the path names no
+  conversation.
+- **The org's files move.** `conversations/*/media/` goes into `storage/media/` under the new
+  hashes, each `.bin` sniffed, and each `file://` URI in the log is rewritten to its
+  `storage://media/` one. The log then holds one scheme for harness-kept bytes, and no old
+  path needs resolving.
+
+## 2. Docs
+
+- **`load: conditional`.** A doc whose header names `service` and `address` loads when that
+  conversation is in view: from the agent's folder, personal, or from `shared/`, everyone's.
+  The `conversation` scope goes, and three remain: `system`, `shared`, `agent`.
+- **One `instructions.md` per scope**, scoped by its folder:
+  - `system/instructions/system.md` → `system/instructions.md`;
+  - `shared/instructions/organization.md` → `shared/instructions.md`;
+  - `agents/<agent>/instructions/agent.md` → `agents/<agent>/instructions.md`.
+
+  `system/instructions/compaction.md` → `system/compaction.md`, and `system/` holds two files
+  and two folders: `instructions.md`, `compaction.md`, `tools/`, `skills/`.
+- **A `memories.md` in `shared/` and in each agent's folder**, seeded with `kind: memory`,
+  `load: always` and an empty body.
+- **No kind folders.** Seeding lays a scope's home and its two files, never `instructions/`,
+  `skills/` or `memories/`. Folders are a convention, which `system.md` recommends once a scope
+  holds about ten docs.
+- **The two orgs on this machine are reworked by hand**, with the code, no migration:
+  - `new`: `organization.md` and each `agent.md` move to their `instructions.md`;
+    `aliases.md` folds into `agents/matias/memories.md`; empty kind folders go, and those that
+    hold docs (`shared/instructions/web-search.md`, `agents/matias/memories/grabaciones.md`)
+    stay, by convention.
+  - `vibes`: `shared/instructions/main.md` becomes `shared/instructions.md`; `chiche`'s empty
+    `instructions/`, `memories/` and `skills/` go.
+  - Links: both orgs swap the `data/system/instructions` folder link for two file links,
+    `instructions.md` and `compaction.md`, at the checkout's `src/seed/system/`. `vibes` links
+    `skills/` too, as `new` does, in place of its empty folder.
+
+## 3. A memory shows its budget
+
+- `MEMORY_CHARS = 2_200`, counted on the body, header excluded. Characters, as Hermes counts:
+  a model can judge them, and the figure holds across models. It informs and never enforces.
+- Every memory doc's reference shows how full it is: an inlined one on its heading, an
+  on-demand one in its index line.
+- A notice for an edited memory carries the new figure in its head. The heading's figure
+  stays out of the `by you` test, since no call writes it.
+- `system.md` says what it means: past 100%, merge or prune before adding.
+
+The figures from the org on 3 Nov, `aliases.md` folded into the agent's `memories.md`:
+
+```
+[/home/matias/new/data/shared/memories.md] 0% of 2,200 chars
+
+[/home/matias/new/data/agents/matias/memories.md] 20% of 2,200 chars
+- "Mamá" = Vivian Sobisch (25 Sep 2026)
+- (27 Oct) Mars (5491165565431): escribirle siempre en inglés.
+…
+
+[/home/matias/new/data/agents/matias/memories/grabaciones.md] 94% of 2,200 chars
+- 5 Nov jue 17:30 Ringo Gustavo Obregón (5492615737049): set ~50 min de bandas 60/70s. …
+…
+```
+
+A lazy memory in the index (an illustration: the org has none), and a notice after an edit:
+
+```
+- [/home/matias/new/data/agents/matias/memories/viajes.md] 31% of 2,200 chars · viajes y reservas
+
+/home/matias/new/data/agents/matias/memories/grabaciones.md — edited by you · 97% of 2,200 chars
+```
+
+## Not in this batch
+
+Cards, set aside. The `## Knowledge` rewrite in `system.md`. The nightly pass. A `path`
+condition beside `service` and `address`, loading a doc while the agent's working directory
+lies under it.
+
+## Order
+
+2 and 3 first, small and in the docs' own code; then 1.
+
+# Event log and render (landed 1 and 2 Nov 2026)
 
 Conclusions of the "mem" design discussion, 30 and 31 Oct 2026. This batch is the event log
 and render: five changes. The next is memory: cards, compaction, memory instructions and memory
