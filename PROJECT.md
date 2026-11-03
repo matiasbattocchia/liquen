@@ -6169,6 +6169,21 @@ question, took it to mean the send it had just made to Luciano, and explained th
   line's `ref_id` is provenance). Render draws it in a `<before>` ahead of the line, a call
   as `callLine` does with its answer, and the line points at it by `re`.
 
+### Three scopes, a doc per conversation, and no kind folders (2026-11-03) — LANDED
+
+The `conversation` scope was the session's own room (`mind@matias`), which nobody wrote to,
+while what holds for one chat had nowhere to go: a session's memberships are whole
+connections, so the WhatsApp account was one membership.
+
+- **`load: conditional`** names a `service` and an `address`, and loads while an event of
+  that conversation stands in the window (`inViewOf` in `xi.ts`). Out of view, the doc is not
+  listed, not even in the index. The scopes are `system`, `shared` and `agent`.
+- **A scope's two files**: `instructions.md` and `memories.md` at the root of `shared/` and
+  of each agent's folder; `system/` holds `instructions.md`, `compaction.md`, `tools/` and
+  `skills/`. Seeding lays a root file wherever it is absent and never a kind folder.
+- **Open**: on the table only the agent's own scope takes a write, so a shared conditional
+  doc there is the operator's to write. On files `shared/` is everyone's.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

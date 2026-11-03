@@ -77,7 +77,7 @@ export interface CompactInput {
   session: Session; // whose window it is, and where it speaks (§4)
   model: string;
   effort?: StepInput["effort"];
-  /** Lazy source for the checkpoint instruction: the `system/instructions/compaction.md`
+  /** Lazy source for the checkpoint instruction: the `system/compaction.md`
    *  doc, read from the data root. Called only when a compaction actually runs; it carries
    *  no frontmatter, so it is the harness's to send and never the agent's to read. A null
    *  read is a checkpoint that cannot be written. */
@@ -340,7 +340,7 @@ export async function buildSummary(
 
   // the instruction is read lazily: only a window that actually compacts pays the read
   const instruction = await input.prompt();
-  if (instruction === null) return failed("system/instructions/compaction.md is missing");
+  if (instruction === null) return failed("system/compaction.md is missing");
   // the window as the think reads it, the instruction naming where the archive ends — or,
   // for a window the API refused whole or a span that draws no block, the span as a
   // transcript with the previous checkpoint beside it

@@ -38,7 +38,16 @@ export function docsSuite(s: DocsSubstrate): void {
       ["shared", "", "skills/refunds", doc("skill", "how to refund")],
       ["shared", "", "instructions/policy", doc("instruction", "org policy", "load: always\n")],
       ["system", "", "instructions/base", doc("instruction", "world model")],
-      ["conversation", "c9", "state", doc("memory", "working state")],
+      [
+        "agent",
+        "a1",
+        "mars",
+        doc(
+          "memory",
+          "write in English",
+          "load: conditional\nservice: whatsapp\naddress: 5491165\n",
+        ),
+      ],
     ], async ({ docs }) => {
       const listed = await docs.list({ agent: "a1" });
       assertEquals(refs(listed), [
@@ -56,10 +65,18 @@ export function docsSuite(s: DocsSubstrate): void {
       // load: always ⇒ the body rides along, stripped; otherwise a pointer
       assertEquals(listed[1].body, "org policy");
       assertEquals(listed[2].body, undefined);
-      // the conversation scope is listed only when the context names one
+      // a conditional doc is listed, whole, while its conversation is in view
+      const mars = (await docs.list({
+        agent: "a1",
+        inView: [{ service: "whatsapp", address: "5491165" }],
+      })).at(-1)!;
+      assertEquals(mars.header.name, "mars");
+      assertEquals(mars.header.when, { service: "whatsapp", address: "5491165" });
+      assertEquals(mars.body, "write in English");
       assertEquals(
-        refs(await docs.list({ agent: "a1", conversation: "c9" })).at(-1),
-        "conversation/memory/state",
+        refs(await docs.list({ agent: "a1", inView: [{ service: "slack", address: "5491165" }] }))
+          .includes("agent/memory/mars"),
+        false,
       );
       // read pulls a pointer's body, stripped; a missing doc is null
       assertEquals(
@@ -72,10 +89,6 @@ export function docsSuite(s: DocsSubstrate): void {
       );
       assertEquals(
         await docs.read({ agent: "a1" }, { scope: "agent", kind: "instruction", name: "ghost" }),
-        null,
-      );
-      assertEquals(
-        await docs.read({ agent: "a1" }, { scope: "conversation", kind: "memory", name: "state" }),
         null,
       );
     });
@@ -99,31 +112,24 @@ export function docsSuite(s: DocsSubstrate): void {
     });
   });
 
-  Deno.test("docs: an agent reads the scopes above it and its own, writes its own and its conversation's, and nothing else", async () => {
+  Deno.test("docs: an agent reads the scopes above it and its own, writes its own, and nothing else", async () => {
     await withDocs([
       ["system", "", "instructions/base", doc("instruction", "world model")],
       ["shared", "", "skills/refunds", doc("skill", "how to refund")],
       ["agent", "a1", "instructions/persona", doc("instruction", "mine")],
       ["agent", "a2", "instructions/persona", doc("instruction", "theirs")],
-      ["conversation", "c9", "state", doc("memory", "ours")],
-      ["conversation", "c8", "state", doc("memory", "not ours")],
     ], async ({ docs, rows }) => {
-      const me = docs.as({ agent: "a1", conversation: "c9" });
+      const me = docs.as({ agent: "a1" });
       // reads: the cascade, as the read port lists it
       assertEquals(await me.read("system/instructions/base"), doc("instruction", "world model"));
       assertEquals(await me.read("shared/skills/refunds"), doc("skill", "how to refund"));
       assertEquals(await me.read("agent/instructions/persona"), doc("instruction", "mine"));
-      assertEquals(await me.read("conversation/state"), doc("memory", "ours"));
       // another agent's row is not a doc I can name: the handle resolves to MINE
       await assertRejects(() => me.read("agent/nothing"), Error, "no such doc");
-      // writes: my scope and the conversation's
+      // writes: my scope
       assertEquals(
         await me.write("agent/memories/x", "---\nkind: memory\n---\nnew"),
         "wrote 24 bytes to agent/memories/x",
-      );
-      assertEquals(
-        await me.write("conversation/state", "changed"),
-        "wrote 7 bytes to conversation/state",
       );
       assertEquals(
         await me.edit("agent/instructions/persona", "<<<<<<<\nmine\n=======\nMINE\n>>>>>>>"),
@@ -146,14 +152,12 @@ export function docsSuite(s: DocsSubstrate): void {
         Error,
         "not yours to edit",
       );
-      // what landed, as the org sees it: a2's and c8's rows untouched, mine where I put them
+      // what landed, as the org sees it: a2's row untouched, mine where I put them
       const all = await rows();
       assertEquals(all.map((r) => r.key), [
         "agent/a1/instructions/persona",
         "agent/a1/memories/x",
         "agent/a2/instructions/persona",
-        "conversation/c8/state",
-        "conversation/c9/state",
         "shared//skills/refunds",
         "system//instructions/base",
       ]);
@@ -161,36 +165,25 @@ export function docsSuite(s: DocsSubstrate): void {
         all.find((r) => r.key === "agent/a2/instructions/persona")!.text,
         doc("instruction", "theirs"),
       );
-      assertEquals(all.find((r) => r.key === "conversation/c9/state")!.text, "changed");
-      // a handle is scope/name
+      // a handle is scope/name, in one of the three scopes
       await assertRejects(() => me.read("persona"), Error, "a handle is scope/name");
       await assertRejects(() => me.read("agent/"), Error, "a handle is scope/name");
-      // no conversation ⇒ no conversation doc is anyone's
-      const alone = docs.as({ agent: "a1" });
-      await assertRejects(() => alone.read("conversation/state"), Error, "no such doc");
-      await assertRejects(
-        () => alone.write("conversation/state", "x"),
-        Error,
-        "not yours to write",
-      );
-      await assertRejects(
-        () => alone.edit("conversation/state", "<<<<<<<\nours\n=======\nx\n>>>>>>>"),
-        Error,
-        "no such doc",
-      );
+      await assertRejects(() => me.read("conversation/state"), Error, "a handle is scope/name");
     });
   });
 
-  Deno.test("docs: the cascade seeds into the table by folder — never twice, and a deleted doc stays deleted", async () => {
+  Deno.test("docs: the cascade seeds into the table by folder, a root doc by itself — never twice, and a deleted folder's doc stays deleted", async () => {
     await withDocs([], async ({ docs, set, store }) => {
       const bed = { laid: docs.laid, lay: docs.lay };
       await seedOrg(bed);
       await seedAgent(bed, "alter");
       const listed = await docs.list({ agent: "alter" });
       assertEquals(refs(listed).sort(), [
-        "agent/instruction/instructions/agent",
-        "shared/instruction/instructions/organization",
-        "system/instruction/instructions/system",
+        "agent/instruction/instructions",
+        "agent/memory/memories",
+        "shared/instruction/instructions",
+        "shared/memory/memories",
+        "system/instruction/instructions",
         "system/skill/skills/transcribe-audio",
         "system/skill/skills/workflows",
         ...[
@@ -207,26 +200,32 @@ export function docsSuite(s: DocsSubstrate): void {
         ].map((t) => `system/tool/tools/${t}`),
       ]);
       assertEquals(
-        listed.find((d) => d.header.name === "instructions/agent")!.header.handle,
-        "agent/instructions/agent",
+        listed.find((d) => d.header.scope === "agent" && d.header.name === "instructions")!
+          .header.handle,
+        "agent/instructions",
       );
+      // a memories doc loads always, and holds nothing yet
+      assertEquals(listed.find((d) => d.header.handle === "agent/memories")!.body, "");
       // the compaction prompt has no frontmatter: never in the index, still read by name
       assertStringIncludes(
         (await docs.read({ agent: "alter" }, {
           scope: "system",
           kind: "instruction",
-          name: "instructions/compaction",
+          name: "compaction",
         }))!,
         "archived",
       );
-      // an edit is kept, a deletion is kept: the folder's rows are the org's own
-      await set("shared", "", "instructions/organization", "EDITED");
+      // an edit is kept, a deletion in a folder is kept: the folder's rows are the org's own;
+      // a root doc deleted is laid again, since its folder is the scope itself
+      await set("shared", "", "instructions", "EDITED");
       await set("system", "", "skills/workflows", null);
+      await set("agent", "alter", "memories", null);
       await seedOrg(bed);
       await seedAgent(bed, "alter");
       const again = await docs.list({ agent: "alter" });
       assertEquals(again.some((d) => d.header.name === "skills/workflows"), false);
-      assertEquals(await docs.text("shared", "", "instructions/organization"), "EDITED");
+      assertEquals(await docs.text("shared", "", "instructions"), "EDITED");
+      assertEquals(again.some((d) => d.header.handle === "agent/memories"), true);
       // a connector's skill is laid by the file's rule, once
       assertEquals(await seedSkill(bed, "microsoft-graph"), true);
       assertEquals(await seedSkill(bed, "microsoft-graph"), false);

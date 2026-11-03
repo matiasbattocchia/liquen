@@ -1,0 +1,4 @@
+---
+kind: memory
+load: always
+---

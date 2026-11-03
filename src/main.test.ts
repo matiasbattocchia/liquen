@@ -359,7 +359,7 @@ Deno.test("docs in SQLite's table: boot seeds them there, and the agent writes a
     assert(["read", "write", "edit"].every((t) => sent[0].tools!.some((s) => s.name === t)));
     assertEquals(await Deno.stat(`${dir}/system/tools`).then(() => true, () => false), false);
     assertEquals(
-      await Deno.stat(`${dir}/agents/ana/memories`).then(() => true, () => false),
+      await Deno.stat(`${dir}/agents/ana/memories.md`).then(() => true, () => false),
       false,
     );
   } finally {
@@ -1066,10 +1066,13 @@ Deno.test("a person alone (mind: false, §4): a registry row, a door, no session
         phone: "549117770000",
       },
     ]);
-    await Deno.stat(`${dir}/agents/ventas/instructions/agent.md`); // a workspace, seeded
+    await Deno.stat(`${dir}/agents/ventas/instructions.md`); // a workspace, seeded
     // a person alone has a DOOR — its socket is all the folder holds — and no workspace
     await Deno.stat(`${dir}/agents/sol/door.sock`);
-    await assertRejects(() => Deno.stat(`${dir}/agents/sol/instructions`), Deno.errors.NotFound);
+    await assertRejects(
+      () => Deno.stat(`${dir}/agents/sol/instructions.md`),
+      Deno.errors.NotFound,
+    );
     // the org number, paired to nobody: ventas owns no account, so the org's people steer
     // it — sol, a person alone
     await main.log.upsertConnections([

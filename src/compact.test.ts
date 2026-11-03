@@ -17,7 +17,7 @@ const SESSION = { id: "s1", agentId: "a1", conversation: "mind@a1" };
 
 // the checkpoint instruction as seeded: the template itself, read like the doc would be
 const PROMPT = () =>
-  Deno.readTextFile(new URL("./seed/system/instructions/compaction.md", import.meta.url))
+  Deno.readTextFile(new URL("./seed/system/compaction.md", import.meta.url))
     .then((t) => t as string | null);
 
 /** The window as nu hands it to the checkpoint: the next think's rendering, closing on

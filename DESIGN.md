@@ -1875,7 +1875,7 @@ layer**:
   surface can only fold away what it can name. Every kind reaches every tailer whole
   (§9) — what to show and what to keep folded is the client's call, and the `summary` event
   itself gives even a folded surface one line saying the window was checkpointed.
-- **The prompt is a FILE** — `system/instructions/compaction.md` (seeded): readable and
+- **The prompt is a FILE** — `system/compaction.md` (seeded): readable and
   editable like any instruction, never hidden in code, and its only source. It carries no
   frontmatter, so it is never indexed: the harness sends it as itself, and reads it by
   name; a doc that is gone is a checkpoint that cannot be written, on the error path a cut
@@ -2170,24 +2170,31 @@ Hierarchy (**agent memory dropped** — the session is the memory):
 
 ```
 system        product base framing (world model, send, digest) + built-in skills/tools  [read-only]
-org           instructions + memory + skills + tools   [shared across the org's agents]
-agent         instructions (the persona) — NO memory store (the long-running session is it)
-conversation  working state (optional projection for compaction)   [agent-written]
+shared        instructions + memories + skills   [shared across the org's agents]
+agent         instructions (the persona) + memories + skills   [the agent's own]
 ```
 
-Cascade `system → org → agent → conversation`: concatenate in order, **more-specific wins
-on conflict** (CLAUDE.md model). Same cascade builds instructions, tool set (tool-docs),
-and memory. `system` scope is shipped via migration (RLS denies agent + org admin).
-*(The subagent worker-overlay scope is deferred with the tree.)*
+Cascade `system → shared → agent`: concatenate in order, **more-specific wins on conflict**
+(CLAUDE.md model). Same cascade builds instructions, tool set (tool-docs), and memory.
+`system` scope is shipped via migration (RLS denies agent + org admin). Each of the two
+lower scopes holds an `instructions.md` and a `memories.md` at its root, both `load:
+always`; a scope's folders are the org's to make. *(The subagent worker-overlay scope is
+deferred with the tree.)*
+
+**What holds for one conversation** is a `load: conditional` doc in either scope, whose
+header names the conversation's `service` and `address`. It loads while the session has
+that conversation in view: an event of it stands in the window, since a session's
+memberships are whole connections. Out of view, it is not listed at all, not even in the
+index. A chat that speaks mid-session brings its doc in as a prefix notice (`— added`).
 
 **One discovery rule, every scope** (2026-08-04): walk the scope directory recursively; a
 file is a doc **iff it is `.md` and opens with YAML frontmatter** — *a doc declares
 itself*. `kind` rides in the frontmatter (default `memory`); folder structure is pure
-convention, plural by custom (`instructions/`, `skills/`, `memories/`, `tools/`), invisible
-to the code. On the §9 layout the scope dirs are `system/` · `org/` · `agents/<name>/` ·
-`conversations/<id>/` — so **the agent scope IS the agent's workspace**: a cloned repo's
-READMEs have no frontmatter and stay files; the agent's frontmattered notes anywhere in its
-home are its docs. A doc's `name` is its scope-relative path (`instructions/compaction`).
+convention, plural by custom (`skills/`, `memories/`, `tools/`), invisible to the code. On
+the §9 layout the scope dirs are `system/` · `shared/` · `agents/<name>/` — so **the agent
+scope IS the agent's workspace**: a cloned repo's READMEs have no frontmatter and stay
+files; the agent's frontmattered notes anywhere in its home are its docs. A doc's `name` is
+its scope-relative path (`instructions`, `skills/workflows`).
 A cascade is a PLACE, so whatever stands in it counts: a symlinked file is a doc and a
 symlinked folder is walked — the seed doc a deployment links to the repo instead of copying
 reads exactly like a copied one, and only a dangling link is nothing.
@@ -2225,8 +2232,8 @@ Registers (same substrate, different rules):
 
 ```ts
 docs {
-  scope:  "system" | "shared" | "agent" | "conversation"        // (subagent worker-overlay deferred)
-  owner:  ""  |  the agent's id  |  the conversation's address       // the two org scopes have none
+  scope:  "system" | "shared" | "agent"                         // (subagent worker-overlay deferred)
+  owner:  ""  |  the agent's id                                       // the two org scopes have none
   name                                                                // the scope-relative path
   text                                                                // what a file holds, frontmatter included
   updated_at
@@ -2235,18 +2242,18 @@ docs {
 
 A row is a doc as a file is: its `text` is the whole document, and `kind`
 (`instruction · skill · memory · tool`, `tool` = MCP config), `description` and `load`
-(`always · lazy`) are its frontmatter, projected by the reader — one parser, both
-substrates, and a row with no frontmatter is likewise not in the index. The handle is
-`scope/name`; the owner is whoever is asking, so an agent names its own doc and its
-session's conversation doc the way it names a system one. Where the docs live is the
+(`always · lazy · conditional`, with `service` and `address`) are its frontmatter,
+projected by the reader — one parser, both substrates, and a row with no frontmatter is
+likewise not in the index. The handle is `scope/name`; the owner is whoever is asking, so
+an agent names its own doc the way it names a system one. Where the docs live is the
 catalog's `deployment.docs`: files under the data root, or the table of the database
 `deployment.database` names — SQLite's in `log.db`, beside the log and the vault, or the
 Postgres schema's.
 
 Who may write a row is the substrate's rule — RLS on Postgres's table, the calls' own
 resolution on SQLite's, unix ownership on files (§9) — never a column of the row. On the
-table it is one rule, the container's restated: an agent reads the two org scopes, its own
-and its conversation's, and writes the last two. On SQLite, which has no roles, the rule
+table it is one rule, the container's restated: an agent reads the two org scopes and its
+own, and writes its own. On SQLite, which has no roles, the rule
 is the handle's resolution: the owner a handle names is always the asker, so no handle
 reaches another agent's row, and the file is the harness's alone (a bubble shows nothing
 of `data/log`, a gateway's sandbox nothing of this machine). An edit is safe against a
@@ -2304,9 +2311,11 @@ longer there matches nothing.
   the data root at runtime (memories, later skills), so it drifts by design — git sees
   `src/seed/` (the org definition, reproducible; private repo if sensitive), volumes hold
   `data/`. The unit of if-absent is the FOLDER: an absent doc is an answer — a deployment
-  that deleted `shared/instructions/organization.md`, or emptied `system/skills/`, wants none,
-  and no later boot may argue. So a new template reaches new orgs and new agents, not the
-  scopes a live org already has; deleting the folder is how an org asks for the set again.
+  that emptied `system/skills/` wants none, and no later boot may argue. So a new template
+  reaches new orgs and new agents, not the folders a live org already has; deleting the
+  folder is how an org asks for the set again. A scope's root always stands, so a file
+  there (`instructions.md`, `memories.md`) answers for itself: laid wherever it is absent,
+  and an org that wants none empties it, since a file with no header is no doc.
   The tool docs are the exception, since a tool's words are its schema's and no tool goes
   without them: `liquen update` brings them (`bringToolDocs`), laying one that is missing,
   giving the new words to one still word for word the release the org ran before, and

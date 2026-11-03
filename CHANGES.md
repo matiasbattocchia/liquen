@@ -52,6 +52,8 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 - **`load: conditional`.** A doc whose header names `service` and `address` loads when that
   conversation is in view: from the agent's folder, personal, or from `shared/`, everyone's.
+  In view means an event of it stands in the session's window, since a session's memberships
+  are whole connections: a chat that speaks mid-session brings its doc as a `— added` notice.
   The `conversation` scope goes, and three remain: `system`, `shared`, `agent`.
 - **One `instructions.md` per scope**, scoped by its folder:
   - `system/instructions/system.md` → `system/instructions.md`;
@@ -65,6 +67,10 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 - **No kind folders.** Seeding lays a scope's home and its two files, never `instructions/`,
   `skills/` or `memories/`. Folders are a convention, which `system.md` recommends once a scope
   holds about ten docs.
+- **A file at a scope's root is seeded on its own.** Seeding lays a template only where its
+  folder is absent, so an org that deleted its folder keeps it deleted; a scope's root always
+  stands, so `instructions.md` and `memories.md` are laid wherever the file itself is absent.
+  An org that wants neither empties it, and a file with no header is no doc.
 - **The two orgs on this machine are reworked by hand**, with the code, no migration:
   - `new`: `organization.md` and each `agent.md` move to their `instructions.md`;
     `aliases.md` folds into `agents/matias/memories.md`; empty kind folders go, and those that

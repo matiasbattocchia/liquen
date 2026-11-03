@@ -3985,6 +3985,38 @@ Deno.test("schedule: a bare `at` reads the org's clock — 17:00 Buenos Aires is
   }
 });
 
+Deno.test("a conditional doc loads while its conversation has an event in the window", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
+  const transport: ModelTransport = (params) => {
+    last = params;
+    return Promise.resolve(ok([{ kind: "assistant", text: "ok" }], "end_turn"));
+  };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  const conditional = (service: string, address: string, body: string) =>
+    `---\nload: conditional\nservice: ${service}\naddress: ${address}\n---\n${body}\n`;
+  try {
+    await Deno.mkdir(`${dir}/docs/agents/a1`, { recursive: true });
+    await Deno.writeTextFile(
+      `${dir}/docs/agents/a1/ana.md`,
+      conditional("local", "mind@a1", "Ana prefers short answers."),
+    );
+    await Deno.writeTextFile(
+      `${dir}/docs/shared/mars.md`,
+      conditional("whatsapp", "5491165565431", "Write to Mars in English."),
+    );
+    await log.publish(principalMsg("hola"));
+    await xi(CONFIG, ports);
+    const system = (last!.system as { text: string }[]).map((b) => b.text).join("");
+    assertStringIncludes(system, `[${dir}/docs/agents/a1/ana.md]\nAna prefers short answers.`);
+    assertEquals(system.includes("Mars"), false, "a chat out of view loads nothing");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("the roster: the prefix splits it into who steers this agent and everyone else", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);

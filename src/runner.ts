@@ -14,7 +14,6 @@ import type { Log } from "./store/log.ts";
 import { type Policy, scoped } from "./policy.ts";
 import type { DocCalls, DocContext, Docs } from "./store/docs.ts";
 import { docTools } from "./exec/docs.ts";
-import { sessionAddress } from "./session.ts";
 import type { MediaLoader } from "./store/media.ts";
 import type { ModelTransport } from "./transport/mod.ts";
 import type { Sandbox } from "./sandbox.ts";
@@ -94,12 +93,8 @@ export function runnerFor(
   const { agentId } = row;
   const box = host.sandbox?.forAgent(agentId).session(sessionId);
   const slog = scoped(host.log, host.policy(agentId, sessionId));
-  // the session's docs tools, where the docs are the table's: its conversation is the
-  // one the session speaks in (§4), which is where a conversation doc is looked for
-  const reach = host.reach?.({
-    agent: agentId,
-    conversation: sessionAddress(agentId, sessionId),
-  });
+  // the session's docs tools, where the docs are the table's
+  const reach = host.reach?.({ agent: agentId });
   const exec = box || reach ? { exec: { ...box?.exec, ...(reach ? docTools(reach) : {}) } } : {};
   return {
     config: { ...configOf(row, sessionId), ...(box ? { home: box.home } : {}), ...seams },

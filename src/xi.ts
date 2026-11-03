@@ -69,7 +69,7 @@ import type { AgentRow, Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { ConnectionRow, Connections } from "./store/connections.ts";
 import { SILENT_AFTER_MS } from "./store/connections.ts";
-import type { Docs } from "./store/docs.ts";
+import type { Docs, Where } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { digits, sameHandle, speaksThrough } from "./store/roster.ts";
 import { foldName, namesMatch, preferProper } from "./store/names.ts";
@@ -1284,7 +1284,8 @@ async function think(
   what: "think" | "compact" = "think",
 ): Promise<Draft<Event>[]> {
   const home = sessionAddress(config.agentId, config.sessionId); // where this turn speaks (§4)
-  const docs = await ports.docs.list({ agent: config.agentId, conversation: home });
+  const cascade = { agent: config.agentId, inView: inViewOf(events) };
+  const docs = await ports.docs.list(cascade);
   // the anchor (§5): the volatile environment, plus what is still in the air. A pending gate
   // is STATE, not history — the transcript already closed those calls with
   // `pending_approval`, so the only place they belong is the block that is rewritten every
@@ -1314,19 +1315,14 @@ async function think(
   // each tool's words are its doc (tooldoc.ts), read fresh like any doc
   const tools = await wordedAll(
     specsOf(ports, config, await accounts({ id: config.agentId }, ports)),
-    (name) =>
-      ports.docs.read({ agent: config.agentId, conversation: home }, {
-        scope: "system",
-        kind: "tool",
-        name,
-      }),
+    (name) => ports.docs.read(cascade, { scope: "system", kind: "tool", name }),
   );
   // what this request is made of, stamped on the step only when it differs from the last
   // set this session stamped (inputs.ts)
   const inputs = what === "think"
     ? await inputsOf({
       docs,
-      read: (ref) => ports.docs.read({ agent: config.agentId, conversation: home }, ref),
+      read: (ref) => ports.docs.read(cascade, ref),
       tools,
       ...(bins ? { bins } : {}),
       settings: settingsOf(config),
@@ -1381,11 +1377,7 @@ async function think(
       },
       // the checkpoint instruction is a DOC (§5/§8) — editable like any instruction
       compactPrompt: () =>
-        ports.docs.read({ agent: config.agentId, conversation: home }, {
-          scope: "system",
-          kind: "instruction",
-          name: "instructions/compaction",
-        }),
+        ports.docs.read(cascade, { scope: "system", kind: "instruction", name: "compaction" }),
       signal,
     },
     ports.transport,
@@ -1393,6 +1385,16 @@ async function think(
   );
   if (fresh && out.some((e) => e.extra?.inputs !== undefined)) stamped.set(home, inputs);
   return out;
+}
+
+/** The conversations the window holds an event of: what a conditional doc loads with (§8).
+ *  A session's memberships are whole connections, so the window is what it has in view. */
+function inViewOf(events: Event[]): Where[] {
+  const seen = new Map<string, Where>();
+  for (const { envelope: { service, conversation: { address } } } of events) {
+    seen.set(`${service}\n${address}`, { service, address });
+  }
+  return [...seen.values()];
 }
 
 /** The input set each session last stamped into a log, by its room — the process's own

@@ -2,17 +2,16 @@
  * store/docs.ts — the Docs port (read side): substrate access to the doc cascade.
  *
  * The durable, human/agent-authored side of the substrate (DESIGN §8): instructions, skills,
- * memory, and tools (a builtin's words, an MCP registration), across four scopes:
+ * memory, and tools (a builtin's words, an MCP registration), across three scopes:
  *
- *   system → shared → agent → conversation
+ *   system → shared → agent
  *
  * **One discovery rule, every scope**: walk the scope directory recursively; a file is a doc
  * iff it is `.md` AND opens with YAML frontmatter — *a doc declares itself*. `kind` comes
  * from the frontmatter (`kind: instruction|skill|memory|tool`, default `memory`); folder
- * structure is pure convention (plural by custom: `instructions/`, `skills/`, `memories/`,
- * `tools/`) and invisible to the code. This is what lets the agent scope BE the agent's
- * workspace (`agents/<name>/`): a cloned repo's READMEs have no frontmatter and are ignored,
- * while the agent's own frontmattered notes anywhere in its home are its docs.
+ * structure is pure convention, invisible to the code. This is what lets the agent scope BE
+ * the agent's workspace (`agents/<name>/`): a cloned repo's READMEs have no frontmatter and
+ * are ignored, while the agent's own frontmattered notes anywhere in its home are its docs.
  *
  * The **privileged** read path nu/render use in-process (the agent's own read/write goes via
  * the substrate primitive — `aread`/`sql`, §9). It stays close to dumb: it lists docs and,
@@ -20,18 +19,19 @@
  * rest of the policy — build the skill/memory index from the headers, order (by kind, cascade
  * within kind), lay them out.
  *
- *   • `load: always` → `list` returns `{ header, body }` (render inlines it: persona, core
- *     instructions).
- *   • otherwise      → `{ header }` only, a pointer; the body is pulled on demand — by the
- *     agent via the substrate read, or by render via `read()`.
+ *   • `load: always`      → `list` returns `{ header, body }` (render inlines it: persona,
+ *     core instructions).
+ *   • `load: conditional` → the same while the conversation its `service` and `address`
+ *     name is in view (`DocContext.inView`), and nothing at all while it is not.
+ *   • otherwise           → `{ header }` only, a pointer; the body is pulled on demand — by
+ *     the agent via the substrate read, or by render via `read()`.
  *
  * A header is a row of the `docs` table (§8): the identity columns, `description`, `load`,
  * and the `handle` — the adapter's word for the doc, printed as-is by render and taken
  * as-is by the read the agent makes. Files adapter, rooted at the DATA ROOT (the §9 layout):
  *   <root>/system/**  ·  <root>/shared/**  ·  <root>/agents/<agentId>/**
- *   <root>/conversations/<convId>/**
- * A doc's `name` is its path relative to the scope dir, minus `.md` (so the conventional
- * `instructions/compaction`); its handle is the file's absolute path, the argument `aread`
+ * A doc's `name` is its path relative to the scope dir, minus `.md` (so `instructions`, or a
+ * foldered `skills/deploy`); its handle is the file's absolute path, the argument `aread`
  * takes wherever the shell stands — an attach puts it in the caller's directory, and a path
  * counted from anywhere else sends the model looking. The columns are the file's YAML
  * frontmatter, projected. Reads are fresh from disk (multi-process, like the log). On the
@@ -44,9 +44,9 @@ import { resolve } from "node:path";
 import { parse as parseYaml } from "@std/yaml";
 import type { AgentId } from "../types.ts";
 
-export type DocScope = "system" | "shared" | "agent" | "conversation";
+export type DocScope = "system" | "shared" | "agent";
 export type DocKind = "instruction" | "skill" | "memory" | "tool";
-export type DocLoad = "always" | "lazy";
+export type DocLoad = "always" | "lazy" | "conditional";
 
 const KINDS: readonly string[] = ["instruction", "skill", "memory", "tool"];
 
@@ -65,25 +65,34 @@ export interface DocHeader extends DocRef {
   /** The index line's word for the doc, when it has one. */
   description?: string;
   load: DocLoad;
+  /** The conversation a `conditional` doc loads with. */
+  when?: Where;
   /** The adapter's address for the doc — what render prints and what the agent's own read
    *  takes, one string. Files: the file's absolute path. */
   handle: string;
 }
 
-/** What `list` hands render: the header always, the body when `load: always` (or after read). */
+/** A conversation as a conditional doc names it: its service and its address there. */
+export interface Where {
+  service: string;
+  address: string;
+}
+
+/** What `list` hands render: the header always, the body when the doc loads (or after read). */
 export interface DocEntry {
   header: DocHeader;
   body?: string;
 }
 
-/** The agent + conversation a cascade is resolved for. */
+/** The agent a cascade is resolved for, and the conversations its session has in view. */
 export interface DocContext {
   agent: AgentId;
-  conversation?: string;
+  inView?: readonly Where[];
 }
 
 export interface Docs {
-  /** Every doc in the cascade — header always, body inlined for `load: always` docs. */
+  /** Every doc in the cascade — header always, body inlined for a doc that loads. A
+   *  conditional doc whose conversation is out of view is not listed. */
   list(ctx: DocContext): Promise<DocEntry[]>;
   /** Pull one doc's body on demand (for a pointer), or null if it's gone. */
   read(ctx: DocContext, ref: DocRef): Promise<string | null>;
@@ -101,8 +110,8 @@ export interface DocCalls {
 }
 
 /** The docs on a table, either engine's: the read port, the agent's reach and the seeds'
- *  bed. A row's key is `(scope, owner, name)`; the owner is the agent's id or the
- *  conversation's address, and empty for the two scopes the org shares. */
+ *  bed. A row's key is `(scope, owner, name)`; the owner is the agent's id, and empty for
+ *  the two scopes the org shares. */
 export interface DocTable extends Docs {
   /** The agent's reach: its calls, bounded to what `ctx` may see and write. */
   as(ctx: DocContext): DocCalls;
@@ -129,10 +138,11 @@ export function openFileDocs(root: string): Docs {
           const frontmatter = await readFrontmatter(path);
           if (frontmatter === null) continue; // no frontmatter ⇒ not a doc (workspace file)
           const columns = columnsOf(frontmatter);
+          if (!applies(columns, ctx)) continue;
           const entry: DocEntry = {
             header: { scope, name, ...columns, handle: path },
           };
-          if (columns.load === "always") {
+          if (columns.load !== "lazy") {
             entry.body = stripFrontmatter(await Deno.readTextFile(path));
           }
           out.push(entry);
@@ -142,10 +152,10 @@ export function openFileDocs(root: string): Docs {
     },
 
     async read(ctx: DocContext, ref: DocRef): Promise<string | null> {
-      const dir = scopeDir(root, ref.scope, ctx);
-      if (dir === null) return null;
       try {
-        return stripFrontmatter(await Deno.readTextFile(`${dir}/${ref.name}.md`));
+        return stripFrontmatter(
+          await Deno.readTextFile(`${scopeDir(root, ref.scope, ctx)}/${ref.name}.md`),
+        );
       } catch (err) {
         if (err instanceof Deno.errors.NotFound) return null;
         throw err;
@@ -155,17 +165,36 @@ export function openFileDocs(root: string): Docs {
 }
 
 /** The header columns a doc's frontmatter declares: `kind` (unknown or absent ⇒ `memory`),
- *  `load` (`always`, else `lazy`) and a non-empty `description`. */
+ *  `load` (`always`; `conditional` with the `service` and `address` it loads with; else
+ *  `lazy`) and a non-empty `description`. */
 export function columnsOf(
   frontmatter: Record<string, unknown>,
-): Pick<DocHeader, "kind" | "load" | "description"> {
+): Pick<DocHeader, "kind" | "load" | "when" | "description"> {
   const k = frontmatter.kind;
   const description = frontmatter.description;
+  const { service } = frontmatter;
+  // YAML reads a phone number as a number; the address is its digits either way
+  const address = typeof frontmatter.address === "number"
+    ? String(frontmatter.address)
+    : frontmatter.address;
+  const when = frontmatter.load === "conditional" && typeof service === "string" &&
+      typeof address === "string" && service !== "" && address !== ""
+    ? { service, address }
+    : undefined;
   return {
     kind: typeof k === "string" && KINDS.includes(k) ? k as DocKind : "memory",
-    load: frontmatter.load === "always" ? "always" : "lazy",
+    load: frontmatter.load === "always" ? "always" : when ? "conditional" : "lazy",
+    ...(when ? { when } : {}),
     ...(typeof description === "string" && description.length > 0 ? { description } : {}),
   };
+}
+
+/** Whether a doc belongs in the cascade the context resolves: every doc but a conditional
+ *  one whose conversation is out of view. */
+export function applies(columns: Pick<DocHeader, "when">, ctx: DocContext): boolean {
+  const when = columns.when;
+  return when === undefined ||
+    (ctx.inView ?? []).some((w) => w.service === when.service && w.address === when.address);
 }
 
 /** A doc's frontmatter, parsed from its whole text: `null` when it opens with no block,
@@ -175,27 +204,13 @@ export function frontmatterOf(text: string): Record<string, unknown> | null {
   return block === null ? null : parseBlock(block);
 }
 
-/** The scope directories to walk, in cascade order — skipping any that don't apply. */
+/** The scope directories to walk, in cascade order. */
 function scopeDirs(root: string, ctx: DocContext): [DocScope, string][] {
-  const out: [DocScope, string][] = [];
-  for (const scope of ["system", "shared", "agent", "conversation"] as DocScope[]) {
-    const dir = scopeDir(root, scope, ctx);
-    if (dir !== null) out.push([scope, dir]);
-  }
-  return out;
+  return (["system", "shared", "agent"] as DocScope[]).map((s) => [s, scopeDir(root, s, ctx)]);
 }
 
-function scopeDir(root: string, scope: DocScope, ctx: DocContext): string | null {
-  switch (scope) {
-    case "system":
-      return `${root}/system`;
-    case "shared":
-      return `${root}/shared`;
-    case "agent":
-      return `${root}/agents/${ctx.agent}`;
-    case "conversation":
-      return ctx.conversation ? `${root}/conversations/${ctx.conversation}` : null;
-  }
+function scopeDir(root: string, scope: DocScope, ctx: DocContext): string {
+  return scope === "agent" ? `${root}/agents/${ctx.agent}` : `${root}/${scope}`;
 }
 
 /** Sorted scope-relative `.md` names (no extension), walked recursively; [] if `dir` is

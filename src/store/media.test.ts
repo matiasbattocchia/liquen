@@ -261,8 +261,8 @@ Deno.test("signed media path: the store's boundary is checked on its own", async
   try {
     // a signature proves who minted the path, never that the path is innocent: a secret
     // that leaked (or a bug that signed the wrong thing) still cannot read the org's docs
-    const outside = `${root}/system/instructions/system.md`;
-    await Deno.mkdir(`${root}/system/instructions`, { recursive: true });
+    const outside = `${root}/system/instructions.md`;
+    await Deno.mkdir(`${root}/system`, { recursive: true });
     await Deno.writeTextFile(outside, "the operator's own file");
     const path = await signMediaPath(outside, "s3cret");
     assertEquals((await serveMedia(req(path), root, () => "s3cret"))?.status, 404);

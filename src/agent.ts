@@ -9,7 +9,7 @@
  * container. The declaration is the only thing boot needs — main compiles the roster into
  * rows and homes every time it starts, and this door reloads a running org so it does —
  * but the home is laid HERE too, with the agent's half of the doc cascade (`seedAgent`:
- * `instructions/agent.md`, a memory to write the next by), because the persona is what a person writes between declaring an agent and running
+ * `instructions.md` and `memories.md`), because the persona is what a person writes between declaring an agent and running
  * it, and there is nowhere to write it until the folder exists. Seeding never overwrites,
  * so the door and boot are the same call. `--no-mind` makes a person alone: a row, no
  * folder. Runs from anywhere inside the org, or against one named with `--dir`.
@@ -98,7 +98,7 @@ if (import.meta.main) {
       : `The running org took them up: ${moved(moves)}.`;
     const next = rest.mind === false
       ? `they steer, and no session of theirs will run. ${runs}`
-      : `data/agents/${name}/ is the workspace; write instructions/agent.md in it to say ` +
+      : `data/agents/${name}/ is the workspace; write instructions.md in it to say ` +
         `who they are (every turn reads it fresh, so it is never too late). ${runs}`;
     console.log(`${root}/config.jsonc: agents.${name}${handles}. ${next}`);
   });

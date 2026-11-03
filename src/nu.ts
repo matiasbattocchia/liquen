@@ -123,7 +123,7 @@ export interface TurnInput {
   /** What the request is made of, by input (inputs.ts) — present when it differs from the
    *  session's last stamp, and then stamped on the step's first row. */
   inputs?: Record<string, string>;
-  /** Lazy source for the checkpoint instruction (the `system/instructions/compaction` doc) —
+  /** Lazy source for the checkpoint instruction (the `system/compaction` doc) —
    *  xi resolves the I/O, nu only calls it when a checkpoint actually runs (§5). Null ⇒ the
    *  doc is gone, and the checkpoint fails as one that could not be written. */
   compactPrompt: () => Promise<string | null>;

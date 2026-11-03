@@ -120,17 +120,42 @@ Deno.test("read pulls a pointer's body on demand and strips frontmatter", async 
   });
 });
 
-Deno.test("conversation scope is listed only when requested", async () => {
+Deno.test("a conditional doc is listed, whole, only while its conversation is in view", async () => {
   await withRoot(async (root) => {
     await put(root, "agents/a1/persona", doc("instruction", "p"));
+    // YAML reads the phone number as a number; the address is its digits
+    await put(
+      root,
+      "shared/mars",
+      doc("memory", "write in English", "load: conditional\nservice: whatsapp\naddress: 5491165\n"),
+    );
+    // a conditional doc that names no conversation is a pointer, as any lazy doc
+    await put(
+      root,
+      "agents/a1/stray",
+      doc("memory", "s", "load: conditional\nservice: whatsapp\n"),
+    );
+    // the files under conversations/ are no scope
     await put(root, "conversations/c9/state", doc("memory", "working state"));
     const docs = openFileDocs(root);
 
-    assertEquals(ref(await docs.list({ agent: "a1" })), ["agent/instruction/persona"]);
-    assertEquals(
-      ref(await docs.list({ agent: "a1", conversation: "c9" })).sort(),
-      ["agent/instruction/persona", "conversation/memory/state"],
-    );
+    assertEquals(ref(await docs.list({ agent: "a1" })), [
+      "agent/instruction/persona",
+      "agent/memory/stray",
+    ]);
+    const listed = await docs.list({
+      agent: "a1",
+      inView: [{ service: "local", address: "x" }, { service: "whatsapp", address: "5491165" }],
+    });
+    assertEquals(ref(listed), [
+      "shared/memory/mars",
+      "agent/instruction/persona",
+      "agent/memory/stray",
+    ]);
+    assertEquals(listed[0].header.load, "conditional");
+    assertEquals(listed[0].body, "write in English");
+    assertEquals(listed[2].header.load, "lazy");
+    assertEquals(listed[2].body, undefined);
   });
 });
 

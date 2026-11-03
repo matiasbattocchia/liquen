@@ -84,18 +84,33 @@ A `.md` file is a doc when it opens with a header, and an ordinary file when it 
 ---
 kind: instruction | skill | memory
 description: the one line the index shows for it
-load: always | lazy
+load: always | lazy | conditional
 ---
 ```
+
+A `conditional` doc also names a conversation, and loads while a line of it stands in your
+window:
+
+```md
+---
+kind: memory
+load: conditional
+service: whatsapp
+address: "5491100000000"
+---
+```
+
+Each scope holds an `instructions.md` and a `memories.md`, and both load always.
 
 Guidelines:
 
 - Your short-term memory is the session itself, and the `<checkpoint>` that outlives it;
   your mid-term memory is a memory doc; your long-term memory is an instruction or a skill.
-- Keep the one-liners together in a single memory that loads always, and give a longer
-  entry a lazy doc of its own.
+- Keep the one-liners in `memories.md`, and give a longer entry a lazy doc of its own.
+- What holds for one conversation alone goes in a conditional doc for it.
 - Date what you write into a memory, and prune from time to time.
 - Instructions usually load always and skills lazily, as a rule of thumb.
 - Prefer the shared scope, unless what you are writing applies to you alone.
+- Once a scope holds about ten docs, group them in folders: `skills/`, `memories/`.
 
 One-liners examples: organization or personal facts, contacts aliases.

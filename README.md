@@ -58,7 +58,7 @@ WhatsApp, Teams, Google and Microsoft mail and calendar, GitHub, and any HTTP AP
 come in the box.
 
 Your org is a folder. `config.jsonc` holds every setting, `.env` the secrets, `data/` the
-living state. Tell your agent who it is in `data/agents/<you>/instructions/agent.md`. It
+living state. Tell your agent who it is in `data/agents/<you>/instructions.md`. It
 reads the file fresh on every turn.
 
 ## More

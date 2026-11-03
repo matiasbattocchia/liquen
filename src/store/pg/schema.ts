@@ -337,17 +337,17 @@ export const AGENT_ROLE = "liquen_agent";
 /** The docs table (§8), and the agent's side of it: the policies that bound what the
  *  agent role reads and writes, and the substrate functions — `docs_read`, `docs_write`,
  *  `docs_edit` — the binaries' contracts (`bin/afs.ts`) restated in PL/pgSQL, which the
- *  harness calls under that role with the agent and its conversation set as
- *  `liquen.agent` and `liquen.conversation` for the transaction.
+ *  harness calls under that role with the agent set as `liquen.agent` for the
+ *  transaction.
  *
  *  A row is a doc: its text is what a file holds, frontmatter included, and the header
  *  columns are projected from it by the reader as they are from a file. The key is
- *  `(scope, owner, name)` — the owner is the agent's id or the conversation's address,
- *  and empty for the two scopes shared by the org — and the handle the agent reads,
- *  writes and edits by is `scope/name`: the owner is whoever is asking.
+ *  `(scope, owner, name)` — the owner is the agent's id, and empty for the two scopes
+ *  shared by the org — and the handle the agent reads, writes and edits by is
+ *  `scope/name`: the owner is whoever is asking.
  *
  *  The policy is the container's ownership rule: an agent reads the scopes above it and
- *  its own, writes its own scope and its conversation's, and reaches nothing else. It is
+ *  its own, writes its own scope, and reaches nothing else. It is
  *  the one rule; the functions run as their caller (`SECURITY INVOKER`) so it applies to
  *  every statement they make. */
 const docsDdl = (schema: string) => `
@@ -375,7 +375,6 @@ CREATE OR REPLACE FUNCTION docs_owner(scope text) RETURNS text LANGUAGE sql STAB
   SELECT CASE scope
     WHEN 'system' THEN '' WHEN 'shared' THEN ''
     WHEN 'agent' THEN nullif(current_setting('liquen.agent', true), '')
-    WHEN 'conversation' THEN nullif(current_setting('liquen.conversation', true), '')
   END
 $f$;
 
@@ -385,8 +384,8 @@ CREATE POLICY docs_reads ON docs FOR SELECT TO ${AGENT_ROLE}
   USING (owner = docs_owner(scope));
 DROP POLICY IF EXISTS docs_writes ON docs;
 CREATE POLICY docs_writes ON docs FOR ALL TO ${AGENT_ROLE}
-  USING (scope IN ('agent', 'conversation') AND owner = docs_owner(scope))
-  WITH CHECK (scope IN ('agent', 'conversation') AND owner = docs_owner(scope));
+  USING (scope = 'agent' AND owner = docs_owner(scope))
+  WITH CHECK (scope = 'agent' AND owner = docs_owner(scope));
 
 -- a handle, \`scope/name\`, as the row's key for whoever is asking
 CREATE OR REPLACE FUNCTION docs_ref(handle text, OUT scope text, OUT owner text, OUT name text)
@@ -394,8 +393,8 @@ LANGUAGE plpgsql STABLE AS $f$
 BEGIN
   scope := split_part(handle, '/', 1);
   name := substr(handle, length(scope) + 2);
-  IF scope NOT IN ('system', 'shared', 'agent', 'conversation') OR name = '' THEN
-    RAISE EXCEPTION '%: a handle is scope/name — system, shared, agent or conversation, then the doc''s name', handle;
+  IF scope NOT IN ('system', 'shared', 'agent') OR name = '' THEN
+    RAISE EXCEPTION '%: a handle is scope/name — system, shared or agent, then the doc''s name', handle;
   END IF;
   owner := docs_owner(scope);
 END
@@ -466,7 +465,7 @@ LANGUAGE plpgsql VOLATILE AS $f$
 DECLARE r record;
 BEGIN
   SELECT * INTO r FROM docs_ref(handle);
-  IF r.scope NOT IN ('agent', 'conversation') OR r.owner IS NULL THEN
+  IF r.scope <> 'agent' OR r.owner IS NULL THEN
     RAISE EXCEPTION '%: not yours to write', handle;
   END IF;
   INSERT INTO docs (scope, owner, name, text, updated_at)

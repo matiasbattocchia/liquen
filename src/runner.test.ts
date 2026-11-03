@@ -66,7 +66,7 @@ Deno.test("runner: the row is the config, the seams ride beside it, and no sandb
   }
 });
 
-Deno.test("runner: a host with a reach into the docs table gives the session the three doc tools, over its own conversation", async () => {
+Deno.test("runner: a host with a reach into the docs table gives the session the three doc tools, as its agent", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
   try {
@@ -75,7 +75,7 @@ Deno.test("runner: a host with a reach into the docs table gives the session the
       log,
       docs: openFileDocs(dir),
       reach: (ctx) => {
-        asked.push(`${ctx.agent} in ${ctx.conversation}`);
+        asked.push(ctx.agent);
         return {
           read: (handle) => Promise.resolve(`read ${handle}`),
           write: () => Promise.resolve(""),
@@ -87,7 +87,7 @@ Deno.test("runner: a host with a reach into the docs table gives the session the
     };
     const r = runnerFor(host, row, "build");
     assertEquals(Object.keys(r.ports.exec!), ["read", "write", "edit"]);
-    assertEquals(asked, ["ana in build@ana"]);
+    assertEquals(asked, ["ana"]);
     assertEquals(
       await r.ports.exec!.read.execute({ handle: "agent/x" }, new AbortController().signal),
       "read agent/x",

@@ -3,20 +3,21 @@
  * org's `log.db`, beside the log and the vault, read and written as `pg/docs.ts` reads and
  * writes Postgres's.
  *
- * The read port is the harness's: `list` is one query over the four scopes the context
+ * The read port is the harness's: `list` is one query over the three scopes the context
  * names, the header columns projected from each row's text as from a file's frontmatter,
  * and the handle is the row's key, `scope/name`.
  *
  * The agent's side is `as(ctx)`: `read · write · edit` by handle, answering what the
  * Postgres functions answer, line for line. The rule the Postgres policy states is this
- * module's: a handle's owner is always the asker — its own id, its conversation's address,
- * or the org's empty owner — so no handle names another agent's row, and only the agent's
- * own scope and its conversation's take a write. The file is the harness's: a bubble shows
- * nothing of `data/log`, and a gateway's sandbox nothing of this machine.
+ * module's: a handle's owner is always the asker — its own id, or the org's empty owner —
+ * so no handle names another agent's row, and only the agent's own scope takes a write.
+ * The file is the harness's: a bubble shows nothing of `data/log`, and a gateway's sandbox
+ * nothing of this machine.
  */
 
 import { DatabaseSync } from "node:sqlite";
 import {
+  applies,
   columnsOf,
   type DocCalls,
   type DocContext,
@@ -30,22 +31,14 @@ import {
 import { applyEdits, parseEdits } from "../exec/edit.ts";
 import { MAX_BYTES, truncateHead } from "../exec/truncate.ts";
 
-const SCOPES: readonly DocScope[] = ["system", "shared", "agent", "conversation"];
-const WRITABLE: readonly DocScope[] = ["agent", "conversation"];
+const SCOPES: readonly DocScope[] = ["system", "shared", "agent"];
 
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 const stamp = () => new Date().toISOString();
 
-/** Whose row a scope's is, for the agent asking; null where no row is anyone's. */
-function ownerOf(scope: DocScope, ctx: DocContext): string | null {
-  switch (scope) {
-    case "agent":
-      return ctx.agent;
-    case "conversation":
-      return ctx.conversation || null;
-    default:
-      return "";
-  }
+/** Whose row a scope's is, for the agent asking. */
+function ownerOf(scope: DocScope, ctx: DocContext): string {
+  return scope === "agent" ? ctx.agent : "";
 }
 
 /** A handle, `scope/name`, as the row's key for whoever is asking. */
@@ -54,8 +47,7 @@ function refOf(handle: string, ctx: DocContext) {
   const name = handle.slice(scope.length + 1);
   if (!SCOPES.includes(scope) || name === "") {
     throw new Error(
-      `${handle}: a handle is scope/name — system, shared, agent or conversation, then the ` +
-        "doc's name",
+      `${handle}: a handle is scope/name — system, shared or agent, then the doc's name`,
     );
   }
   return { scope, owner: ownerOf(scope, ctx), name };
@@ -125,7 +117,7 @@ export async function openSqliteDocs(dir: string): Promise<DocTable> {
     read(handle, offset, limit, maxBytes) {
       return Promise.resolve().then(() => {
         const r = refOf(handle, ctx);
-        const text = r.owner === null ? null : one(r.scope, r.owner, r.name);
+        const text = one(r.scope, r.owner, r.name);
         if (text === null) throw new Error(`${handle}: no such doc`);
         return window(text, offset, limit, maxBytes);
       });
@@ -133,9 +125,7 @@ export async function openSqliteDocs(dir: string): Promise<DocTable> {
     write(handle, content) {
       return Promise.resolve().then(() => {
         const r = refOf(handle, ctx);
-        if (!WRITABLE.includes(r.scope) || r.owner === null) {
-          throw new Error(`${handle}: not yours to write`);
-        }
+        if (r.scope !== "agent") throw new Error(`${handle}: not yours to write`);
         db.prepare(
           `INSERT INTO docs (scope, owner, name, text, updated_at) VALUES (?, ?, ?, ?, ?)
            ON CONFLICT (scope, owner, name) DO UPDATE
@@ -148,13 +138,13 @@ export async function openSqliteDocs(dir: string): Promise<DocTable> {
       return Promise.resolve().then(() =>
         writing(() => {
           const r = refOf(handle, ctx);
-          const raw = r.owner === null ? null : one(r.scope, r.owner, r.name);
+          const raw = one(r.scope, r.owner, r.name);
           if (raw === null) throw new Error(`${handle}: no such doc`);
-          if (!WRITABLE.includes(r.scope)) throw new Error(`${handle}: not yours to edit`);
+          if (r.scope !== "agent") throw new Error(`${handle}: not yours to edit`);
           const edits = parseEdits(spec);
           db.prepare(
             "UPDATE docs SET text = ?, updated_at = ? WHERE scope = ? AND owner = ? AND name = ?",
-          ).run(applyEdits(raw, edits), stamp(), r.scope, r.owner!, r.name);
+          ).run(applyEdits(raw, edits), stamp(), r.scope, r.owner, r.name);
           return `applied ${edits.length} edit(s) to ${handle}`;
         })
       );
@@ -168,10 +158,8 @@ export async function openSqliteDocs(dir: string): Promise<DocTable> {
         `SELECT scope, name, text FROM docs
          WHERE (scope IN ('system', 'shared') AND owner = '')
             OR (scope = 'agent' AND owner = ?)
-            OR (scope = 'conversation' AND owner = ?)
-         ORDER BY CASE scope WHEN 'system' THEN 0 WHEN 'shared' THEN 1 WHEN 'agent' THEN 2
-           ELSE 3 END, name`,
-      ).all(ctx.agent, ctx.conversation || null) as {
+         ORDER BY CASE scope WHEN 'system' THEN 0 WHEN 'shared' THEN 1 ELSE 2 END, name`,
+      ).all(ctx.agent) as {
         scope: DocScope;
         name: string;
         text: string;
@@ -181,18 +169,18 @@ export async function openSqliteDocs(dir: string): Promise<DocTable> {
         const frontmatter = frontmatterOf(r.text);
         if (frontmatter === null) continue; // a doc declares itself, as a file does (§8)
         const columns = columnsOf(frontmatter);
+        if (!applies(columns, ctx)) continue;
         const entry: DocEntry = {
           header: { scope: r.scope, name: r.name, ...columns, handle: `${r.scope}/${r.name}` },
         };
-        if (columns.load === "always") entry.body = stripFrontmatter(r.text);
+        if (columns.load !== "lazy") entry.body = stripFrontmatter(r.text);
         out.push(entry);
       }
       return Promise.resolve(out);
     },
 
     read(ctx: DocContext, ref: DocRef): Promise<string | null> {
-      const owner = ownerOf(ref.scope, ctx);
-      const text = owner === null ? null : one(ref.scope, owner, ref.name);
+      const text = one(ref.scope, ownerOf(ref.scope, ctx), ref.name);
       return Promise.resolve(text === null ? null : stripFrontmatter(text));
     },
 

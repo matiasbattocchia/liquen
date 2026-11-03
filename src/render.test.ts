@@ -40,7 +40,6 @@ const HANDLE_PREFIX: Record<DocScope, string> = {
   system: "/org/data/system/",
   shared: "/org/data/shared/",
   agent: "/org/data/agents/a1/",
-  conversation: "/org/data/conversations/c1/",
 };
 
 function doc(
