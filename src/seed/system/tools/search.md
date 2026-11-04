@@ -34,7 +34,8 @@ calls a script made are there too. With `id`, the page is that one line or call,
 - connection: one of your accounts — a <conn> `name` or `address`: only what rode it
 - before: only messages before this one: a line's `id`, or a moment: ISO-8601, e.g.
   `2026-09-01` or `2026-09-01T17:00` (your org's clock unless it carries an offset), or a
-  stamp as your lines show it, `1 Sep 17:00`
+  stamp as your lines show it, `1 Sep 17:00`. A `<checkpoint before>` names the line to
+  pass: what comes back is what the checkpoint summarizes, word for word
 - after: only messages after this one, same form as `before`
 - text: phrases the message contains (in its words, an attachment's caption or its
   filename), any one of them: `["nafta", "peaje"]` finds the lines that hold either. Each

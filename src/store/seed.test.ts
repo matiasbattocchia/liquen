@@ -15,6 +15,8 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
       "shared/instruction/instructions",
       "shared/memory/memories",
       "system/instruction/instructions",
+      ...["async", "continuity", "knowledge", "peers", "permissions"]
+        .map((s) => `system/instruction/instructions/${s}`),
       "system/skill/skills/transcribe-audio",
       "system/skill/skills/workflows",
       ...[

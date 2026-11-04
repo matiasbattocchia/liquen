@@ -187,6 +187,8 @@ export function docsSuite(s: DocsSubstrate): void {
         "shared/instruction/instructions",
         "shared/memory/memories",
         "system/instruction/instructions",
+        ...["async", "continuity", "knowledge", "peers", "permissions"]
+          .map((s) => `system/instruction/instructions/${s}`),
         "system/skill/skills/transcribe-audio",
         "system/skill/skills/workflows",
         ...[

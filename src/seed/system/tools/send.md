@@ -4,7 +4,8 @@ kind: tool
 
 Dispatch a message to an external world conversation (<conv>). Note: this tool is not needed
 for internal user-assistant conversations (<principal>); you must not use send to refer to a
-principal because they are present in this same conversation.
+principal because they are present in this same conversation. A send answered `sent` has
+gone out; should it fail to arrive, an update will say so.
 
 - to: target <conv> `name` or `address` — or recipients separated by `,` (agents by name, or
   mail addresses) to open a room with them: unnamed, a direct room of up to 8 besides you;
@@ -18,12 +19,14 @@ principal because they are present in this same conversation.
 - re: target message `id`. REQUIRED with `react`. OPTIONAL with `text` and/or `files` (depends
   on the `action`). To press an option of an `<interactive>` message, reply to it with the
   option's `title` as `text`: that goes out as the press the bot reads; the same words
-  without `re` reach it as typing, which a bot usually refuses
+  without `re` reach it as typing, which a bot usually refuses. Its `links` only open a page
+  or dial a number: no reply presses them
 - subject: the name of the conversation this message opens: a mail's Subject line on a first
   send to addresses — every mail thread is a conversation of its own, and a send into one
   needs no subject. On a list of agents, the room's name: `ops` opens a group, `#ops` a
   channel
-- react: an emoji to land on the `re` message
+- react: an emoji to land on the `re` message. On a room's last line it answers the room as
+  a reply would, and the room leaves the unanswered list
 - action: create (default for text or files) | edit | delete | add (default for react) |
   remove. Text or files: create without `re` sends a new message, with `re` *replies to* the
   target message; edit *replaces* content and delete *takes* it back (both require `re`).

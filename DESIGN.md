@@ -2183,6 +2183,13 @@ lower scopes holds an `instructions.md` and a `memories.md` at its root, both `l
 always`; a scope's folders are the org's to make. *(The subagent worker-overlay scope is
 deferred with the tree.)*
 
+The system scope's instructions are one file per skill the harness teaches:
+`instructions.md` holds the voices every other file leans on, and `instructions/<skill>.md`
+the rest, each standing alone. They describe only what the render cannot say for itself,
+and what matters only while a tool is present is in that tool's doc, so a tool comes and
+goes with its words. `RENDER.md` maps every item the model reads to the file that
+describes it, or to none.
+
 **What holds for one conversation** is a `load: conditional` doc in either scope, whose
 header names the conversation's `service` and `address`. It loads while the session has
 that conversation in view: an event of it stands in the window, since a session's
@@ -2230,8 +2237,8 @@ Registers (same substrate, different rules):
 - **A memory shows its budget.** Its heading, inlined, or its index line, lazy, says how
   full it is against `MEMORY_CHARS` (2,200 characters of body): `[<handle>] 94% of 2,200
   chars`. Characters, so the model can judge them and the figure holds across models. The
-  figure informs and nothing enforces it; `instructions.md` says past 100% is time to merge
-  or prune.
+  figure informs and nothing enforces it; `system/instructions/knowledge.md` says past 100%
+  is time to merge or prune.
 - Eviction = an **un-anchored maintenance step** (cron sweep): merge/supersede, size
   budget per scope, every eviction logged with cause.
 

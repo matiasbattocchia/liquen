@@ -16,8 +16,9 @@
  *
  * The system templates sit in the tree they install into — `system/instructions.md`,
  * `system/compaction.md`, `system/<kind>/<name>.md` — so an org may symlink each file, or
- * `system/tools/` and `system/skills/`, at the checkout's and read the harness's words
- * live, a folder's new files included. A skill that teaches one connector's service sits
+ * `system/instructions/`, `system/tools/` and `system/skills/`, at the checkout's and read
+ * the harness's words live, a folder's new files included. The instructions are one file
+ * per skill the harness teaches, so a skill comes and goes as a file. A skill that teaches one connector's service sits
  * there too, and is laid by that connector's door (`seedSkill`), not by boot: an org has it
  * iff it connected the service. The org and agent templates are flat (`organization.md`,
  * `agent.md`, `memories.md`): their home has an id segment no template can name. The
@@ -111,6 +112,10 @@ const TOOL_DOCS = [
   "edit",
 ];
 
+/** The skills the system instructions teach beside `system/instructions.md`, one
+ *  `instructions/<skill>.md` each. */
+const SKILL_INSTRUCTIONS = ["continuity", "permissions", "async", "peers", "knowledge"];
+
 /** Copy templates into the bed — a foldered template only where its FOLDER does not exist,
  *  one at the scope's root wherever the file itself does not.
  *
@@ -146,6 +151,12 @@ async function install(bed: Seedbed, docs: Template[]): Promise<void> {
 export async function seedOrg(bed: Seedbed): Promise<void> {
   await install(bed, [
     ["system", "", "instructions", "system/instructions.md"],
+    ...SKILL_INSTRUCTIONS.map((skill): Template => [
+      "system",
+      "",
+      `instructions/${skill}`,
+      `system/instructions/${skill}.md`,
+    ]),
     ["system", "", "compaction", "system/compaction.md"],
     ...TOOL_DOCS.map((tool): Template => [
       "system",
