@@ -38,6 +38,7 @@ const TONGUES = {
       newText: "New text",
       files: "Attachments",
       location: "Location",
+      contacts: "Contacts",
       // what the answered line carried beside its words, `[image]` before the caption
       carried: {
         image: "image",
@@ -48,6 +49,7 @@ const TONGUES = {
         story: "story",
         file: "file",
         location: "location",
+        contact: "contact",
       },
     },
     // where a principal's line was typed, and by whom when the surface is someone else's
@@ -90,6 +92,7 @@ const TONGUES = {
       newText: "Texto nuevo",
       files: "Adjuntos",
       location: "Ubicación",
+      contacts: "Contactos",
       carried: {
         image: "imagen",
         audio: "audio",
@@ -99,6 +102,7 @@ const TONGUES = {
         story: "historia",
         file: "archivo",
         location: "ubicación",
+        contact: "contacto",
       },
     },
     via: (where: string, who?: string) => who ? `${who} por ${where}` : `por ${where}`,

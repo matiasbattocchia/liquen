@@ -260,6 +260,24 @@ Deno.test("live: a caption and a pin's label read after what carried them", () =
   );
 });
 
+Deno.test("live: contact cards read by the names they show, after their mark", () => {
+  const { p, screen } = surface();
+  p.event({
+    ...asked("2026-09-11T14:13:00Z", "", "Matías (WhatsApp)"),
+    extra: { via: { service: "whatsapp" } },
+    parts: [{
+      type: "data",
+      kind: "contacts",
+      data: [
+        { name: { formatted_name: "Carlos" }, phones: [{ phone: "+54 9 261 656-0401" }] },
+        { name: { formatted_name: "" }, phones: [{ phone: "+54 9 261 485-1664" }] },
+        { name: { formatted_name: "Ana" }, phones: [] },
+      ],
+    }],
+  });
+  assertEquals(plain(screen()), "11 Sep 11:13 ❯ [via whatsapp] [contact] Carlos, Ana\n");
+});
+
 Deno.test("live: a line typed on this surface is not painted twice", () => {
   const typed = ["hola"];
   const { p, screen } = surface({

@@ -148,6 +148,15 @@ export type LocationPart = DataPart<"location", {
   address?: string;
 }>;
 
+/** Contact cards (the Cloud API contacts object, which the WhatsApp bridge takes both ways
+ *  and writes as a vCard): a name and its numbers. `wa_id` is the WhatsApp account a
+ *  number reaches, the digits that let the card open a chat. */
+export type ContactsPart = DataPart<"contacts", ContactCard[]>;
+export type ContactCard = {
+  name: { formatted_name: string };
+  phones: { phone: string; wa_id?: string }[];
+};
+
 /** A calendar event — the CANONICAL shape every calendar connector prunes its wire resource
  *  to (iCalendar is the shared standard underneath; Google today, Outlook next — the
  *  service's ~40-field resource stops at the connector, THIS crosses). `gid` is the
@@ -494,8 +503,8 @@ export interface PermissionAsk {
    *  this alone — the address is what the model's own words could not say. */
   lands?: string[];
   /** A `send`, laid out for the person judging it (§9): where it lands, the line it
-   *  answers, and what it will say — the text with its line breaks, the attachments and
-   *  the pin counted apart. */
+   *  answers, and what it will say — the text with its line breaks, the attachments, the
+   *  pin and the cards counted apart. */
   send?: SendPreview;
 }
 
@@ -506,15 +515,16 @@ export interface BinDir {
   programs: { name: string; usage?: string }[];
 }
 
-/** What a line can carry that is not words: a file of some kind, or a pin. */
-export type Carried = MediaKind | "location";
+/** What a line can carry that is not words: a file of some kind, a pin, or contact cards. */
+export type Carried = MediaKind | "location" | "contacts";
 
 export interface SendPreview {
   conversation: { name?: string; address: string; kind?: Conversation["kind"] };
   /** The line the send answers: the referent when it replies, else the other side's
    *  last word in that conversation. `at` is already on the org's clock. `text` is every
-   *  word the line has — caption, pin label, a voice note's transcript — and may be empty;
-   *  `carries` names what came beside the words, so a photo alone still reads as a line. */
+   *  word the line has — caption, pin label, card name, a voice note's transcript — and
+   *  may be empty; `carries` names what came beside the words, so a photo alone still
+   *  reads as a line. */
   last?: { text: string; at: string; carries?: Carried[] };
   /** The send names its line (`send(re:)`), so `last` quotes that line, whatever came
    *  after it. */
@@ -529,6 +539,8 @@ export interface SendPreview {
   text?: string;
   files: number;
   location?: string;
+  /** Each card the send shares, as its name and numbers. */
+  contacts?: string[];
   /** A first contact's account as its wire shows it (`ContactPort.profile`): the wire's
    *  name, whether an account answers there and the name it goes by, when the wire says. */
   profile?: { service: string; exists: boolean; name?: string };

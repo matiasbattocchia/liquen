@@ -237,6 +237,45 @@ Deno.test("a location is its own content, last, and the pin's data goes verbatim
   });
 });
 
+Deno.test("contact cards are one content after the pin, and their data goes verbatim", async () => {
+  const records: WADispatchRecord[] = [];
+  let n = 0;
+  const { log } = harness((r) => {
+    records.push(r);
+    return Promise.resolve(`wmw.out.${++n}`);
+  });
+  const pin = { latitude: -32.946186, longitude: -68.823082, name: "Consultorio" };
+  const cards = [
+    {
+      name: { formatted_name: "Carlos" },
+      phones: [{ phone: "+54 9 261 656-0401", wa_id: "5492616560401" }],
+    },
+    { name: { formatted_name: "Ana" }, phones: [{ phone: "4251234" }] },
+  ];
+  log.push(outboundMessage({
+    parts: [
+      { type: "data", kind: "contacts", data: cards },
+      { type: "data", kind: "location", data: pin },
+    ],
+  }));
+  // cards alone, as a reply: the reference lands on them
+  log.push(outboundMessage({
+    parts: [{ type: "data", kind: "contacts", data: cards }],
+    payload: { action: "reply", ref_external_id: externalId("wmw.orig.7") },
+  }));
+  await settle();
+  assertEquals(records.length, 3);
+  assertEquals(records[0].content.kind, "location");
+  assertEquals(records[1].content, { version: "1", type: "data", kind: "contacts", data: cards });
+  assertEquals(records[2].content, {
+    version: "1",
+    type: "data",
+    kind: "contacts",
+    data: cards,
+    re_message_id: "wmw.orig.7",
+  });
+});
+
 Deno.test("edit and delete act on the referent: one content, no body of their own", async () => {
   const records: WADispatchRecord[] = [];
   const { log } = harness((r) => {

@@ -8,7 +8,7 @@
  *
  *   - name: what it is
  *     a wrapped line continues the item above it
- *     - field: an object parameter's own field, indented under it
+ *     - field: an object parameter's own field, or a list's item's, indented under it
  *
  * Everything before that block is the tool's description: a wrapped line joins the one
  * above it with a space, a line opening `- ` starts a line of its own, and a blank line
@@ -113,13 +113,18 @@ export function worded(shape: ToolShape, text: string): Anthropic.Tool {
         out[key] = prop;
         continue;
       }
-      if (item.fields.size > 0 && !prop.properties) {
+      const each = prop.items as Record<string, unknown> | undefined;
+      if (item.fields.size > 0 && !prop.properties && !each?.properties) {
         throw new Error(`${file}: \`${key}\` has no fields to describe`);
       }
       out[key] = {
         ...prop,
         ...(prop.properties
           ? { properties: describe(prop.properties as Props, item.fields, false) }
+          : each?.properties
+          ? {
+            items: { ...each, properties: describe(each.properties as Props, item.fields, false) },
+          }
           : {}),
         description: fill(item.text),
       };

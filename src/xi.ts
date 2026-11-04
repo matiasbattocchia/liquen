@@ -62,7 +62,14 @@ import {
   DEFAULT_SLEEP_HOURS,
   DEFAULT_TIMEZONE,
 } from "./config.ts";
-import { type Describe, describeCall, landings, nameResolver, type Resolve } from "./describe.ts";
+import {
+  cardNames,
+  type Describe,
+  describeCall,
+  landings,
+  nameResolver,
+  type Resolve,
+} from "./describe.ts";
 import { PROCESSOR_TIMEOUT_MS } from "./processors.ts";
 import type { Appender, Reader } from "./store/log.ts";
 import type { AgentRow, Registry } from "./store/agents.ts";
@@ -82,7 +89,14 @@ import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import type { Sweeper } from "./store/sweep.ts";
 import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./store/media.ts";
-import type { BinDir, Carried, FilePart, LocationPart, SendPreview } from "./types.ts";
+import type {
+  BinDir,
+  Carried,
+  ContactsPart,
+  FilePart,
+  LocationPart,
+  SendPreview,
+} from "./types.ts";
 import {
   directAddress,
   LOCAL_CONNECTION,
@@ -3315,10 +3329,15 @@ async function execute(
       : [];
     const body = args.text === undefined ? "" : String(args.text);
     const glyph = args.react === undefined ? "" : String(args.react);
-    // a pin rides the wire as a message of its own kind (§5 parts): only WhatsApp has one
+    // a pin and a contact card each ride the wire as a message of its own kind (§5 parts):
+    // only WhatsApp has them
     const location = args.location === undefined ? undefined : locationPartOf(args.location);
     if (location && envelope.service !== "whatsapp") {
       throw new Error(`a location rides WhatsApp only — ${to} is on ${envelope.service}`);
+    }
+    const contacts = args.contacts === undefined ? undefined : contactsPartOf(args.contacts);
+    if (contacts && envelope.service !== "whatsapp") {
+      throw new Error(`a contact card rides WhatsApp only — ${to} is on ${envelope.service}`);
     }
     // the reference (§5): the model points with the `id` its window showed. Resolving it
     // to the referent — and the referent to the name the WIRE knows it by — is the whole
@@ -3334,10 +3353,13 @@ async function execute(
     }
     if (named === "add" && !glyph) throw new Error("`add` needs `react`: the glyph it adds");
     if (named === "create" && glyph) {
-      throw new Error("`create` sends text, files or a location — a reaction is `add`");
+      throw new Error("`create` sends text, files, a location or contacts — a reaction is `add`");
     }
     if (location && (glyph || named === "edit" || named === "delete")) {
       throw new Error("a location is sent, not edited or reacted with — drop `location`");
+    }
+    if (contacts && (glyph || named === "edit" || named === "delete")) {
+      throw new Error("a contact card is sent, not edited or reacted with — drop `contacts`");
     }
     const action = named === "create" || named === "add" ? undefined : named;
     if (action && !target) throw new Error(`\`${action}\` needs \`re\`: the message it acts on`);
@@ -3352,7 +3374,7 @@ async function execute(
     }
     if (action === "edit" && !body) throw new Error("`edit` needs the replacement text");
     if (action === "remove" && !glyph) throw new Error("`remove` needs the reaction it lifts");
-    if (!action && !glyph && !body && files.length === 0 && !location) {
+    if (!action && !glyph && !body && files.length === 0 && !location && !contacts) {
       throw new Error("nothing to send");
     }
     const msg: Draft<MessageEvent> = {
@@ -3386,6 +3408,7 @@ async function execute(
           ...(body ? [{ type: "text", kind: "text", text: body } as const] : []),
           ...files,
           ...(location ? [location] : []),
+          ...(contacts ? [contacts] : []),
         ],
     };
     const sent = await ports.log.publish(msg); // a full draft (parts present) always stores
@@ -3698,6 +3721,15 @@ async function sendPreviewOf(
   const loc = a.location && typeof a.location === "object" && !Array.isArray(a.location)
     ? a.location as Record<string, unknown>
     : undefined;
+  // a card as the approver weighs it: whose numbers go out, and which
+  const cards = Array.isArray(a.contacts)
+    ? a.contacts.map((c) => {
+      const o = c && typeof c === "object" ? c as Record<string, unknown> : {};
+      const name = typeof o.name === "string" ? o.name : "";
+      const phones = Array.isArray(o.phones) ? o.phones.map(String).join(", ") : "";
+      return [name, phones && `(${phones})`].filter((s) => s !== "").join(" ");
+    })
+    : [];
   return {
     conversation: {
       ...(who ? { name: who.name } : {}),
@@ -3720,6 +3752,7 @@ async function sendPreviewOf(
           : `${loc.latitude}, ${loc.longitude}`,
       }
       : {}),
+    ...(cards.length > 0 ? { contacts: cards } : {}),
     ...(profile ? { profile } : {}),
   };
 }
@@ -3746,8 +3779,8 @@ async function profileOf(
 }
 
 /** A line as its card row shows it: every word it has — the text and captions, a pin's
- *  label, the transcript `rows` hold for a voice note — and what it carried beside them.
- *  A line with neither is nothing to show. */
+ *  label, a card's name, the transcript `rows` hold for a voice note — and what it carried
+ *  beside them. A line with neither is nothing to show. */
 function lineOf(e: Event, rows: Event[]): { text: string; carries?: Carried[] } | undefined {
   const parts = (e as MessageEvent).parts ?? [];
   const carries: Carried[] = [];
@@ -3758,6 +3791,10 @@ function lineOf(e: Event, rows: Event[]): { text: string; carries?: Carried[] } 
       carries.push("location");
       const pin = (p as LocationPart).data;
       said.push(pin.name ?? pin.address ?? "");
+    }
+    if (p.type === "data" && p.kind === "contacts") {
+      carries.push("contacts");
+      said.push(cardNames(p as ContactsPart));
     }
   }
   const transcript = rows.find((x) => transcribes(x, e))?.parts
@@ -3787,6 +3824,33 @@ function locationPartOf(raw: unknown): LocationPart {
     kind: "location",
     data: { latitude, longitude, ...(name ? { name } : {}), ...(address ? { address } : {}) },
   };
+}
+
+/** `send(contacts:)` → the part: each card a name on one line and its phone numbers, as
+ *  typed. A number written with `+` and its country code is also the WhatsApp account the
+ *  card opens a chat with; one written otherwise is only shown. The bridge writes the
+ *  vCard. */
+function contactsPartOf(raw: unknown): ContactsPart {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error("`contacts` is a list of cards: `[{name, phones}]`");
+  }
+  const data = raw.map((c, i) => {
+    const o = c && typeof c === "object" ? c as Record<string, unknown> : {};
+    const name = typeof o.name === "string" ? o.name.replace(/\s+/g, " ").trim() : "";
+    if (!name) throw new Error(`\`contacts[${i}].name\` is the name the card shows`);
+    const phones = Array.isArray(o.phones) ? o.phones.map((p) => String(p).trim()) : [];
+    if (phones.length === 0 || phones.some((p) => shapeOf(p) !== "phone" || digits(p) === "")) {
+      throw new Error(`\`contacts[${i}].phones\` are phone numbers, \`+54 9 261 656-0401\``);
+    }
+    return {
+      name: { formatted_name: name },
+      phones: phones.map((phone) => ({
+        phone,
+        ...(phone.startsWith("+") ? { wa_id: digits(phone) } : {}),
+      })),
+    };
+  });
+  return { type: "data", kind: "contacts", data };
 }
 
 async function referent(
@@ -4376,6 +4440,17 @@ export const OWN_TOOLS: ToolShape[] = [
               address: { type: "string" },
             },
             required: ["latitude", "longitude"],
+          },
+          contacts: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                phones: { type: "array", items: { type: "string" } },
+              },
+              required: ["name", "phones"],
+            },
           },
         },
         required: ["to"],

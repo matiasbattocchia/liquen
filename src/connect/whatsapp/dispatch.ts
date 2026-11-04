@@ -17,7 +17,8 @@
  * through as-is. The token and the files stay broker-side (§9).
  *
  * One event, N parts → N bridge calls (the bridge takes ONE content each): the first
- * file carries the text as caption, a location is a content of its own after them; the
+ * file carries the text as caption, a location and contact cards are contents of their own
+ * after them (all the cards one message, which the bridge writes as vCards); the
  * FIRST response's id backfills `external_id` — later parts' echoes land as their own
  * rows (they ARE their own WhatsApp messages).
  *
@@ -31,6 +32,7 @@ import { httpError } from "../errors.ts";
 import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
 import type {
+  ContactsPart,
   EventId,
   FilePart,
   LocationPart,
@@ -131,9 +133,10 @@ interface Outbound {
 
 /** liquen parts → the bridge's one-content-per-call shape. Text joins into one; a reaction
  *  is its own content (kind + re_message_id); the first file carries the text as its
- *  caption, later files go bare; a location is the last content, and takes `re` only
- *  when nothing before it did. `re` travels in `extra.whatsapp.re` (the ingest's
- *  convention) with the `whatsapp:` prefix stripped back to the raw wmw id. */
+ *  caption, later files go bare; a location, then the contact cards, close the send as
+ *  contents of their own, each taking `re` only when nothing before it did. `re` travels
+ *  in `extra.whatsapp.re` (the ingest's convention) with the `whatsapp:` prefix stripped
+ *  back to the raw wmw id. */
 function outbound(event: MessageEvent): Outbound | null {
   if (!event.envelope.connection_address || !event.envelope.conversation.address) return null;
 
@@ -148,6 +151,9 @@ function outbound(event: MessageEvent): Outbound | null {
   const reactText = texts.find((p) => p.kind === "reaction");
   const location = event.parts.find((p): p is LocationPart =>
     p.type === "data" && p.kind === "location"
+  );
+  const contacts = event.parts.find((p): p is ContactsPart =>
+    p.type === "data" && p.kind === "contacts"
   );
   // common markdown → the wire's dialect, here at the frontier (flavor.ts)
   const text = toWhatsApp(
@@ -216,13 +222,14 @@ function outbound(event: MessageEvent): Outbound | null {
       },
     });
   }
-  if (location) {
+  for (const part of [location, contacts]) {
+    if (!part) continue;
     contents.push({
       content: {
         version: "1",
         type: "data",
-        kind: "location",
-        data: location.data,
+        kind: part.kind,
+        data: part.data,
         ...(re && !contents.length ? { re_message_id: re } : {}),
       },
     });
