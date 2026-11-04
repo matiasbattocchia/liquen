@@ -117,13 +117,142 @@ A lazy memory in the index (an illustration: the org has none), and a notice aft
 
 ## Not in this batch
 
-Cards, set aside. The `## Knowledge` rewrite in `system.md`. The nightly pass. A `path`
-condition beside `service` and `address`, loading a doc while the agent's working directory
-lies under it.
+Cards, set aside. A `path` condition beside `service` and `address`, loading a doc while the
+agent's working directory lies under it.
 
 ## Order
 
 2 and 3 first, small and in the docs' own code; then 1.
+
+# Then: the social agent
+
+Decided 3 and 4 Nov 2026. The agent learns its principal's life and people, writes to each
+the way the principal does, keeps debts in sight, and reads a calendar off its docs.
+
+What `new`'s mind showed on 4 Nov: asked to pass "el Gonza" his contact, it searched, listed
+five Gonzalos, then picked one by the saved name, not by how close he is. Gonzalo Flores
+writes almost daily and Germán's audio named him. It wrote nothing down after: not who el
+Gonza is, not that a nickname means someone close, not that a contact goes as a card. What
+it knows of people lives in the checkpoint's `Open` list and goes when a matter closes.
+
+## 1. The system instructions, one file per skill
+
+- `system/instructions/NN-<skill>.md`, the number the load order, in gaps of ten so a skill
+  slots in without renaming the rest: `10-core` (the voices), `20-continuity`,
+  `30-permissions`, `40-async`, `50-peers`, `60-knowledge`, `70-memory`.
+  `system/instructions.md` goes, and both orgs drop its link.
+- `60-knowledge` keeps the mechanics: one header spec, a line per `load` value, and the
+  rules of thumb, first among them that memories are facts and instructions and skills are
+  rules. The sentence naming a scope's `instructions.md` and `memories.md` goes: the
+  scaffold lays them, and an org may rename them. `shared/` stays "read and written by
+  everyone", as poetic license.
+- `70-memory` says how to keep a memory: the three horizons, one-liners in a memory that
+  loads always, a conditional doc for what holds in one conversation, grounding at the end
+  of the line (`(27 Oct, 3f9a2c)`, `(2 Nov–15 Nov, 8be1d0 41c2aa)`), a changed fact
+  rewritten in place, a signal kept as a fact or a rule the moment it comes, each person's
+  facts under their name, a procedure promoted to a skill, and what the session taught
+  written down before a checkpoint folds it.
+
+## 2. Profiles
+
+- **In the agent's scope**, since a principal's life and people are theirs, not the org's:
+  `profiles/matias.md`, loaded always, and one profile per person or group.
+- **Header lists.** `keywords`, for any kind of doc. `conversations: [whatsapp:5492617253489,
+  instagram:gonza.flores]` takes the place of `service` and `address`, split at the first
+  colon, since a service name never holds one.
+- **A conditional doc loads whole while any of its conversations is in view**, and shows its
+  index line, keywords included, while none is. So a profile loads when its person writes,
+  and "el Gonza" resolves from the index when someone else names him.
+- **Search reads docs.** A match comes back as `<doc handle keywords conversations>`; a
+  keyword match on `from` or `in` stands first, before the address books.
+- **Tiers are keywords**: `familia`, `amigos`, `trabajo`, `servicios`. The principal's
+  instructions say how to write to each, and a profile's keyword ties its person to one.
+- **Links are markdown with the handle as target**: `[Germán](agent/profiles/german-kousal)`,
+  the text that `read` takes, so "Germán" is this principal's Germán.
+- **A group has a profile** that lists its members by link; the bridge's roster lines say
+  who is in. Groups are the social sub-graph, with no graph engine.
+
+## 3. Read before writing
+
+- A model's send into a conversation with no line in the window, and none read since the
+  checkpoint, answers at once, before the gate: `not sent: read <name> first, then send
+  again`, with that conversation's `<before>` (the principal's own last lines in it) and its
+  profile. The answer counts as the read, so the second send goes.
+- The door is exempt: a script may send predefined messages. The permission table, the gate
+  and the execution branch stay one path.
+
+## 4. Lines with a time
+
+- **A line's form**: status, the moment it is about, the text, its tags, the grounding last.
+  `- [ ] @7 Nov 17:30 Leo V graba su set #grabacion (2 Nov, 8be1d0)`. An `@` date takes the
+  year nearest today.
+- **A board is a file.** Its `##` headings are the columns, and a heading tags its block the
+  way `#tag` tags a line, so one filter reads both. A checkbox belongs to plain lists.
+- **The anchor shows the day**: `today — N:` holds the calendar's events from the log, the
+  `@` lines dated today and the day's wakes, each as `· 17:30 text #tags — doc › heading`.
+  Google Calendar is reconnected and backfilled.
+- Alarms go back to doing something at a time: `grabaciones.md` no longer needs its 9:00
+  wake to reread itself.
+
+## 5. Debts stay in the checkpoint
+
+`compaction.md` splits `## Open` into `## Your principal owes`, `## Owed to your principal`
+and `## Open`. No list doc of its own: a debt with a date is also an `@` line in a memory,
+so the agenda shows it.
+
+## 6. Unload
+
+- **A turn, the way an alarm is**: `<system kind="unload" since="3f9a2c">` opens it, it writes
+  down what the span taught as `70-memory` says, and it ends silent. The instructions are in
+  the prefix from the start; the notice is a stored event, and the turn's writes stand in the
+  window whether a checkpoint follows or not.
+- **Its own cursor**, the last event it covered. It runs before any checkpoint whose span
+  reaches past the cursor (`decide` opens it first), when the span grows past a size, and on
+  a daily wake.
+- **A scribe session** on the daily wake reads, through search, the conversations the mind
+  never saw (`seen="never"`), and makes the cold start: the principal's profile and the
+  people closest to them, from the log.
+
+## 7. The checkpoint stops at its cut
+
+- **The request ends where the archive does**: the frozen prefix, the `<checkpoint>`, the
+  archived span, then `compaction.md` as a trailing system block, or as `<system
+  kind="checkpoint">` text where a lone system block is refused. No anchor, no `keepRecent`
+  tail, no `<archived-through>`: the position is the boundary, and the anchor's state stays
+  the anchor's.
+- **The cut is pinned early**: once the window holds more than `keepRecent` past a turn's
+  end, that end is the next checkpoint's cut.
+- **The cut is kept warm.** A read lands only where an earlier request placed a breakpoint,
+  and an entry lives an hour from its last read, so the cut's entry dies an hour after the
+  turn that followed it. Every request marks the pinned cut with the fourth breakpoint. Two
+  smoke tests come first: that a breakpoint finding its entry refreshes it while a later one
+  serves the read, and that a user message may hold a system block alone. Without the first,
+  the span goes uncached: at $3 per million tokens, about $0.09 more per checkpoint.
+
+## 8. Contact cards
+
+- `send(contacts: [{name, phones}])`, WhatsApp only, a content of its own after the pin. The
+  harness builds the card; a number written with `+` and its country code carries its
+  `wa_id`. Branch `send-contact`.
+- The bridge writes an `N:` line, the whole name as the given name, and escapes `\`, `,`,
+  `;` and line breaks (`open-bsp-whatsmeow`, outside this repo). Its reader of incoming
+  cards does not unescape yet.
+
+## Not in this batch
+
+A manners section in each profile. Caching on other providers: Gemini's implicit cache
+matches prefixes on its own, without a guarantee, and its explicit one is gone from Gemini 4
+Argon on.
+
+## Order
+
+1. Header lists, conditional docs indexed while out of view, search over docs.
+2. Profiles, links and tiers, as instructions and a template skill.
+3. Read before writing.
+4. Unload, its cursor and its rule in `decide`; debts split in `compaction.md`.
+5. The checkpoint stopped at its cut, after the two smoke tests.
+6. The `@` line form and the anchor's `today`; the calendar reconnected.
+7. The scribe session and the cold start.
 
 # Event log and render (landed 1 and 2 Nov 2026)
 
