@@ -14,8 +14,15 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
       "agent/memory/memories",
       "shared/instruction/instructions",
       "shared/memory/memories",
-      "system/instruction/instructions",
-      ...["async", "continuity", "knowledge", "peers", "permissions"]
+      ...[
+        "10-core",
+        "20-continuity",
+        "30-permissions",
+        "40-async",
+        "50-peers",
+        "60-knowledge",
+        "70-memory",
+      ]
         .map((s) => `system/instruction/instructions/${s}`),
       "system/skill/skills/transcribe-audio",
       "system/skill/skills/workflows",
@@ -33,7 +40,7 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
       ].map((t) => `system/tool/tools/${t}`),
     ]);
     const byRef = new Map(docs.map((d) => [`${d.header.scope}/${d.header.name}`, d]));
-    assert(byRef.get("system/instructions")!.body); // always ⇒ inlined, whatever it says
+    assert(byRef.get("system/instructions/10-core")!.body); // always ⇒ inlined, whatever it says
     assertEquals(byRef.get("system/skills/workflows")!.body, undefined); // lazy → pointer
     // the memories load always, and hold nothing yet
     assertEquals(byRef.get("shared/memories")!.body, "");

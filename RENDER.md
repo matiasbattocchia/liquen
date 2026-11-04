@@ -7,9 +7,9 @@ The render says itself: an item is described in system only when the render cann
 it, because it hides a consequence, asks for conduct, or is a format the agent writes. What
 matters only while a tool is present is described in that tool's doc, so a tool comes and
 goes with its words. Each skill the system describes is one file under
-`src/seed/system/`, named beside its table.
+`src/seed/system/instructions/`, named beside its table.
 
-## Voices · `instructions.md`
+## Voices · `instructions/10-core.md`
 
 | Item | Described in system | Note |
 |---|---|---|
@@ -21,7 +21,7 @@ goes with its words. Each skill the system describes is one file under
 | `<unsupported>` | ✓ | Never report it as silence |
 | `<\|SILENCE\|>` | ✓ | The agent writes it |
 
-## Continuity · `instructions/continuity.md`
+## Continuity · `instructions/20-continuity.md`
 
 | Item | Described in system | Note |
 |---|---|---|
@@ -65,14 +65,14 @@ goes with its words. Each skill the system describes is one file under
 | `<principal name email at>` | ✓ | In Voices |
 | `action="reply\|edit\|delete"`, `on="…"` | ✗ | |
 
-## Peers · `instructions/peers.md`
+## Peers · `instructions/50-peers.md`
 
 | Item | Described in system | Note |
 |---|---|---|
 | `agent="…"` line | ✓ | Conduct |
 | `session@agent` on the local service | ✗ | |
 
-## Permissions · `instructions/permissions.md`
+## Permissions · `instructions/30-permissions.md`
 
 | Item | Described in system | Note |
 |---|---|---|
@@ -83,7 +83,7 @@ goes with its words. Each skill the system describes is one file under
 | `waiting — N approvals:` `· … — asked 14:02 · id …` | ✗ | `cancel.md` |
 | Approval cards are already seen | ✓ | Conduct |
 
-## Async calls · `instructions/async.md`
+## Async calls · `instructions/40-async.md`
 
 | Item | Described in system | Note |
 |---|---|---|
@@ -103,7 +103,7 @@ goes with its words. Each skill the system describes is one file under
 | `<system kind="alarm">` | ✗ | `schedule.md` |
 | `scheduled — N wakes:` `· … — fires …, repeats \`…\` · id … · the org's \`name\`` | ✗ | `schedule.md`, `cancel.md` |
 
-## Knowledge · `instructions/knowledge.md`
+## Knowledge · `instructions/60-knowledge.md`
 
 | Item | Described in system | Note |
 |---|---|---|
@@ -113,7 +113,14 @@ goes with its words. Each skill the system describes is one file under
 | Three scopes | ✓ | |
 | Header `kind` `description` `load` | ✓ | A format the agent writes |
 | Conditional `service` `address` | ✓ | A format the agent writes |
-| An `instructions.md` and a `memories.md` per scope | ✓ | |
+| What each `load` value puts in front of the agent | ✓ | A consequence the index hides |
+
+## Memory · `instructions/70-memory.md`
+
+| Item | Described in system | Note |
+|---|---|---|
+| A line's `id`, as the ground of a memory | ✓ | Conduct |
+| `<checkpoint>`, as short-term memory | ✓ | Conduct |
 
 ## Environment
 

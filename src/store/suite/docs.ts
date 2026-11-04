@@ -186,8 +186,15 @@ export function docsSuite(s: DocsSubstrate): void {
         "agent/memory/memories",
         "shared/instruction/instructions",
         "shared/memory/memories",
-        "system/instruction/instructions",
-        ...["async", "continuity", "knowledge", "peers", "permissions"]
+        ...[
+          "10-core",
+          "20-continuity",
+          "30-permissions",
+          "40-async",
+          "50-peers",
+          "60-knowledge",
+          "70-memory",
+        ]
           .map((s) => `system/instruction/instructions/${s}`),
         "system/skill/skills/transcribe-audio",
         "system/skill/skills/workflows",

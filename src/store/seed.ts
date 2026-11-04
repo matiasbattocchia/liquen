@@ -14,8 +14,8 @@
  * on disk, in an editor. Boot lays them too, for a roster entry typed into `config.jsonc`
  * by hand; `install`'s rule is what makes all three the same call.
  *
- * The system templates sit in the tree they install into — `system/instructions.md`,
- * `system/compaction.md`, `system/<kind>/<name>.md` — so an org may symlink each file, or
+ * The system templates sit in the tree they install into — `system/compaction.md`,
+ * `system/<kind>/<name>.md` — so an org may symlink each file, or
  * `system/instructions/`, `system/tools/` and `system/skills/`, at the checkout's and read
  * the harness's words live, a folder's new files included. The instructions are one file
  * per skill the harness teaches, so a skill comes and goes as a file. A skill that teaches one connector's service sits
@@ -112,9 +112,18 @@ const TOOL_DOCS = [
   "edit",
 ];
 
-/** The skills the system instructions teach beside `system/instructions.md`, one
- *  `instructions/<skill>.md` each. */
-const SKILL_INSTRUCTIONS = ["continuity", "permissions", "async", "peers", "knowledge"];
+/** The skills the system instructions teach, one `instructions/<NN>-<skill>.md` each. The
+ *  number is the load order, `core` first with the voices the others lean on, and its gaps
+ *  leave room for a skill between two. */
+const SKILL_INSTRUCTIONS = [
+  "10-core",
+  "20-continuity",
+  "30-permissions",
+  "40-async",
+  "50-peers",
+  "60-knowledge",
+  "70-memory",
+];
 
 /** Copy templates into the bed — a foldered template only where its FOLDER does not exist,
  *  one at the scope's root wherever the file itself does not.
@@ -150,7 +159,6 @@ async function install(bed: Seedbed, docs: Template[]): Promise<void> {
 /** The org's half: what every agent in this deployment reads. */
 export async function seedOrg(bed: Seedbed): Promise<void> {
   await install(bed, [
-    ["system", "", "instructions", "system/instructions.md"],
     ...SKILL_INSTRUCTIONS.map((skill): Template => [
       "system",
       "",
