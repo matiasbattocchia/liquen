@@ -700,6 +700,7 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
         text: "hola Carlos!\n\nlunes o miércoles",
         files: ["fachada.jpg", "portero.jpg"],
         location: { latitude: -32.9, longitude: -68.8, name: "Consultorio" },
+        contacts: [{ name: "Dra. Suarez", phones: ["+54 9 261 707-8202", "4251234"] }],
       },
     }, {
       // a first contact: the card says who the number reaches, asked of the wire
@@ -774,6 +775,7 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
       text: "hola Carlos!\n\nlunes o miércoles",
       files: 2,
       location: "Consultorio",
+      contacts: ["Dra. Suarez (+54 9 261 707-8202, 4251234)"],
     });
     assertEquals(stranger.parts[0].data.send, {
       conversation: { address: "5492617078202" },
@@ -967,6 +969,71 @@ Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere 
       String((results[i].parts[0] as { data: { output: string } }).data.output);
     assertStringIncludes(outputOf(1), "a location rides WhatsApp only");
     assertStringIncludes(outputOf(2), "`location.latitude` is degrees");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("send `contacts`: the harness shapes the cards, on WhatsApp only", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }, { agentId: "a2", mind: "mind@a2" }]);
+  await log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const card = { name: "  Carlos\n Maglione ", phones: ["+54 9 261 656-0401", "4251234"] };
+  const { transport } = scripted([
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: {
+        to: "5491199999999",
+        connection: "sole",
+        text: "te paso a Carlos",
+        contacts: [card],
+      },
+    }], "tool_use"),
+    // a conversation on the local channel has no card to send
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "mind@a2", contacts: [card] },
+    }], "tool_use"),
+    // a number is digits, however it is spelled
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "5491199999999", contacts: [{ name: "Carlos", phones: ["carlos@x.com"] }] },
+    }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("pasale el contacto de Carlos"));
+    for (let i = 0; i < 12; i++) await xi(CONFIG, ports);
+    const sent = (await log.read({ types: ["message"] })).filter((e) =>
+      e.agent && e.payload?.turn_id &&
+      (e as MessageEvent).parts.some((p) => p.kind === "contacts")
+    );
+    assertEquals(sent.length, 1);
+    // one name on one line; a number with its country code is also the account it opens
+    assertEquals(sent[0].parts, [
+      { type: "text", kind: "text", text: "te paso a Carlos" },
+      {
+        type: "data",
+        kind: "contacts",
+        data: [{
+          name: { formatted_name: "Carlos Maglione" },
+          phones: [{ phone: "+54 9 261 656-0401", wa_id: "5492616560401" }, { phone: "4251234" }],
+        }],
+      },
+    ]);
+    const results = await log.read({ types: ["tool_result"] });
+    const outputOf = (i: number) =>
+      String((results[i].parts[0] as { data: { output: string } }).data.output);
+    assertStringIncludes(outputOf(1), "a contact card rides WhatsApp only");
+    assertStringIncludes(outputOf(2), "`contacts[0].phones` are phone numbers");
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

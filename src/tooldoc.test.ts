@@ -76,6 +76,38 @@ Deno.test("worded: any disagreement with the schema is an error naming the file"
   fails("- at: x\n- limit: y\n- place: z", "no description before the parameters");
 });
 
+Deno.test("worded: a list of objects describes its items' fields", () => {
+  const shape: ToolShape = {
+    spec: {
+      name: "route",
+      input_schema: {
+        type: "object",
+        properties: {
+          stops: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { name: { type: "string" }, wait: { type: "integer" } },
+              required: ["name"],
+            },
+          },
+        },
+      },
+    },
+  };
+  const t = worded(shape, "A route.\n\n- stops: where it halts\n  - name: what the stop is called");
+  const stops = (t.input_schema.properties as Record<string, Record<string, unknown>>).stops;
+  assertEquals(stops.description, "where it halts");
+  assertEquals(stops.items, {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "what the stop is called" },
+      wait: { type: "integer" },
+    },
+    required: ["name"],
+  });
+});
+
 Deno.test("worded: a tool with no parameters is prose alone", () => {
   const shape = { spec: { name: "ping", input_schema: { type: "object" as const } } };
   assertEquals(worded(shape, "Say hi.\n").description, "Say hi.");

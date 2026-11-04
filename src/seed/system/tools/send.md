@@ -36,3 +36,8 @@ gone out; should it fail to arrive, an update will say so.
   conversations only
   - name: the label the pin shows
   - address: the line under the label
+- contacts: contact cards, sent together as their own message after any text, files or pin.
+  WhatsApp conversations only
+  - name: the name the card shows
+  - phones: its numbers, each with `+` and the country code (`+54 9 261 656-0401`) so the
+    card opens a WhatsApp chat

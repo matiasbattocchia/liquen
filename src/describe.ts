@@ -24,6 +24,7 @@
 
 import type {
   Carried,
+  ContactsPart,
   Conversation,
   Event,
   Json,
@@ -114,6 +115,13 @@ const BUILTIN: Record<string, Describe> = {
       const label = typeof l.name === "string" && l.name ? l.name : `${l.latitude}, ${l.longitude}`;
       bits.push(`location: ${value(label, opts)}`);
     }
+    // the cards by the names they show
+    if (Array.isArray(a.contacts) && a.contacts.length > 0) {
+      const names = a.contacts.map((c) =>
+        c && typeof c === "object" && !Array.isArray(c) ? String(c.name) : String(c)
+      );
+      bits.push(`contacts: ${value(names.join(", "), opts)}`);
+    }
     return bits.join(", ");
   },
 };
@@ -150,6 +158,7 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
   const extras = [
     ...(p.files > 0 ? [`**${labels.files}**: ${p.files}`] : []),
     ...(p.location ? [`**${labels.location}**: ${p.location}`] : []),
+    ...(p.contacts?.length ? [`**${labels.contacts}**: ${p.contacts.join(", ")}`] : []),
   ];
   if (extras.length) rows.push(extras.join(" · "));
   return rows.join("\n\n");
@@ -168,6 +177,7 @@ export interface SendCardLabels {
   newText: string;
   files: string;
   location: string;
+  contacts: string;
   carried: Record<CarriedWord, string>;
 }
 
@@ -179,7 +189,8 @@ export type CarriedWord =
   | "sticker"
   | "story"
   | "file"
-  | "location";
+  | "location"
+  | "contact";
 
 /** The word a person knows each carried thing by: Instagram's story shapes are all a
  *  story, and its generic attachments a file. */
@@ -196,6 +207,7 @@ const CARRIED: Record<Carried, CarriedWord> = {
   story_mention: "story",
   story_reply: "story",
   location: "location",
+  contacts: "contact",
 };
 
 /** What a carried thing is called — the key a tongue's `carried` labels are read under,
@@ -204,9 +216,9 @@ export const carriedWord = (c: Carried): CarriedWord => CARRIED[c];
 
 /** A message as one line, the way a principal's surface shows it: what it carried that is
  *  not words (`[audio]`, `[image]`, `[location]`) ahead of every word it has — text,
- *  captions, a pin's label — a room's change in words, and a reaction as its glyph. A
- *  voice note's transcript is a row of its own, so it reads as the line that follows; an
- *  un-react says nothing. Empty ⇒ the row draws no line, here or in a recall. */
+ *  captions, a pin's label, a card's name — a room's change in words, and a reaction as
+ *  its glyph. A voice note's transcript is a row of its own, so it reads as the line that
+ *  follows; an un-react says nothing. Empty ⇒ the row draws no line, here or in a recall. */
 export function lineOf(e: Event): string {
   const things: string[] = [];
   const said = [textOf(e)];
@@ -216,6 +228,9 @@ export function lineOf(e: Event): string {
       things.push(`[${carriedWord("location")}]`);
       const pin = (p as LocationPart).data;
       said.push(pin.name ?? pin.address ?? "");
+    } else if (p.type === "data" && p.kind === "contacts") {
+      things.push(`[${carriedWord("contacts")}]`);
+      said.push(cardNames(p as ContactsPart));
     } else if (p.type === "data" && p.kind === "room") said.push(roomWords(p as RoomPart));
     else if (p.type === "data" && p.kind === "reaction" && e.payload?.action !== "remove") {
       const d = p.data as { unicode?: string; name?: string } | null;
@@ -223,6 +238,13 @@ export function lineOf(e: Event): string {
     }
   }
   return [...things, ...said].filter((t) => t !== "").join(" ");
+}
+
+/** The names a contacts part's cards show, `Carlos, Ana`. A card that arrived from the wire
+ *  may show none. */
+export function cardNames(part: ContactsPart): string {
+  const cards = Array.isArray(part.data) ? part.data : [];
+  return cards.map((c) => c?.name?.formatted_name ?? "").filter((n) => n !== "").join(", ");
 }
 
 /** `k: v, k: v` over the arguments that carry something — except when there is exactly one

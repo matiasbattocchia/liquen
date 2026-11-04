@@ -39,6 +39,22 @@ Deno.test("describeCall: a pin reads by its label, or by its degrees when it has
   );
 });
 
+Deno.test("describeCall: contact cards read by the names they show", () => {
+  assertEquals(
+    describeCall({
+      name: "send",
+      input: {
+        to: "wa:x",
+        contacts: [
+          { name: "Carlos", phones: ["+54 9 261 656-0401"] },
+          { name: "Ana", phones: ["+54 9 261 485-1664"] },
+        ],
+      },
+    }),
+    "send(to: wa:x, contacts: Carlos, Ana)",
+  );
+});
+
 Deno.test("describeCall: send names the account it rides when the call does", () => {
   assertEquals(
     describeCall({ name: "send", input: { to: "wa:x", connection: "whatsapp", text: "hola" } }),
@@ -205,6 +221,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
     newText: "Texto nuevo",
     files: "Adjuntos",
     location: "Ubicación",
+    contacts: "Contactos",
     carried: {
       image: "imagen",
       audio: "audio",
@@ -214,6 +231,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
       story: "historia",
       file: "archivo",
       location: "ubicación",
+      contact: "contacto",
     },
   };
   assertEquals(
@@ -255,6 +273,19 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
     "**Conversación**: Biobarica Mendoza (5492617078202)\n\n**Respuesta**:\nhola",
   );
   assertEquals(first({ exists: true }), "**Conversación**: 5492617078202\n\n**Respuesta**:\nhola");
+  // contact cards: whose numbers go out, and which, counted beside the rest
+  assertEquals(
+    describeSendCard(
+      {
+        conversation: { address: "5491100000000" },
+        files: 0,
+        contacts: ["Carlos (+54 9 261 656-0401)", "Ana (+54 9 261 485-1664, 4251234)"],
+      },
+      labels,
+    ),
+    "**Conversación**: 5491100000000\n\n" +
+      "**Contactos**: Carlos (+54 9 261 656-0401), Ana (+54 9 261 485-1664, 4251234)",
+  );
   // a mail opening a thread: the subject is a row of its own, above the words
   assertEquals(
     describeSendCard(
@@ -337,5 +368,9 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   assertStringIncludes(
     answering({ text: "", carries: ["story_reply", "location"], at: "1 Oct 10:02" }),
     "\n[historia] [ubicación]\n",
+  );
+  assertStringIncludes(
+    answering({ text: "Carlos", carries: ["contacts"], at: "1 Oct 10:02" }),
+    "\n[contacto] Carlos\n",
   );
 });
