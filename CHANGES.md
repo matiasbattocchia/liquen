@@ -209,9 +209,6 @@ so the agenda shows it.
 - **Its own cursor**, the last event it covered. It runs before any checkpoint whose span
   reaches past the cursor (`decide` opens it first), when the span grows past a size, and on
   a daily wake.
-- **A scribe session** on the daily wake reads, through search, the conversations the mind
-  never saw (`seen="never"`), and makes the cold start: the principal's profile and the
-  people closest to them, from the log.
 
 ## 7. The checkpoint stops at its cut
 
@@ -240,7 +237,10 @@ so the agenda shows it.
 
 ## Not in this batch
 
-A manners section in each profile. Caching on other providers: Gemini's implicit cache
+A scribe session, which needs more definition: on the daily wake it would read, through
+search, the conversations the mind never saw (`seen="never"`), and make the cold start, the
+principal's profile and the people closest to them, from the log. A manners section in each
+profile. Caching on other providers: Gemini's implicit cache
 matches prefixes on its own, without a guarantee, and its explicit one is gone from Gemini 4
 Argon on.
 
@@ -252,7 +252,6 @@ Argon on.
 4. Unload, its cursor and its rule in `decide`; debts split in `compaction.md`.
 5. The checkpoint stopped at its cut, after the two smoke tests.
 6. The `@` line form and the anchor's `today`; the calendar reconnected.
-7. The scribe session and the cold start.
 
 # Event log and render (landed 1 and 2 Nov 2026)
 
