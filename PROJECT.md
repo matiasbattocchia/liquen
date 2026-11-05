@@ -6212,6 +6212,13 @@ another date left its wake behind.
   `every day` at 13:00 for the report, before it takes this release. An org whose
   `config.jsonc` still lists `schedule` among its tools offers nothing under that name.
 
+### The deployment section names its places (2026-11-05) — LANDED
+
+`database` is `"sqlite"` or a Postgres URL, and `docs` is `"filesystem"` or `"database"`:
+each value names where the part lives, and a sandbox off this machine needs the docs in the
+database. The old `null`, `files` and `table` are boot errors. `new` and `vibes` changed in
+step. **Open**: turtle's `config.jsonc` moves to the new words when it takes this release.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
