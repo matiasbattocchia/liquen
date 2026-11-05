@@ -2,8 +2,8 @@
  * init.ts — `liquen init <path>`: scaffold a new org project (§9).
  *
  * Dumb on purpose: materialize the catalog, copy the scaffold, seed the org's half of the
- * doc cascade (`data/system/`, `data/shared/` — what every agent will read, placeholders to
- * edit). The project it leaves behind carries no runnable code — the CLI is the package
+ * doc cascade (`data/system/`, `data/shared/` — what every agent will read, headers to
+ * fill). The project it leaves behind carries no runnable code — the CLI is the package
  * its `deno.jsonc` names — and what only a run can make (the log, the CA, the shims) waits
  * for the first boot. What init decides is only what a human would otherwise type: the
  * org's clock and locale (the machine's). The roster starts empty; `liquen agent` adds
