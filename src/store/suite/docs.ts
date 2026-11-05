@@ -45,7 +45,7 @@ export function docsSuite(s: DocsSubstrate): void {
         doc(
           "memory",
           "write in English",
-          "load: conditional\nservice: whatsapp\naddress: 5491165\n",
+          "load: conditional\nconversations: [whatsapp:5491165]\n",
         ),
       ],
     ], async ({ docs }) => {
@@ -55,28 +55,31 @@ export function docsSuite(s: DocsSubstrate): void {
         "shared/instruction/instructions/policy",
         "shared/skill/skills/refunds",
         "agent/instruction/instructions/persona",
+        "agent/memory/mars",
       ]);
       assertEquals(listed.map((d) => d.header.handle), [
         "system/instructions/base",
         "shared/instructions/policy",
         "shared/skills/refunds",
         "agent/instructions/persona",
+        "agent/mars",
       ]);
       // load: always ⇒ the body rides along, stripped; otherwise a pointer
       assertEquals(listed[1].body, "org policy");
       assertEquals(listed[2].body, undefined);
-      // a conditional doc is listed, whole, while its conversation is in view
+      // a conditional doc is whole while its conversation is in view, a pointer otherwise
+      assertEquals(listed[4].body, undefined);
       const mars = (await docs.list({
         agent: "a1",
         inView: [{ service: "whatsapp", address: "5491165" }],
       })).at(-1)!;
       assertEquals(mars.header.name, "mars");
-      assertEquals(mars.header.when, { service: "whatsapp", address: "5491165" });
+      assertEquals(mars.header.conversations, [{ service: "whatsapp", address: "5491165" }]);
       assertEquals(mars.body, "write in English");
       assertEquals(
-        refs(await docs.list({ agent: "a1", inView: [{ service: "slack", address: "5491165" }] }))
-          .includes("agent/memory/mars"),
-        false,
+        (await docs.list({ agent: "a1", inView: [{ service: "slack", address: "5491165" }] }))
+          .at(-1)!.body,
+        undefined,
       );
       // read pulls a pointer's body, stripped; a missing doc is null
       assertEquals(
@@ -194,8 +197,10 @@ export function docsSuite(s: DocsSubstrate): void {
           "50-peers",
           "60-knowledge",
           "70-memory",
+          "80-people",
         ]
           .map((s) => `system/instruction/instructions/${s}`),
+        "system/skill/skills/profile",
         "system/skill/skills/transcribe-audio",
         "system/skill/skills/workflows",
         ...[

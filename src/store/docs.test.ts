@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { type DocEntry, openFileDocs } from "./docs.ts";
+import { columnsOf, type DocEntry, openFileDocs } from "./docs.ts";
 
 /** Write `<root>/<rel>.md` with `content` (parent dirs created). */
 async function put(root: string, rel: string, content: string) {
@@ -120,47 +120,71 @@ Deno.test("read pulls a pointer's body on demand and strips frontmatter", async 
   });
 });
 
-Deno.test("a conditional doc is listed, whole, only while its conversation is in view", async () => {
+Deno.test("a conditional doc is whole while any of its conversations is in view, a pointer otherwise", async () => {
   await withRoot(async (root) => {
     await put(root, "agents/a1/persona", doc("instruction", "p"));
-    // YAML reads the phone number as a number; the address is its digits
     await put(
       root,
       "shared/mars",
-      doc("memory", "write in English", "load: conditional\nservice: whatsapp\naddress: 5491165\n"),
+      doc(
+        "memory",
+        "write in English",
+        "load: conditional\nkeywords: [Mars, teacher]\n" +
+          "conversations: [whatsapp:5491165, instagram:mars.en]\n",
+      ),
     );
     // a conditional doc that names no conversation is a pointer, as any lazy doc
     await put(
       root,
       "agents/a1/stray",
-      doc("memory", "s", "load: conditional\nservice: whatsapp\n"),
+      doc("memory", "s", "load: conditional\nconversations: [whatsapp]\n"),
     );
     // the files under conversations/ are no scope
     await put(root, "conversations/c9/state", doc("memory", "working state"));
     const docs = openFileDocs(root);
 
-    assertEquals(ref(await docs.list({ agent: "a1" })), [
-      "agent/instruction/persona",
-      "agent/memory/stray",
-    ]);
-    const listed = await docs.list({
-      agent: "a1",
-      inView: [{ service: "local", address: "x" }, { service: "whatsapp", address: "5491165" }],
-    });
-    assertEquals(ref(listed), [
+    const out = await docs.list({ agent: "a1" });
+    assertEquals(ref(out), [
       "shared/memory/mars",
       "agent/instruction/persona",
       "agent/memory/stray",
     ]);
-    assertEquals(listed[0].header.load, "conditional");
+    assertEquals(out[0].header.load, "conditional");
+    assertEquals(out[0].body, undefined);
+    assertEquals(out[0].header.keywords, ["Mars", "teacher"]);
+    assertEquals(out[0].header.conversations, [
+      { service: "whatsapp", address: "5491165" },
+      { service: "instagram", address: "mars.en" },
+    ]);
+    const listed = await docs.list({
+      agent: "a1",
+      inView: [{ service: "local", address: "x" }, { service: "instagram", address: "mars.en" }],
+    });
+    assertEquals(ref(listed), ref(out));
     assertEquals(listed[0].body, "write in English");
     assertEquals(listed[2].header.load, "lazy");
     assertEquals(listed[2].body, undefined);
     // a memory is sized whether its body rides along or not
-    assertEquals(listed[0].header.chars, 16);
+    assertEquals(out[0].header.chars, 16);
     assertEquals(listed[2].header.chars, 1);
     assertEquals(listed[1].header.chars, undefined);
   });
+});
+
+Deno.test("header lists take YAML lists or a comma line, and a number is its digits", () => {
+  assertEquals(
+    columnsOf({ keywords: "el Gonza, Gonzalo ,", conversations: [5491165, "whatsapp:5491165"] }),
+    {
+      kind: "memory",
+      load: "lazy",
+      keywords: ["el Gonza", "Gonzalo"],
+      conversations: [{ service: "whatsapp", address: "5491165" }],
+    },
+  );
+  // split at the first colon: the address keeps its own
+  assertEquals(columnsOf({ conversations: "email:a:b@x.io" }).conversations, [
+    { service: "email", address: "a:b@x.io" },
+  ]);
 });
 
 Deno.test("non-.md files are ignored; a missing scope lists empty; missing read ⇒ null", async () => {

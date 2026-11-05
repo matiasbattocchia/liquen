@@ -20,7 +20,7 @@ import { INLINE_CAP, inlineable, isExternal, type MediaBlock, pathOf } from "./s
 import { MIND, routedSession } from "./session.ts";
 import { clipEnd } from "./exec/truncate.ts";
 import { describeCall } from "./describe.ts";
-import type { DocEntry, DocKind, DocScope } from "./store/docs.ts";
+import type { DocEntry, DocKind, DocScope, Where } from "./store/docs.ts";
 import { MONTHS } from "./store/timers.ts";
 import { DEFAULT_COMPACT_AT } from "./config.ts";
 import type {
@@ -263,15 +263,19 @@ function section(d: DocEntry): string {
   return `[${d.header.handle}]${fill(d.header)}\n${d.body ?? ""}`;
 }
 
-/** The pull-index: one pointer line per lazy doc — its handle in the brackets an inlined
- *  doc wears, how full a memory is, and its description when it has one. The opening line
- *  says what the handle opens with, which is the substrate's. */
+/** The pull-index: one pointer line per doc not inlined — its handle in the brackets an
+ *  inlined doc wears, then how full a memory is, its description and its keywords, each
+ *  when it has one. The opening line says what the handle opens with, which is the
+ *  substrate's. */
 function renderIndex(pointers: DocEntry[], on: Env["docs"] = "files"): string {
   const lines = pointers.map((d) => {
-    const fig = fill(d.header);
-    const desc = d.header.description;
-    const tail = fig && desc ? `${fig} · ${desc}` : desc ? ` ${desc}` : fig;
-    return `- [${d.header.handle}]${tail}`;
+    const { description, keywords } = d.header;
+    const tail = [
+      fill(d.header).trim(),
+      description,
+      keywords?.length && `keywords: ${keywords.join(", ")}`,
+    ].filter(Boolean).join(" · ");
+    return `- [${d.header.handle}]${tail ? ` ${tail}` : ""}`;
   });
   const opener = on === "table"
     ? "The handle is the doc's own; `read` one to read it:"
@@ -1772,6 +1776,21 @@ export function profileEl(
     }/>`
   );
   return connWith(account, lines);
+}
+
+/** A doc a search's `in` or `from` named by one of its keywords (§6): its handle, the one
+ *  the index prints and the read takes, its keywords and the conversations it names, each
+ *  `service:address` as its header writes it. */
+export function docEl(
+  doc: { handle: string; keywords?: string[]; conversations?: Where[] },
+): string {
+  const where = (doc.conversations ?? []).map((w) => `${w.service}:${w.address}`);
+  const attrs = [
+    `handle="${escAttr(doc.handle)}"`,
+    ...(doc.keywords?.length ? [`keywords="${escAttr(doc.keywords.join(", "))}"`] : []),
+    ...(where.length ? [`conversations="${escAttr(where.join(", "))}"`] : []),
+  ];
+  return `<doc ${attrs.join(" ")}/>`;
 }
 
 function connWith(account: { service: string; address: string; name?: string }, lines: string[]) {

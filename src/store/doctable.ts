@@ -17,7 +17,6 @@
 
 import { DatabaseSync } from "node:sqlite";
 import {
-  applies,
   columnsOf,
   type DocCalls,
   type DocContext,
@@ -170,10 +169,10 @@ export async function openSqliteDocs(dir: string): Promise<DocTable> {
         const frontmatter = frontmatterOf(r.text);
         if (frontmatter === null) continue; // a doc declares itself, as a file does (§8)
         const columns = columnsOf(frontmatter);
-        if (!applies(columns, ctx)) continue;
         out.push(entryOf(
           { scope: r.scope, name: r.name, ...columns, handle: `${r.scope}/${r.name}` },
           stripFrontmatter(r.text),
+          ctx,
         ));
       }
       return Promise.resolve(out);

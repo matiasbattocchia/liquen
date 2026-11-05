@@ -1680,7 +1680,8 @@ group last**
 Built by render from `docs.list()` (§8) as three `---`-ruled sections, one block each.
 **Instructions** lead = the bodies of `load:always` docs (system → org → agent), inlined,
 each under the `[handle]` that is also the argument reading it takes. **`# On-demand docs`**
-= one pointer per lazy doc, `- [handle] description`, which the agent pulls via `aread`;
+= one pointer per doc not inlined, `- [handle] description · keywords: …`, which the agent
+pulls via `aread`;
 **cron / projections** = always-on. **`# Environment`** closes = the facts config owns, one `##`
 listing each. Two lines lead: who the agent is (`self · name · email · phone`, the id being
 the word its own `self` mark wears) and where it stands (`home · timezone · locale`).
@@ -2191,10 +2192,23 @@ is in that tool's doc, so a tool comes and goes with its words. `RENDER.md` maps
 describes it, or to none.
 
 **What holds for one conversation** is a `load: conditional` doc in either scope, whose
-header names the conversation's `service` and `address`. It loads while the session has
-that conversation in view: an event of it stands in the window, since a session's
-memberships are whole connections. Out of view, it is not listed at all, not even in the
-index. A chat that speaks mid-session brings its doc in as a prefix notice (`— added`).
+`conversations` list names each chat as `service:address`, split at the first colon. It
+loads while the session has one of them in view: an event of it stands in the window, since
+a session's memberships are whole connections. Out of view, it is a pointer in the index,
+its `keywords` with it. A chat that speaks mid-session brings its doc in as a prefix notice
+(`— added`), and the index drops its line.
+
+**A doc answers to its keywords.** A `search` whose `in` or `from` a doc's keyword holds
+puts a `<doc handle keywords conversations>` line first and searches the conversations it
+names as if they were named: a nickname that is nobody's saved name reaches its chat
+through a profile. Profiles live in the agent's scope, one per person or group, and the
+principal's own loads always (`80-people`).
+
+**The model reads before it writes.** A model's `send` into a conversation the window holds
+nothing of, no line since the checkpoint and no page that showed it, is answered before
+the gate: `not sent: read … first`, with the room's last lines and the profiles that name
+it. The answer stands in the window, so the send made again goes. A script's send is
+exempt: it carries its author's words. A room with no line at all has nothing to read.
 
 **One discovery rule, every scope** (2026-08-04): walk the scope directory recursively; a
 file is a doc **iff it is `.md` and opens with YAML frontmatter** — *a doc declares
@@ -2256,7 +2270,7 @@ docs {
 
 A row is a doc as a file is: its `text` is the whole document, and `kind`
 (`instruction · skill · memory · tool`, `tool` = MCP config), `description` and `load`
-(`always · lazy · conditional`, with `service` and `address`) are its frontmatter,
+(`always · lazy · conditional`), `keywords` and `conversations` are its frontmatter,
 projected by the reader — one parser, both substrates, and a row with no frontmatter is
 likewise not in the index. The handle is `scope/name`; the owner is whoever is asking, so
 an agent names its own doc the way it names a system one. Where the docs live is the

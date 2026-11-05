@@ -574,6 +574,67 @@ Deno.test("send `connection`: a named account places first contact on its wire",
   }
 });
 
+Deno.test("send: a room the window holds nothing of is read first, and the send made again goes", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  await seedOrg(onFiles(`${dir}/docs`));
+  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  await Deno.mkdir(`${dir}/docs/agents/a1/profiles`, { recursive: true });
+  await Deno.writeTextFile(
+    `${dir}/docs/agents/a1/profiles/juan.md`,
+    "---\nload: conditional\nkeywords: [el Juancho]\n" +
+      "conversations: [whatsapp:5492610000001]\n---\nNo greeting, ever.\n",
+  );
+  // the room spoke before the session's floor: in the log, not in the window
+  await log.publish({
+    ts: new Date(Date.now() - 40 * 3_600_000).toISOString(),
+    type: "message",
+    envelope: {
+      service: "whatsapp",
+      connection_address: "5491100000000",
+      conversation: { address: "5492610000001", kind: "direct", name: "Juan P" },
+      sender: { address: "5492610000001", name: "Juan P" },
+    },
+    parts: [{ type: "text", kind: "text", text: "qué onda, venís el sábado?" }],
+  });
+  const gated: string[] = [];
+  const { transport } = scripted([
+    ok([{ kind: "tool_use", name: "send", input: { to: "5492610000001", text: "dale" } }]),
+    ok([{ kind: "tool_use", name: "send", input: { to: "5492610000001", text: "dale" } }]),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const config: AgentConfig = {
+    ...CONFIG,
+    since: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    gate: (name) => {
+      gated.push(name);
+      return "allow";
+    },
+  };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("decile al Juancho que sí"));
+    for (let i = 0; i < 8; i++) await xi(config, ports);
+    const [first] = await log.read({ types: ["tool_result"] });
+    const said = String((first.parts[0] as { data: { output: string } }).data.output);
+    assertStringIncludes(said, "not sent: read 5492610000001 first, then send again");
+    assertStringIncludes(said, "qué onda, venís el sábado?");
+    assertStringIncludes(said, `[${dir}/docs/agents/a1/profiles/juan.md]\nNo greeting, ever.`);
+    // the refusal came before the gate; the second send was ruled and went
+    assertEquals(gated, ["send"]);
+    const sent = (await log.read({ types: ["message"] })).filter((e) =>
+      e.agent && e.envelope.conversation.address === "5492610000001"
+    );
+    assertEquals(sent.length, 1);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("send: a stranger's number rides the one account whose wire takes numbers", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -3195,6 +3256,57 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
   );
 });
 
+Deno.test("search by keyword: a name only a doc knows points at the conversations it names", async () => {
+  // "el Juancho" is nobody's saved name: the profile's keyword is what ties it to his chat
+  const root = await Deno.makeTempDir();
+  await seedOrg(onFiles(root));
+  await Deno.mkdir(`${root}/agents/a1/profiles`, { recursive: true });
+  await Deno.writeTextFile(
+    `${root}/agents/a1/profiles/juan.md`,
+    "---\nkind: memory\nload: conditional\nkeywords: [el Juancho, Juan Pérez]\n" +
+      "conversations: [whatsapp:5492610000001]\n---\nAmigo de la secundaria.\n",
+  );
+  const old: Draft<MessageEvent> = {
+    ts: new Date(Date.now() - 40 * 3_600_000).toISOString(),
+    type: "message",
+    envelope: {
+      service: "whatsapp",
+      connection_address: WA.address,
+      conversation: { address: "5492610000001", kind: "direct", name: "Juan P" },
+      sender: { address: "5492610000001", name: "Juan P" },
+    },
+    parts: [{ type: "text", kind: "text", text: "che, el sábado?" }],
+  };
+  try {
+    await scenario(
+      [
+        ok([{ kind: "tool_use", name: "search", input: { in: "el juancho" } }], "tool_use"),
+        ok([{ kind: "tool_use", name: "search", input: { from: "Juancho" } }], "tool_use"),
+        ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+      ],
+      async ({ publish, read }) => {
+        await publish(principalMsg("qué me dijo el Juancho"));
+        await waitFor(async () => (await read("tool_result")).length === 2);
+        const [inside, by] = (await read("tool_result")).map((r) =>
+          (r as ToolResultEvent).parts[0].data.output as string
+        );
+        const doc = `<doc handle="${root}/agents/a1/profiles/juan.md" ` +
+          `keywords="el Juancho, Juan Pérez" conversations="whatsapp:5492610000001"/>`;
+        // the doc stands first, who he is before what he said
+        assertEquals(inside.split("\n")[0], doc);
+        assertStringIncludes(inside, "che, el sábado?");
+        assertEquals(by.split("\n")[0], doc);
+        assertStringIncludes(by, "che, el sábado?");
+      },
+      {},
+      [old],
+      { docs: await docsAt(root) },
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("search `from` takes the key a line wears: who among us wrote it, never a name", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -4052,7 +4164,7 @@ Deno.test("schedule: a bare `at` reads the org's clock — 17:00 Buenos Aires is
   }
 });
 
-Deno.test("a conditional doc loads while its conversation has an event in the window", async () => {
+Deno.test("a conditional doc loads while its conversation has an event in the window, and is indexed otherwise", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
@@ -4062,7 +4174,7 @@ Deno.test("a conditional doc loads while its conversation has an event in the wi
   };
   const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   const conditional = (service: string, address: string, body: string) =>
-    `---\nload: conditional\nservice: ${service}\naddress: ${address}\n---\n${body}\n`;
+    `---\nload: conditional\nkeywords: [teacher]\nconversations: [${service}:${address}]\n---\n${body}\n`;
   try {
     await Deno.mkdir(`${dir}/docs/agents/a1`, { recursive: true });
     await Deno.writeTextFile(
@@ -4071,7 +4183,7 @@ Deno.test("a conditional doc loads while its conversation has an event in the wi
     );
     await Deno.writeTextFile(
       `${dir}/docs/shared/mars.md`,
-      conditional("whatsapp", "5491165565431", "Write to Mars in English."),
+      conditional("whatsapp", "5491165565431", "Write to Mars in haiku."),
     );
     await log.publish(principalMsg("hola"));
     await xi(CONFIG, ports);
@@ -4080,7 +4192,11 @@ Deno.test("a conditional doc loads while its conversation has an event in the wi
       system,
       `[${dir}/docs/agents/a1/ana.md] 1% of 2,200 chars\nAna prefers short answers.`,
     );
-    assertEquals(system.includes("Mars"), false, "a chat out of view loads nothing");
+    assertEquals(system.includes("haiku"), false, "a chat out of view loads no body");
+    assertStringIncludes(
+      system,
+      `- [${dir}/docs/shared/mars.md] 1% of 2,200 chars · keywords: teacher`,
+    );
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

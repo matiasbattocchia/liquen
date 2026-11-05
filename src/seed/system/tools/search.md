@@ -13,6 +13,9 @@ A `<conv address>` is what `in` and `send(to:)` both take back. `from` also asks
 accounts' address books: whoever is saved under that name stands first, as `<contact>` lines
 under the account's `<conn>`, with the `address` to write to — so someone you have saved and
 never heard from is findable too; a book that could not be asked is said in a line of its own.
+An `in` or `from` that one of a doc's `keywords` holds finds that doc, which stands first as a
+`<doc>` line with its `handle` and the `conversations` it names, and those conversations are
+searched as if named: "el Juancho" reaches his chat through his profile.
 An `in` or `from` that is a number (or other address) with no messages here and nobody saved
 at it is asked of the accounts whose service can tell: a `<profile>` line under the account's
 `<conn>` says whether that address is an account there (`exists`) and the `name` it shows, if
@@ -26,11 +29,11 @@ of your sessions, each a `<call>` line with its answer cut at {{call_clip}} char
 calls a script made are there too. With `id`, the page is that one line or call, whole.
 
 - in: one conversation: its address, or a name (a group's, or the person a direct chat is
-  with; any part of it, case doesn't matter)
-- from: one sender: their address, or any part of the name they go by. Or the key a line
-  wears in place of a name, to find lines by who among you wrote them: `principal` for what
-  your principal typed on any device, `self` for your own words, `org` for the account
-  speaking with nobody behind it
+  with; any part of it, case doesn't matter; or a doc's keyword)
+- from: one sender: their address, any part of the name they go by, or a doc's keyword. Or
+  the key a line wears in place of a name, to find lines by who among you wrote them:
+  `principal` for what your principal typed on any device, `self` for your own words, `org`
+  for the account speaking with nobody behind it
 - connection: one of your accounts — a <conn> `name` or `address`: only what rode it
 - before: only messages before this one: a line's `id`, or a moment: ISO-8601, e.g.
   `2026-09-01` or `2026-09-01T17:00` (your org's clock unless it carries an offset), or a

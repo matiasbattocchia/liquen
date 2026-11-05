@@ -15,15 +15,18 @@ A `.md` file is a doc when it opens with a header, and an ordinary file when it 
 kind: instruction | skill | memory
 description: the one line the index shows for it
 load: always | lazy | conditional
-service?: whatsapp
-address?: conversation address
+keywords?: [the names it answers to]
+conversations?: [whatsapp:5492611234567, instagram:handle]
 ---
 ```
 
 - `always`: the doc stands above, in full.
 - `lazy`: only its index line shows; read the doc when you judge you will need it.
-- `conditional`: the doc stands above, in full, while a line of the conversation its
-  `service` and `address` name stands in your window, and is absent otherwise.
+- `conditional`: the doc stands above, in full, while a line of one of its `conversations`
+  stands in your window, and only its index line shows otherwise.
+
+A `search` whose `in` or `from` one of a doc's `keywords` holds returns the doc first, and
+reads the conversations it names as well.
 
 Guidelines:
 

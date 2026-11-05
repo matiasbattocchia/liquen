@@ -110,10 +110,19 @@ goes with its words. Each skill the system describes is one file under
 | `[handle]` heading on an inlined doc | ✗ | |
 | `NN% of 2,200 chars` | ✓ | |
 | `# On-demand docs` index | ✗ | Its opener line |
+| `· keywords: …` on an index line | ✗ | |
 | Three scopes | ✓ | |
 | Header `kind` `description` `load` | ✓ | A format the agent writes |
-| Conditional `service` `address` | ✓ | A format the agent writes |
+| Header lists `keywords` `conversations` | ✓ | A format the agent writes |
 | What each `load` value puts in front of the agent | ✓ | A consequence the index hides |
+
+## People · `instructions/80-people.md`
+
+| Item | Described in system | Note |
+|---|---|---|
+| Profiles in `profiles/`, the principal's loaded always | ✓ | Conduct; the shape is the `profile` skill |
+| Tiers as keywords, links as `[name](handle)` | ✓ | Conduct |
+| `not sent: read … first, then send again` with the room's last lines and its profiles | ✗ | A tool result that reads as itself |
 
 ## Memory · `instructions/70-memory.md`
 
@@ -141,4 +150,5 @@ Search pages, which arrive as tool results.
 |---|---|---|
 | `match`, `seen="window\|checkpoint\|never"` | ✗ | `search.md` |
 | `<call id at>`, `<contact name address/>`, `<profile address exists name/>` | ✗ | `search.md` |
+| `<doc handle keywords conversations/>` | ✗ | `search.md` |
 | `— whatsapp … : address book not reached —`, `… lines between, not shown` | ✗ | `search.md` |

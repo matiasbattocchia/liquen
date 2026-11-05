@@ -76,7 +76,7 @@ import type { AgentRow, Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { ConnectionRow, Connections } from "./store/connections.ts";
 import { SILENT_AFTER_MS } from "./store/connections.ts";
-import type { Docs, Where } from "./store/docs.ts";
+import type { DocHeader, Docs, Where } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { digits, sameHandle, speaksThrough } from "./store/roster.ts";
 import { foldName, namesMatch, preferProper } from "./store/names.ts";
@@ -109,12 +109,14 @@ import {
   actedOn,
   AUTHOR_KEYS,
   authorKeyOf,
+  BEFORE_LINES,
   BEFORE_READ,
   type BeforePool,
   bookEl,
   CALL_CLIP,
   callLine,
   cutStands,
+  docEl,
   drawnIn,
   GAP_READ,
   HANDLE,
@@ -1920,6 +1922,16 @@ async function answerer(
       out.push(await resultOf(use, nowhere, { is_error: true }));
       return false;
     }
+    // the model writes only where it has read since its checkpoint (§8): the answer is the
+    // reading, so the send made again goes. A script's send is its author's words, written
+    // before any window, and goes as it is
+    const unread = scripted(use) === undefined
+      ? await unreadOf(use, events, self, config, ports)
+      : undefined;
+    if (unread) {
+      out.push(await resultOf(use, unread, { is_error: true }));
+      return false;
+    }
     const verdict = verdictOf(events, use.id);
     if (verdict) await standing(use, verdict);
     // the ruling (§9): where a send lands is part of the call, so the table can scope by
@@ -2902,6 +2914,61 @@ async function unreachable(
   return undefined;
 }
 
+/**
+ * A send into a conversation the window holds nothing of (§8): no line of it since the
+ * checkpoint, and no page that showed it. The answer is that reading — the room's last
+ * lines, which say how the principal writes there, and the profiles that name it — and it
+ * stands in the window, so the send made again finds the room read. A room with no line
+ * at all has nothing to read.
+ */
+async function unreadOf(
+  use: ToolUseEvent,
+  window: Event[],
+  self: { id: string; session_id: string },
+  config: AgentConfig,
+  ports: XiPorts,
+): Promise<string | undefined> {
+  if (use.parts[0].data.name !== "send") return undefined;
+  const target = await targetOf(use, self, ports);
+  const address = target?.conversation;
+  if (address === undefined) return undefined;
+  const shown = new RegExp(
+    `<conv [^>]*address="${address.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`,
+  );
+  const read = window.some((e) =>
+    (e.type === "message" && e.envelope.conversation.address === address) ||
+    (e.type === "tool_result" && shown.test(String(e.parts[0].data.output ?? "")))
+  );
+  if (read) return undefined;
+  const rows = await (ports.history ?? ports.log).read({
+    conversation: address,
+    ...(target!.service ? { service: target!.service } : {}),
+    types: ["message"],
+    copies: false,
+    limit: BEFORE_LINES,
+  }) as MessageEvent[];
+  if (rows.length === 0) return undefined;
+  const view = await searchView(config, ports);
+  const page = renderHits(rows, view.session, view.roster, view.zone, view.connections, {
+    seen: await view.seen!(rows),
+  });
+  const cascade = { agent: config.agentId };
+  const profiles = await Promise.all(
+    (await ports.docs.list(cascade)).filter(({ header: h }) =>
+      h.kind !== "tool" &&
+      (h.conversations ?? []).some((c) => c.service === target!.service && c.address === address)
+    ).map(async (d) =>
+      `[${d.header.handle}]\n${d.body ?? await ports.docs.read(cascade, d.header) ?? ""}`
+    ),
+  );
+  const to = String((use.parts[0].data.input as { to?: unknown }).to);
+  return [
+    `not sent: read ${to} first, then send again. Its last lines, and what your docs keep of it:`,
+    page,
+    ...profiles,
+  ].join("\n\n");
+}
+
 /** Where a call LANDS (§9): a send's destination — the same anchoring read, name
  *  resolution and peer-name canonicalization `execute` does, so a scoped rule matches the
  *  conversation the log will record — and a contact write's account. Tools that dispatch
@@ -3623,24 +3690,7 @@ async function execute(
       ports,
       self,
       { ...(args as SearchArgs), before: bound(args.before), after: bound(args.after) },
-      {
-        session: { id: config.sessionId, agentId: config.agentId },
-        // the window's own roster and account names (`think`), so a hit is authored and
-        // its `<conn>` named exactly as the window would — one vocabulary, both surfaces
-        roster: {
-          names: Object.fromEntries(
-            (await ports.log.agents()).map((a) => [a.agentId, a.name ?? a.agentId]),
-          ),
-          principals: await ports.log.principalsOf(config.agentId),
-        },
-        connections: Object.fromEntries(
-          (await surfacesOf(config, ports)).flatMap((c) =>
-            typeof c.extra?.name === "string" && c.extra.name ? [[c.address, c.extra.name]] : []
-          ),
-        ),
-        zone,
-        seen: (rows) => seenBy(rows, config, ports),
-      },
+      await searchView(config, ports),
     );
   }
   const tool = ports.exec?.[name];
@@ -3898,6 +3948,28 @@ interface SearchView {
   seen?: (rows: Event[]) => Promise<Map<EventId, Seen>>;
 }
 
+/** A page's view as the asking session's window has it: the window's own roster and
+ *  account names (`think`), so a hit is authored and its `<conn>` named exactly as the
+ *  window would — one vocabulary, both surfaces. */
+async function searchView(config: AgentConfig, ports: XiPorts): Promise<SearchView> {
+  return {
+    session: { id: config.sessionId, agentId: config.agentId },
+    roster: {
+      names: Object.fromEntries(
+        (await ports.log.agents()).map((a) => [a.agentId, a.name ?? a.agentId]),
+      ),
+      principals: await ports.log.principalsOf(config.agentId),
+    },
+    connections: Object.fromEntries(
+      (await surfacesOf(config, ports)).flatMap((c) =>
+        typeof c.extra?.name === "string" && c.extra.name ? [[c.address, c.extra.name]] : []
+      ),
+    ),
+    zone: config.timezone ?? DEFAULT_TIMEZONE,
+    seen: (rows) => seenBy(rows, config, ports),
+  };
+}
+
 /**
  * Where the asking session holds each row of a page (§5, `Seen`): its window draws it
  * now, or its checkpoint stands for it, or neither. A checkpoint stands for the rows of
@@ -3995,21 +4067,35 @@ async function search(
   const from = args.from === undefined ? undefined : String(args.from);
   const role = AUTHOR_KEYS.find((k) => k === from?.trim().toLowerCase());
   const asked = role ? undefined : from;
+  const inName = args.in === undefined ? undefined : String(args.in);
+  // a doc's keywords name its people and places the way the principal does (§8): "el
+  // Gonza" is a keyword of a profile long before it is anyone's saved name, and the
+  // conversations the doc names are where that name points
+  const [inDocs, fromDocs] = await Promise.all([
+    keyworded(ports, self, inName),
+    keyworded(ports, self, asked),
+  ]);
   const [conversations, spoke, contacts, account] = await Promise.all([
-    rooms(log, args.in === undefined ? undefined : String(args.in)),
+    rooms(log, inName, addressesOf(inDocs)),
     people(log, asked),
     asked === undefined ? undefined : booked(self, ports, asked),
     args.connection === undefined ? undefined : accountNamed(String(args.connection), self, ports),
   ]);
-  // the two places a person can be (§6): the rows they wrote, and the book they are saved
-  // in. Both narrow the same filter — so a contact the account saved before they ever
-  // wrote finds the lines they sent as a bare number, under a name nobody had typed yet.
-  const senders = asked === undefined
-    ? undefined
-    : [...new Set([...(spoke ?? []), ...(contacts?.hits ?? []).map((c) => c.address)])];
+  // the places a person can be (§6): the rows they wrote, the book they are saved in, and
+  // the docs that name them. All narrow the same filter — so a contact the account saved
+  // before they ever wrote finds the lines they sent as a bare number, under a name nobody
+  // had typed yet.
+  const senders = asked === undefined ? undefined : [
+    ...new Set([
+      ...(spoke ?? []),
+      ...(contacts?.hits ?? []).map((c) => c.address),
+      ...addressesOf(fromDocs),
+    ]),
+  ];
+  const docs = [...new Map([...inDocs, ...fromDocs].map((d) => [d.handle, d])).values()];
   const profiles = await profiled(log, [args.in, asked], contacts, account, self, ports);
   // a number in neither place is still somebody's to the wire: who it reaches is the page
-  if (senders !== undefined && senders.length === 0 && profiles.length === 0) {
+  if (senders !== undefined && senders.length === 0 && profiles.length === 0 && docs.length === 0) {
     throw new Error(
       contacts !== undefined
         ? `nobody named "${asked}" has spoken here, and no address book of yours has them`
@@ -4064,8 +4150,33 @@ async function search(
   const older = more
     ? [`— older matches not shown — search again with before="${page[0].ts}" to read on —`]
     : [];
-  const out = [...books, ...profileLines(mine, profiles), ...lines_, ...older];
+  const out = [
+    ...docs.map(docEl),
+    ...books,
+    ...profileLines(mine, profiles),
+    ...lines_,
+    ...older,
+  ];
   return out.length === 0 ? "nothing matched" : out.join("\n");
+}
+
+/** The docs a name is a keyword of (§8): every doc the agent reads, any kind but a tool's,
+ *  with a keyword that holds the name, case and accents set aside. */
+async function keyworded(
+  ports: XiPorts,
+  self: { id: string },
+  name: string | undefined,
+): Promise<DocHeader[]> {
+  const want = name === undefined ? "" : foldName(name);
+  if (want === "") return [];
+  return (await ports.docs.list({ agent: self.id })).map((d) => d.header).filter((h) =>
+    h.kind !== "tool" && (h.keywords ?? []).some((k) => foldName(k).includes(want))
+  );
+}
+
+/** The conversation addresses a set of docs names. */
+function addressesOf(docs: DocHeader[]): string[] {
+  return docs.flatMap((d) => (d.conversations ?? []).map((w) => w.address));
 }
 
 /** The answer a call got in its own step (§9): the first result naming it that is not a
@@ -4381,9 +4492,15 @@ const NAME_REACH = 200;
  * the other. A name nobody wears is still an error — an empty result would read as "they
  * never said that" instead of "I don't know who that is". An ADDRESS — a phone, a mailbox
  * — is a conversation whether or not anything was said there yet, spelled as `send`
- * spells it (`spelled`), so one with no rows matches nothing.
+ * spells it (`spelled`), so one with no rows matches nothing. A name a doc holds as a
+ * keyword points at the conversations the doc names (`keyworded`), beside the rooms the
+ * log knows by it.
  */
-async function rooms(log: Pick<Reader, "read">, handle?: string): Promise<string[] | undefined> {
+async function rooms(
+  log: Pick<Reader, "read">,
+  handle?: string,
+  keyworded: string[] = [],
+): Promise<string[] | undefined> {
   if (handle === undefined) return undefined;
   if ((await log.read({ conversation: handle, limit: 1 })).length > 0) return [handle];
   if (shapeOf(handle)) return [spelled(handle)];
@@ -4395,7 +4512,12 @@ async function rooms(log: Pick<Reader, "read">, handle?: string): Promise<string
     limit: NAME_REACH,
     filter: (e) => e.envelope.conversation.kind === "direct",
   });
-  const found = [...new Set([...named, ...direct].map((e) => e.envelope.conversation.address))];
+  const found = [
+    ...new Set([
+      ...[...named, ...direct].map((e) => e.envelope.conversation.address),
+      ...keyworded,
+    ]),
+  ];
   if (found.length === 0) throw new Error(`no conversation named "${handle}"`);
   return found;
 }

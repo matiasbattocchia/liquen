@@ -21,8 +21,8 @@
  *
  *   • `load: always`      → `list` returns `{ header, body }` (render inlines it: persona,
  *     core instructions).
- *   • `load: conditional` → the same while the conversation its `service` and `address`
- *     name is in view (`DocContext.inView`), and nothing at all while it is not.
+ *   • `load: conditional` → the same while any conversation its `conversations` list names
+ *     is in view (`DocContext.inView`), and the header alone while none is.
  *   • otherwise           → `{ header }` only, a pointer; the body is pulled on demand — by
  *     the agent via the substrate read, or by render via `read()`.
  *
@@ -65,8 +65,12 @@ export interface DocHeader extends DocRef {
   /** The index line's word for the doc, when it has one. */
   description?: string;
   load: DocLoad;
-  /** The conversation a `conditional` doc loads with. */
-  when?: Where;
+  /** The conversations the doc is about: a search that finds the doc reads them, and a
+   *  `conditional` doc loads while any one is in view. */
+  conversations?: Where[];
+  /** The words the doc answers to: its index line shows them, and a search's `in` or
+   *  `from` that one of them holds finds the doc. */
+  keywords?: string[];
   /** A memory's size, its body's characters: what its budget figure counts, loaded or not. */
   chars?: number;
   /** The adapter's address for the doc — what render prints and what the agent's own read
@@ -74,7 +78,9 @@ export interface DocHeader extends DocRef {
   handle: string;
 }
 
-/** A conversation as a conditional doc names it: its service and its address there. */
+/** A conversation as a doc names it: its service and its address there, written
+ *  `service:address` in the header and split at the first colon, since a service name never
+ *  holds one. */
 export interface Where {
   service: string;
   address: string;
@@ -94,7 +100,7 @@ export interface DocContext {
 
 export interface Docs {
   /** Every doc in the cascade — header always, body inlined for a doc that loads. A
-   *  conditional doc whose conversation is out of view is not listed. */
+   *  conditional doc with none of its conversations in view is a pointer. */
   list(ctx: DocContext): Promise<DocEntry[]>;
   /** Pull one doc's body on demand (for a pointer), or null if it's gone. */
   read(ctx: DocContext, ref: DocRef): Promise<string | null>;
@@ -140,11 +146,10 @@ export function openFileDocs(root: string): Docs {
           const frontmatter = await readFrontmatter(path);
           if (frontmatter === null) continue; // no frontmatter ⇒ not a doc (workspace file)
           const columns = columnsOf(frontmatter);
-          if (!applies(columns, ctx)) continue;
           const body = columns.load !== "lazy" || columns.kind === "memory"
             ? stripFrontmatter(await Deno.readTextFile(path))
             : undefined;
-          out.push(entryOf({ scope, name, ...columns, handle: path }, body));
+          out.push(entryOf({ scope, name, ...columns, handle: path }, body, ctx));
         }
       }
       return out;
@@ -164,45 +169,71 @@ export function openFileDocs(root: string): Docs {
 }
 
 /** The header columns a doc's frontmatter declares: `kind` (unknown or absent ⇒ `memory`),
- *  `load` (`always`; `conditional` with the `service` and `address` it loads with; else
- *  `lazy`) and a non-empty `description`. */
+ *  `load` (`always`; `conditional` when it names `conversations` to load with; else
+ *  `lazy`), a non-empty `description`, its `keywords` and its `conversations`. */
 export function columnsOf(
   frontmatter: Record<string, unknown>,
-): Pick<DocHeader, "kind" | "load" | "when" | "description"> {
+): Pick<DocHeader, "kind" | "load" | "description" | "keywords" | "conversations"> {
   const k = frontmatter.kind;
   const description = frontmatter.description;
-  const { service } = frontmatter;
-  // YAML reads a phone number as a number; the address is its digits either way
-  const address = typeof frontmatter.address === "number"
-    ? String(frontmatter.address)
-    : frontmatter.address;
-  const when = frontmatter.load === "conditional" && typeof service === "string" &&
-      typeof address === "string" && service !== "" && address !== ""
-    ? { service, address }
-    : undefined;
+  const conversations = listOf(frontmatter.conversations).flatMap((c) => {
+    const at = c.indexOf(":");
+    return at > 0 && at < c.length - 1
+      ? [{ service: c.slice(0, at).trim(), address: c.slice(at + 1).trim() }]
+      : [];
+  });
+  const keywords = listOf(frontmatter.keywords);
+  const load = frontmatter.load === "always"
+    ? "always"
+    : frontmatter.load === "conditional" && conversations.length > 0
+    ? "conditional"
+    : "lazy";
   return {
     kind: typeof k === "string" && KINDS.includes(k) ? k as DocKind : "memory",
-    load: frontmatter.load === "always" ? "always" : when ? "conditional" : "lazy",
-    ...(when ? { when } : {}),
+    load,
     ...(typeof description === "string" && description.length > 0 ? { description } : {}),
+    ...(keywords.length > 0 ? { keywords } : {}),
+    ...(conversations.length > 0 ? { conversations } : {}),
   };
 }
 
+/** A header list as strings: a YAML list or a comma-separated line, each item trimmed and
+ *  the empty ones dropped. YAML reads a bare number as a number, and its digits are the
+ *  item either way. */
+function listOf(v: unknown): string[] {
+  const items = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [];
+  return items.flatMap((i) => {
+    const s = typeof i === "number" ? String(i) : typeof i === "string" ? i.trim() : "";
+    return s ? [s] : [];
+  });
+}
+
 /** A listed doc from its header and its body, every adapter's: the body rides along when
- *  the doc loads, and a memory's size is counted whether it loads or not. */
-export function entryOf(header: DocHeader, body: string | undefined): DocEntry {
+ *  the doc loads, and a memory's size is counted whether it loads or not. A conditional
+ *  doc loads while one of its conversations is in view, and is a pointer otherwise. */
+export function entryOf(
+  header: DocHeader,
+  body: string | undefined,
+  ctx: DocContext,
+): DocEntry {
   const sized = header.kind === "memory" && body !== undefined
     ? { ...header, chars: [...body].length }
     : header;
-  return header.load === "lazy" ? { header: sized } : { header: sized, body };
+  return header.load === "lazy" || !inView(header, ctx)
+    ? { header: sized }
+    : { header: sized, body };
 }
 
-/** Whether a doc belongs in the cascade the context resolves: every doc but a conditional
- *  one whose conversation is out of view. */
-export function applies(columns: Pick<DocHeader, "when">, ctx: DocContext): boolean {
-  const when = columns.when;
-  return when === undefined ||
-    (ctx.inView ?? []).some((w) => w.service === when.service && w.address === when.address);
+/** Whether a doc stands in view of the context: every doc but a conditional one whose
+ *  conversations are all out of it. */
+export function inView(
+  columns: Pick<DocHeader, "load" | "conversations">,
+  ctx: DocContext,
+): boolean {
+  return columns.load !== "conditional" ||
+    (ctx.inView ?? []).some((w) =>
+      (columns.conversations ?? []).some((c) => c.service === w.service && c.address === w.address)
+    );
 }
 
 /** A doc's frontmatter, parsed from its whole text: `null` when it opens with no block,
