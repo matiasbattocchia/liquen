@@ -13,9 +13,17 @@ and drop the rest.
 
 Use these headings; omit a heading with nothing under it.
 
+## Your principal owes
+- [to whom, by the name and address the conversation shows: what your principal promised
+  or was asked for and has not done, in one line, with the ids, dates and amounts it needs,
+  verbatim]
+
+## Owed to your principal
+- [by whom, the same way: what someone promised your principal or was asked for and has not
+  done]
+
 ## Open
-- [who, by the name and address the conversation shows: what is pending and whose move it
-  is, in one line, with the ids, dates and amounts that move needs, verbatim]
+- [who, the same way: anything else pending, and whose move it is]
 
 ## Said here
 - [a preference or a boundary a principal stated that your system prompt does not already
@@ -27,7 +35,7 @@ Leave out:
 - whatever your system prompt already says: addresses, prices, payment details, phone
   numbers, policies, procedures
 - a thread that only waits on the other side and did not move in this span
-- a second mention of anyone: each person or conversation is one entry
+- a second mention of anyone: each person or conversation is one entry under a heading
 
 Write only what the conversation shows; never fill a gap with a guess. Keep every name,
 address, path and figure exactly as it appears. Short is right: a checkpoint is a list of

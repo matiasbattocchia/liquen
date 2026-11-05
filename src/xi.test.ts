@@ -417,10 +417,30 @@ const decideOver = (events: Event[]) => decide(events, SESSION, OVER);
 const err = (error: string) =>
   ev("error", { parts: [{ type: "data", kind: "error", data: { error } }] } as Partial<Event>);
 
-Deno.test("decide: nothing owed and the window over budget → compact; under budget → ignore", () => {
+/** An unload's notice over the span `[since, through]`, and the silent closing that answers
+ *  it. */
+const notice = (since: string, through: string) =>
+  ev("alarm", {
+    extra: { unload: { since, through } },
+    parts: [{ type: "text", kind: "alarm", text: "" }],
+  } as Partial<Event>);
+const silence = () =>
+  ev("message", {
+    ...SELF,
+    payload: { turn_id: "T9" },
+    extra: { silence: true },
+    parts: [{ type: "text", kind: "text", text: "<|SILENCE|>" }],
+  } as Partial<Event>);
+
+Deno.test("decide: nothing owed and the window over budget → unload, then compact; under budget → ignore", () => {
   const closed = [peerMsg(), selfMsg(), peerMsg(), selfMsg()];
-  assertEquals(decideOver(closed), "compact");
+  // the checkpoint would fold lines no unload read: the gap raises the unload first
+  assertEquals(decideOver(closed), "unload");
   assertEquals(decide(closed, SESSION, WAKE), "ignore");
+  // its notice wakes a think, and once that turn closes the span is read: the gap compacts
+  const raised = [...closed, notice(closed[0].id, closed[3].id)];
+  assertEquals(decideOver(raised), "think");
+  assertEquals(decideOver([...raised, silence()]), "compact");
   // the summary's insert is the next look: it finds the visible window light, and idles
   const summary = ev("summary", {
     ...SELF,
@@ -436,8 +456,55 @@ Deno.test("decide: input never waits for a checkpoint — and a running turn is 
   assertEquals(decideOver([peerMsg(), use("u1"), result("u1")]), "think"); // its closing first
   assertEquals(
     decideOver([peerMsg(), selfMsg(), peerMsg(), use("u1"), result("u1"), selfMsg()]),
-    "compact",
+    "unload",
   );
+});
+
+Deno.test("decide: the unload's cursor is the latest notice a closing answered", () => {
+  const first = [peerMsg(), selfMsg()];
+  const answered = [...first, notice(first[0].id, first[1].id), silence()];
+  // past the cursor only the notice and its own silence: nothing teaches, the gap compacts
+  assertEquals(decideOver(answered), "compact");
+  // a line after the cursor is owed again
+  const later = [...answered, peerMsg(), selfMsg()];
+  assertEquals(decideOver(later), "unload");
+  // a notice whose turn died moves nothing: its news stands, and the dead gap compacts
+  const died = [...first, notice(first[0].id, first[1].id), err("overloaded")];
+  assertEquals(decideOver(died), "compact");
+  assertEquals(decide([...died, peerMsg(), selfMsg()], SESSION, { unloadAt: 1 }), "unload");
+});
+
+Deno.test("decide: an unload runs on the span's weight, and on the day's slot", () => {
+  const closed = [peerMsg(), selfMsg()];
+  assertEquals(decide(closed, SESSION, { unloadAt: 1 }), "unload"); // under compactAt
+  assertEquals(decide(closed, SESSION, WAKE), "ignore");
+  // the daily slot: a line that has waited past it is owed, one after it waits a day
+  const at = (ts: string) => ({ ts });
+  const wrote = [
+    ev("message", at("2026-11-04T03:00:00Z")),
+    ev("message", { ...SELF, payload: { turn_id: "T0" }, ...at("2026-11-04T03:01:00Z") }),
+  ] as Event[];
+  const daily: Wake = { timezone: "UTC", unloadDaily: "04:00" };
+  assertEquals(decide(wrote, SESSION, daily, Date.parse("2026-11-04T04:05:00Z")), "unload");
+  assertEquals(decide(wrote, SESSION, daily, Date.parse("2026-11-04T03:30:00Z")), "ignore");
+  assertEquals(
+    decide(wrote, SESSION, { ...daily, unloadDaily: null }, Date.parse("2026-11-04T04:05:00Z")),
+    "ignore",
+  );
+});
+
+Deno.test("decide: an unload waits for quiet news, and a checkpoint that would fold an unread line waits with it", () => {
+  // the principal's line, unanswered under a sleeping world: news, so no unload can close
+  // over it, and a patient gap does not fold what no unload read
+  const asleep: Wake = { ...OVER, timezone: "UTC", sleepHours: "0-24" };
+  const world = (conv: string) => ev("message", { conv } as Partial<Event> & { conv?: string });
+  const quietNews = [world("C1"), selfMsg(), world("C1")];
+  const now = Date.parse("2026-11-04T12:00:00Z");
+  assertEquals(decide(quietNews, SESSION, asleep, now), "ignore");
+  // once a notice answered the folded line, the checkpoint goes ahead under the waiting one
+  const read = [world("C1"), selfMsg()];
+  const after = [...read, notice(read[0].id, read[1].id), silence(), world("C1")];
+  assertEquals(decide(after, SESSION, asleep, now), "compact");
 });
 
 Deno.test("decide: a turn that died over budget compacts in the gap it left — the refused one whatever the budget", () => {

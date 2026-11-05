@@ -804,7 +804,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; `<permission_response re verdict>` in the session room — the ask itself draws nothing, its `pending_approval` result carries the handle | act on an allow; think on the principal's deny; a lapse wakes nobody | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
 | `summary` | nu, in the idle gap after a turn (§5) | leading text block (§5) | look again (idle, or the think a dead turn left owed) | parts(text) · payload{covers} |
-| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) | `<system kind="alarm">` carrying the note | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} |
+| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) · xi, raising an unload in the idle gap (§5) | `<system kind="alarm">` carrying the note; an unload's `<system kind="unload" since="…">` | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} · extra{timer} or extra{unload: {since, through}} |
 | `error` | nu · xi · the checkpoint · the mirror | **system** + Stream | ignore | parts(data:{error}) · extra{consumed} — what a failed request read (the model's, a checkpoint's) · payload{ref_id} — the call a word is said of, or the line that settled no card |
 | `delta` | main (presence, §9): the mind is at work and somebody is waiting | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
 | `anchor` | nu, with a step's first row, when the state moved since the last (§5) | `mid_conv_system` where its step read it: the sections that moved; crosses to no surface | ignore | parts(text, kind anchor: `now:` and the ambient lines) · payload{turn_id} |
@@ -1866,6 +1866,25 @@ layer**:
   on it, unstamped, and the next look retries: the window stays uncovered whichever it
   was, a turn taken over it would cost more and say less, and a checkpoint failing for a
   standing reason must not buy a second call on every wake in silence.
+- **Unload: the facts go to docs before the gist goes to the record.** A checkpoint keeps
+  the gist; what a span taught as fact (who someone is, what they prefer, what was
+  promised) belongs in a doc, as `70-memory` says, and the turn that writes it is the
+  **unload** (`unload.ts`). `decide`'s fifth verdict, `unload`, spends the gap on a notice
+  rather than a model call: an `alarm` the harness raises with no note and
+  `extra.unload: {since, through}`, rendered `<system kind="unload" since="…">`. It wakes
+  like any alarm, and the turn it opens is an ordinary think: it reads the window, writes
+  its docs and closes on `<|SILENCE|>`. The instruction stands in the prefix from the
+  start and the notice is a stored row, so neither is a tail of its own, and the writes
+  stand in the window whether a checkpoint follows or not. Its **cursor** is the `through`
+  of the latest notice a closing answered; one whose turn failed or was cut moves
+  nothing. Past the cursor, an unload is owed when a line someone else wrote stands there
+  and one of three holds: the checkpoint about to run would fold such a line away, the span
+  outweighs `unloadAt` (20K est. tokens), or such a line has waited past the day's
+  `unloadDaily` (04:00 on the org's clock; the metronome brings that look). The gap asks
+  for it before the checkpoint, so the next look, past the unload's turn, compacts. An
+  unload's closing consumes everything its window held, so it runs only while no news
+  waits, and a checkpoint that would fold an unread line waits with it, until the digest
+  answers what was waiting. A window the API refused takes neither wait: it compacts.
 - **One call, attempted one way.** nu owns the retry ladder and the stream, and hands
   compaction a *step-caller* rather than the transport: the checkpoint is retried over
   weather exactly as a think is (`RETRY_DELAYS_MS`, stopping the moment a cancel lands),

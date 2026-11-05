@@ -41,6 +41,7 @@ import {
   silenced,
   silent,
   textOf,
+  unloadOf,
   worldCapped,
 } from "./render.ts";
 import type { StepCall, StepInput } from "./mu.ts";
@@ -305,6 +306,7 @@ function archivedThrough(covered: Event[], session: Session): string | undefined
       line = `${who}: ${textOf(e)}`;
     } else if (e.type === "error") line = `error: ${errorTextOf(e)}`;
     else if (e.type === "control") line = `cancelled: ${CANCELLED}`;
+    else if (unloadOf(e)) line = "unload";
     else if (e.type === "alarm") line = `alarm: ${textOf(e)}`;
     if (line === undefined) continue;
     const flat = line.replace(/\s+/g, " ").trim();

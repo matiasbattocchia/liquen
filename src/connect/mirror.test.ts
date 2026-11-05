@@ -881,10 +881,15 @@ Deno.test("mirror fan-out: a /cancel crosses as the principal's line, and that i
   });
 });
 
-Deno.test("mirror fan-out: a wake and a failure cross as `[system]`; a checkpoint does not", async () => {
+Deno.test("mirror fan-out: a wake and a failure cross as `[system]`; a checkpoint and an unload do not", async () => {
   await withMirror(
     async ({ publish, inConv, waitFor }) => {
-      const harness = (type: string, parts: unknown[], payload: Record<string, unknown> = {}) =>
+      const harness = (
+        type: string,
+        parts: unknown[],
+        payload: Record<string, unknown> = {},
+        extra?: Record<string, unknown>,
+      ) =>
         publish({
           ts: new Date().toISOString(),
           type,
@@ -894,11 +899,16 @@ Deno.test("mirror fan-out: a wake and a failure cross as `[system]`; a checkpoin
             connection_address: "default",
             conversation: { address: "mind@ana" },
           },
+          ...(extra ? { extra } : {}),
           parts,
         } as unknown as Draft<Event>);
       // a checkpoint is the terminal's: a surface heard the mind compacting as it happened
       await harness("summary", [{ type: "text", kind: "text", text: "…" }], {
         covers: ["a", "b"],
+      });
+      // an unload is the harness's word to the agent alone
+      await harness("alarm", [{ type: "text", kind: "alarm", text: "" }], {}, {
+        unload: { since: "a", through: "b" },
       });
       await harness("alarm", [{ type: "text", kind: "alarm", text: "recordarle a Mecha el mail" }]);
       await harness("tool_result", [{

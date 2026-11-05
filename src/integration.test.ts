@@ -2701,35 +2701,40 @@ Deno.test("compaction: an over-budget window is checkpointed in the gap after th
   await scenario(
     [
       ok([{ kind: "assistant", text: "respuesta uno" }], "end_turn"),
+      ok([{ kind: "assistant", text: "<|SILENCE|>" }], "end_turn"), // the unload TURN
       ok([{ kind: "assistant", text: "## checkpoint viejo" }], "end_turn"), // the checkpoint TURN
       ok([{ kind: "assistant", text: "respuesta dos" }], "end_turn"),
+      ok([{ kind: "assistant", text: "<|SILENCE|>" }], "end_turn"),
       ok([{ kind: "assistant", text: "## checkpoint nuevo" }], "end_turn"), // the next gap's
     ],
     async ({ publish, read, calls }) => {
       await publish(principalMsg("uno"));
-      // the closing's own insert is the next look: nothing owed, the window over budget,
-      // so the gap is spent on the checkpoint — no input asked for it, none waited on it
+      // the closing's own insert is the next look: nothing owed, the window over budget, so
+      // the gap first raises the unload, whose turn writes the span down, and the gap after
+      // it is spent on the checkpoint — no input asked for either, none waited on them
       await waitFor(async () => (await read("summary")).length === 1);
       const [sum] = await read("summary");
       assert(sum.type === "summary");
       assertEquals(JSON.stringify(sum.parts).includes("checkpoint viejo"), true);
-      // covers exactly the closed exchange: [uno, respuesta uno]
+      const [unload] = await read("alarm");
+      assertEquals(unload.extra?.unload !== undefined, true);
+      // covers the closed exchange and the unload after it: [uno, respuesta uno, its silence]
       const msgs = await read("message");
-      assertEquals(msgs.length, 2);
+      assertEquals(msgs.length, 3);
       assertEquals(sum.payload.covers[0], msgs[0].id);
-      assertEquals(sum.payload.covers[1], msgs[1].id);
+      assertEquals(sum.payload.covers[1], msgs[2].id);
       await new Promise((r) => setTimeout(r, 300)); // quiescence: the summary's wake idles
-      assertEquals(calls(), 2);
+      assertEquals(calls(), 3);
 
       await publish(principalMsg("dos"));
       await waitFor(async () =>
         (await read("message")).some((e) => JSON.stringify(e.parts).includes("respuesta dos"))
       );
       // the second exchange closes over budget too (every window is, at 1), so its gap
-      // compacts again: reply, checkpoint, reply, checkpoint — each checkpoint between turns
+      // unloads and compacts again: each unload and each checkpoint between turns
       await waitFor(async () => (await read("summary")).length === 2);
       await new Promise((r) => setTimeout(r, 300));
-      assertEquals(calls(), 4);
+      assertEquals(calls(), 6);
       const [, next] = await read("summary");
       assert(next.type === "summary");
       assertEquals(next.payload.covers[0], msgs[0].id); // chained from the first's start

@@ -421,7 +421,8 @@ export interface Payload {
  *  replayed thinking, §5), `bash` (on a script's tool_use and its answer: the id of the bash
  *  call whose script made it through the door, §9 — the answer wakes nobody, and the window
  *  folds the pair into that call), `via` (mirror provenance, §4), `timer` (alarm provenance, §10: the row that fired,
- *  who armed it and when), and per-service provenance under the service name —
+ *  who armed it and when), `unload` (on an alarm the harness raised for an unload, §5: the
+ *  first line of the span it asks written down and the last event it covers), and per-service provenance under the service name —
  *  how the wire said it, not what the event means (`slack: {subtype, authorizations}`,
  *  `raw`). */
 export type Extra = Record<string, unknown>;

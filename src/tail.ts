@@ -26,7 +26,7 @@ import { attach, resolveAgent, wire } from "./attach.ts";
 import { DIM, painter, RED, RESET, spendAfter } from "./paint.ts";
 import { tailOf } from "./line.ts";
 import { describeCall, lineOf } from "./describe.ts";
-import { textOf } from "./render.ts";
+import { textOf, unloadOf } from "./render.ts";
 import { findRoot, readConfig } from "./config.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { defaultAgent } from "./turns.ts";
@@ -109,6 +109,8 @@ export function jsonOf(e: Event): Record<string, Json> {
     case "summary":
       return { ...base, covers: e.payload.covers, text: textOf(e) };
     case "alarm": {
+      const span = unloadOf(e);
+      if (span) return { ...base, unload: span.since, through: span.through };
       const timer = (e.extra?.timer ?? {}) as { name?: string };
       return { ...base, text: textOf(e), ...(timer.name ? { wake: timer.name } : {}) };
     }
