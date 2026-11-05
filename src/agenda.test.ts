@@ -80,6 +80,65 @@ Deno.test("a heading tags its block; the title and fenced examples tag nothing",
   );
 });
 
+Deno.test("a repeat after the moment reads as the rule it says, its words left out", () => {
+  const rule = (words: string) => datedLines(`- @3 Nov 2026 18:00 ${words} x`, NOV4)[0];
+  assertEquals(rule("every day").rule, "FREQ=DAILY");
+  assertEquals(rule("every 2 weeks").rule, "FREQ=WEEKLY;INTERVAL=2");
+  assertEquals(rule("every Tue").rule, "FREQ=WEEKLY;BYDAY=TU");
+  assertEquals(rule("every tuesday, Thu and sat").rule, "FREQ=WEEKLY;BYDAY=TU,TH,SA");
+  assertEquals(rule("every last Fri").rule, "FREQ=MONTHLY;BYDAY=-1FR");
+  assertEquals(rule("every 1st Mon").rule, "FREQ=MONTHLY;BYDAY=1MO");
+  assertEquals(rule("every month").rule, "FREQ=MONTHLY");
+  assertEquals(rule("every year").rule, "FREQ=YEARLY");
+  assertEquals(rule("every Tue until 15 Dec").rule, "FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215");
+  assertEquals(rule("every Tue until 2 Feb").rule, "FREQ=WEEKLY;BYDAY=TU;UNTIL=20270202");
+  assertEquals(rule("every Tue until 2027-03-02").rule, "FREQ=WEEKLY;BYDAY=TU;UNTIL=20270302");
+  assertEquals(rule("every Tue until 31 Nov"), undefined); // no such date
+  // a word that only starts like one is text, and so is the line
+  assertEquals(rule("every Tuesdays").rule, undefined);
+  assertEquals(rule("every guest brings wine").text, "every guest brings wine x");
+  assertEquals(
+    datedLines("- @3 Nov 2026 18:00 every Tue Clase de inglés (28 Oct, e52aa0)", NOV4)[0],
+    {
+      day: { year: 2026, month: 11, day: 3 },
+      at: 18 * 60,
+      slot: "18:00",
+      rule: "FREQ=WEEKLY;BYDAY=TU",
+      every: "every Tue",
+      text: "Clase de inglés",
+    },
+  );
+});
+
+Deno.test("a repeating line shows on each day its rule takes, never before its first", () => {
+  const body = [
+    "# Mars",
+    "- @3 Nov 2026 18:00 every Tue Clase de inglés (28 Oct, e52aa0)",
+    "## Cumples",
+    "- @11 Nov every year Vivian",
+    "- @1 Dec every 2 weeks until 29 Dec Feria",
+  ].join("\n");
+  const on = (month: number, day: number, year = 2026) =>
+    docEntries("profiles/mars", body, { year, month, day });
+  assertEquals(on(11, 10), [
+    {
+      at: 1080,
+      slot: "18:00",
+      text: "Clase de inglés",
+      tail: "profiles/mars, every Tue",
+    },
+  ]);
+  assertEquals(on(11, 11), [
+    { text: "Vivian", tail: "profiles/mars › Cumples, every year" },
+  ]);
+  assertEquals(on(10, 27), []); // a Tuesday before the first
+  assertEquals(on(11, 11, 2027).map((e) => e.text), ["Vivian"]);
+  assertEquals(on(12, 15).map((e) => e.text), ["Clase de inglés", "Feria"]);
+  assertEquals(on(12, 8).map((e) => e.text), ["Clase de inglés"]); // the week between
+  assertEquals(on(12, 29).map((e) => e.text), ["Clase de inglés", "Feria"]);
+  assertEquals(on(1, 12, 2027).map((e) => e.text), ["Clase de inglés"]); // past its last
+});
+
 Deno.test("the section: the whole day first, then by the minute, ties as they came", () => {
   assertEquals(
     todayOn([

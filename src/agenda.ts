@@ -8,7 +8,13 @@
  *
  * The status is optional, and so are the year (the nearest such date to today, as a stamp
  * the model was shown reads back, `momentOf`), the time (a line for the whole day) and an
- * end (`17:30-18:30`). The text keeps its `#tags`; the grounding that closes a memory entry
+ * end (`17:30-18:30`). A repeat may follow the moment, which is then its first occurrence:
+ *
+ *   - @3 Nov 2026 18:00 every Tue Clase de inglés (28 Oct, e52aa0)
+ *
+ * `every day`, `every Tue Thu`, `every 2 weeks`, `every month`, `every last Fri`, `every
+ * year`, each with an optional `until 15 Dec`, read as the RRULE `ruleTakes` judges a
+ * calendar series by. The text keeps its `#tags`; the grounding that closes a memory entry
  * stays in the doc. The nearest heading under the doc's title names the line's block: a
  * board's `##` headings are its columns, and the heading tags its block as a `#tag` tags a
  * line.
@@ -38,12 +44,15 @@ export interface Entry {
   tail: string;
 }
 
-/** A dated line of a doc, read off its body. */
+/** A dated line of a doc, read off its body. A repeating one names its RRULE and the words
+ *  that said it; its `day` is the first occurrence. */
 export interface DatedLine {
   status?: "open" | "done";
   day: Day;
   at?: number;
   slot?: string;
+  rule?: string;
+  every?: string;
   text: string;
   heading?: string;
 }
@@ -82,6 +91,63 @@ const ISO =
   /^(\d{4})-(\d{2})-(\d{2})(?: (\d{1,2}):(\d{2})(?:\s*[-–]\s*(\d{1,2}):(\d{2}))?)?(?:\s+(.*))?$/;
 /** A memory entry's grounding: the day it holds from, and the ids that taught it. */
 const GROUND = /\s*\(\d{1,2} [A-Za-z]{3}[^()]*\)\s*$/;
+const WEEKDAY =
+  "mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?";
+const AND = /\s*,\s*|\s+and\s+|\s+/i;
+/** A repeat opening a line's words: a unit with its count, a unit, an nth weekday of the
+ *  month or a list of weekdays, then an optional last day. It ends where a word does. */
+const EVERY = new RegExp(
+  `^every\\s+(?:(\\d+)\\s+(day|week|month|year)s|(day|week|month|year)|` +
+    `(1st|2nd|3rd|4th|5th|last)\\s+(${WEEKDAY})|((?:${WEEKDAY})(?:(?:${AND.source})(?:${WEEKDAY}))*))` +
+    `(?:\\s+until\\s+(?:(\\d{1,2}) ([A-Za-z]{3})(?: (\\d{4}))?|(\\d{4})-(\\d{2})-(\\d{2})))?(?=\\s|$)`,
+  "i",
+);
+const FREQ: Record<string, string> = {
+  day: "DAILY",
+  week: "WEEKLY",
+  month: "MONTHLY",
+  year: "YEARLY",
+};
+const NTH: Record<string, number> = { "1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "5th": 5, last: -1 };
+
+/** A weekday's name as BYDAY spells it. */
+function byDayCode(name: string): string {
+  return WEEKDAYS[
+    ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+      .indexOf(name.slice(0, 3).toLowerCase())
+  ];
+}
+
+/** The repeat that opens a line's words, as an RRULE, and the words after it; words that
+ *  open with none are all text. Nothing when its `until` names no real date. A yearless
+ *  `until` is the first such date from the line's own. */
+function repeatOf(
+  words: string,
+  start: Day,
+): { rule?: string; every?: string; text: string } | undefined {
+  const m = EVERY.exec(words);
+  if (!m) return { text: words };
+  const rule = m[1]
+    ? [`FREQ=${FREQ[m[2].toLowerCase()]}`, `INTERVAL=${+m[1]}`]
+    : m[3]
+    ? [`FREQ=${FREQ[m[3].toLowerCase()]}`]
+    : m[4]
+    ? ["FREQ=MONTHLY", `BYDAY=${NTH[m[4].toLowerCase()]}${byDayCode(m[5])}`]
+    : ["FREQ=WEEKLY", `BYDAY=${[...new Set(m[6].split(AND).map(byDayCode))].join(",")}`];
+  let last: Day | undefined;
+  if (m[7]) {
+    const month = MONTHS.findIndex((x) => x.toLowerCase() === m[8].toLowerCase()) + 1;
+    if (month === 0) return undefined;
+    last = { year: m[9] ? +m[9] : start.year, month, day: +m[7] };
+    if (!m[9] && serial(last) < serial(start)) last = { ...last, year: start.year + 1 };
+  } else if (m[10]) last = { year: +m[10], month: +m[11], day: +m[12] };
+  if (last) {
+    if (!real(last)) return undefined;
+    const two = (n: number) => String(n).padStart(2, "0");
+    rule.push(`UNTIL=${last.year}${two(last.month)}${two(last.day)}`);
+  }
+  return { rule: rule.join(";"), every: m[0], text: words.slice(m[0].length).trim() };
+}
 
 /** A time of day as minutes, or nothing when it names no real minute. */
 function minutes(h?: string, m?: string): number | undefined {
@@ -121,8 +187,10 @@ function momentAndText(rest: string, today: Day) {
     : end === undefined
     ? clock(at)
     : `${clock(at)}-${clock(end)}`;
-  const text = (g[4] ?? "").replace(GROUND, "").trim();
-  return { day, at, slot, text };
+  const repeat = repeatOf(g[4] ?? "", day);
+  if (!repeat) return undefined;
+  const text = repeat.text.replace(GROUND, "").trim();
+  return { day, at, slot, rule: repeat.rule, every: repeat.every, text };
 }
 
 /** Every dated line of a doc's body, with the heading of the block it stands in. Fenced
@@ -150,6 +218,7 @@ export function datedLines(body: string, today: Day): DatedLine[] {
       ...(item[1] !== undefined ? { status: item[1] === " " ? "open" : "done" } : {}),
       day: m.day,
       ...(m.at !== undefined ? { at: m.at, slot: m.slot } : {}),
+      ...(m.rule ? { rule: m.rule, every: m.every } : {}),
       text: m.text,
       ...(heading ? { heading } : {}),
     });
@@ -157,15 +226,15 @@ export function datedLines(body: string, today: Day): DatedLine[] {
   return out;
 }
 
-/** A doc's lines dated `today`, as entries: a checkbox stays on the line, so a done item
- *  reads as done. */
+/** A doc's lines on `today`, dated to it or repeating onto it, as entries: a checkbox stays
+ *  on the line, so a done item reads as done, and a repeat closes the tail. */
 export function docEntries(name: string, body: string, today: Day): Entry[] {
   return datedLines(body, today)
-    .filter((l) => serial(l.day) === serial(today))
+    .filter((l) => l.rule ? ruleTakes(l.rule, l.day, today) : serial(l.day) === serial(today))
     .map((l) => ({
       ...(l.at !== undefined ? { at: l.at, slot: l.slot } : {}),
       text: `${l.status === "open" ? "[ ] " : l.status === "done" ? "[x] " : ""}${l.text}`,
-      tail: l.heading ? `${name} › ${l.heading}` : name,
+      tail: `${l.heading ? `${name} › ${l.heading}` : name}${l.every ? `, ${l.every}` : ""}`,
     }));
 }
 

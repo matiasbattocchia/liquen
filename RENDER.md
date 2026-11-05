@@ -138,8 +138,10 @@ goes with its words. Each skill the system describes is one file under
 | Item | Described in system | Note |
 |---|---|---|
 | A dated line `- [ ] @7 Nov 17:30 … #tag (2 Nov, 8be1d0)` | ✓ | A format the agent writes |
+| A repeat after the moment, `every Tue`, `every 2 weeks`, `every last Fri`, `until 15 Dec` | ✓ | A format the agent writes |
 | `today — N:` | ✓ | The whole day, the whole-day entries first, then by the minute |
 | `· 17:30 [ ] … #tag — doc › heading` | ✓ | A memory's line dated today, under its doc and the heading under its title |
+| `· 18:00 … — doc, every Tue` | ✓ | A repeating line on each day its rule takes, its repeat closing the tail |
 | `· 17:30-18:15 … — calendar …, in …` | ✓ | The calendar's events the log holds for today, a series on each day its rule takes |
 | `· 9:00 … — wake, repeats \`…\` · id … · the org's \`name\`` | ✓ | A wake that fires today. `cancel.md` |
 | A board, its `##` headings as columns | ✓ | A format the agent writes |
