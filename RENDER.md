@@ -101,8 +101,7 @@ goes with its words. Each skill the system describes is one file under
 |---|---|---|
 | `<system kind="control">cancelled by your principal — the turn stopped here` | ✗ | |
 | `<system kind="error">` | ✗ | |
-| `<system kind="alarm">` | ✗ | `schedule.md` |
-| `scheduled — N wakes:` `· … — fires …, repeats \`…\` · id … · the org's \`name\`` | ✗ | The wakes after today. `schedule.md`, `cancel.md` |
+| `<system kind="alarm">` with `7 Nov 17:30 … — doc › heading, remind …`, a line each | ✓ | The lines whose reminder came due. In Agenda |
 
 ## Knowledge · `instructions/60-knowledge.md`
 
@@ -139,11 +138,12 @@ goes with its words. Each skill the system describes is one file under
 |---|---|---|
 | A dated line `- [ ] @7 Nov 17:30 … #tag (2 Nov, 8be1d0)` | ✓ | A format the agent writes |
 | A repeat after the moment, `every Tue`, `every 2 weeks`, `every last Fri`, `until 15 Dec` | ✓ | A format the agent writes |
-| `today — N:` | ✓ | The whole day, the whole-day entries first, then by the minute |
-| `· 17:30 [ ] … #tag — doc › heading` | ✓ | A memory's line dated today, under its doc and the heading under its title |
-| `· 18:00 … — doc, every Tue` | ✓ | A repeating line on each day its rule takes, its repeat closing the tail |
-| `· 17:30-18:15 … — calendar …, in …` | ✓ | The calendar's events the log holds for today, a series on each day its rule takes |
-| `· 9:00 … — wake, repeats \`…\` · id … · the org's \`name\`` | ✓ | A wake that fires today. `cancel.md` |
+| A step within the day, `every 30 minutes`, `every 2 hours`, `from 9:00 to 18:00` | ✓ | A format the agent writes |
+| A reminder after any repeat, `remind`, `remind 1 hour before`, `remind 1 day before at 10:00` | ✓ | A format the agent writes; the clock wakes the agent with the line |
+| `today — N:`, `tomorrow — N:` | ✓ | Each day whole, the whole-day entries first, then by the minute |
+| `· 17:30 [ ] … #tag — doc › heading` | ✓ | A line of any doc the agent reads, under its doc and the heading under its title; a shared or system doc under its scope |
+| `· 18:00 … — doc, every Tue, remind …` | ✓ | A repeating line on each day its rule takes, a stepping one at its first step; its repeat and reminder close the tail |
+| `· 17:30-18:15 … — calendar …, in …` | ✓ | The calendar's events the log holds for the day, a series on each day its rule takes |
 | A board, its `##` headings as columns | ✓ | A format the agent writes |
 
 ## Environment

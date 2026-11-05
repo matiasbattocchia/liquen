@@ -292,15 +292,15 @@ Deno.test("migrate v15: every mail thread is a group, a send not yet confirmed i
   }
 });
 
-Deno.test("migrate v9: a log from before named wakes opens, and its timers take a handle", async () => {
+Deno.test("migrate v17: a log that armed wakes in a table opens without it", async () => {
   const dir = await Deno.makeTempDir();
   const first = await openLog(dir);
   await first.close();
   const db = new DatabaseSync(`${dir}/log.db`);
   db.exec(
-    `DROP INDEX timers_named;
-   ALTER TABLE timers DROP COLUMN name;
-   PRAGMA user_version = 8;`,
+    `CREATE TABLE timers (id TEXT PRIMARY KEY, fire_at TEXT NOT NULL);
+   INSERT INTO timers VALUES ('t1', '2026-11-06T13:00:00.000Z');
+   PRAGMA user_version = 16;`,
   );
   db.close();
 
@@ -308,11 +308,14 @@ Deno.test("migrate v9: a log from before named wakes opens, and its timers take 
   await log.close();
   const again = new DatabaseSync(`${dir}/log.db`);
   try {
-    const cols = (again.prepare("SELECT name FROM pragma_table_info('timers')").all() as {
-      name: string;
-    }[]).map((c) => c.name);
-    assert(cols.includes("name"));
-    assert(again.prepare("SELECT 1 FROM sqlite_master WHERE name = 'timers_named'").get());
+    assertEquals(
+      again.prepare("SELECT 1 FROM sqlite_master WHERE name = 'timers'").get(),
+      undefined,
+    );
+    assertEquals(
+      (again.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
+      17,
+    );
   } finally {
     again.close();
     await Deno.remove(dir, { recursive: true });

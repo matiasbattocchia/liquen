@@ -243,21 +243,6 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE UNIQUE INDEX IF NOT EXISTS conversations_local_name
   ON conversations (connection_address, name) WHERE service = 'local' AND deleted_at IS NULL;
 
-CREATE TABLE IF NOT EXISTS timers (
-  id           ${T} PRIMARY KEY,
-  agent_id     ${T} NOT NULL,
-  session_id   ${T} NOT NULL,
-  fire_at      ${T} NOT NULL,
-  cron         ${T},
-  note         ${T} NOT NULL,
-  name         ${T},
-  conversation ${T} NOT NULL,
-  ref_id       ${T},
-  created_at   ${T} NOT NULL
-);
-CREATE INDEX IF NOT EXISTS timers_due ON timers (fire_at);
-CREATE UNIQUE INDEX IF NOT EXISTS timers_named ON timers (agent_id, session_id, name)
-  WHERE name IS NOT NULL;
 
 CREATE OR REPLACE VIEW principals AS
   SELECT a.agent_id, p.value COLLATE "C" AS principal, (p.ord - 1)::integer AS rank
@@ -613,7 +598,7 @@ $f$;
 
 /** The version the DDL creates. A store found below it is raised in place, once, by the
  *  steps between; a store above it was made by a newer liquen, and this one refuses it. */
-export const VERSION = 7;
+export const VERSION = 8;
 
 /** `RAISE[v]` takes a store from version `v` to `v + 1`: the ALTERs the DDL's `IF NOT
  *  EXISTS` cannot express, run before the DDL so the views it replaces find their columns.
@@ -645,6 +630,10 @@ const RAISE: Record<number, (tx: Db) => Promise<void>> = {
   // v7 — a thread is a reply chain inside its conversation (§3): `conversation_thread` goes
   6: async (tx) => {
     await tx.unsafe(DROP_THREAD);
+  },
+  // v8 — what is due lives in the docs, as reminders (§10): the `timers` table goes
+  7: async (tx) => {
+    await tx.unsafe("DROP TABLE IF EXISTS timers");
   },
 };
 

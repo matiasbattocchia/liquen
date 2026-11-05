@@ -60,7 +60,6 @@ import {
   pgRegistry,
   pgStanding,
   pgSweeper,
-  pgTimers,
   RELEASE,
 } from "./tables.ts";
 
@@ -417,7 +416,6 @@ export async function openPgLog(
 
     lock: locker.lock,
     ...pgRegistry(sql),
-    ...pgTimers(sql),
     ...pgGates(sql, eventOf as (row: unknown) => Event),
     ...pgSweeper(serial),
     ...pgStanding(sql),

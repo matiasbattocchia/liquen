@@ -1,6 +1,7 @@
 /**
- * agenda.ts: the anchor's `today` section (§5), read off the calendar's events the log
- * holds, the dated lines of the agent's memories and the session's wakes.
+ * agenda.ts: the anchor's `today` and `tomorrow` sections (§5), read off the calendar's
+ * events the log holds and the dated lines of the agent's memories, and the reminders those
+ * lines ask for, which the clock fires (§10).
  *
  * A dated line is a list item whose moment follows its status:
  *
@@ -14,19 +15,32 @@
  *
  * `every day`, `every Tue Thu`, `every 2 weeks`, `every month`, `every last Fri`, `every
  * year`, each with an optional `until 15 Dec`, read as the RRULE `ruleTakes` judges a
- * calendar series by. The text keeps its `#tags`; the grounding that closes a memory entry
- * stays in the doc. The nearest heading under the doc's title names the line's block: a
- * board's `##` headings are its columns, and the heading tags its block as a `#tag` tags a
- * line.
+ * calendar series by. `every 15 minutes` and `every 2 hours` step from the line's time, and
+ * `from 19:30 to 12:00` keeps the steps inside a span of the day, across midnight when it
+ * ends before it starts.
  *
- * The section lists the whole day, past hours included, so it moves only when what the day
+ * A reminder may follow, and then the clock wakes the agent with the line:
+ *
+ *   - @7 Nov 17:30 remind 1 day before at 10:00 Leo V (2 Nov, a60609)
+ *
+ * `remind` alone is the moment itself, `remind 1 hour before` counts back from it, and
+ * `remind at 9:00` or `remind 2 days before at 9:00` names the time on that day. A line for
+ * the whole day has no moment to count back from, so its reminder names its time. A done
+ * line reminds of nothing.
+ *
+ * The text keeps its `#tags`; the grounding that closes a memory entry stays in the doc.
+ * The nearest heading under the doc's title names the line's block: a board's `##` headings
+ * are its columns, and the heading tags its block as a `#tag` tags a line.
+ *
+ * A section lists the whole day, past hours included, so it moves only when what the day
  * holds moves, never with the clock: the anchor is rewritten every step, and a section that
  * stands still is the one a cache keeps.
  */
 
 import type { CalendarData, CalendarPart, MessageEvent } from "./types.ts";
+import type { DocHeader } from "./store/docs.ts";
 import { clockOf } from "./render.ts";
-import { MONTHS } from "./store/timers.ts";
+import { MONTHS } from "./moment.ts";
 
 /** A calendar date, month 1-based: a triple, not an instant. */
 export interface Day {
@@ -44,15 +58,25 @@ export interface Entry {
   tail: string;
 }
 
-/** A dated line of a doc, read off its body. A repeating one names its RRULE and the words
- *  that said it; its `day` is the first occurrence. */
+/** When a line reminds: `back` minutes before its moment, or `days` before it at `at`. */
+export type Remind = { back: number } | { days: number; at: number };
+
+/** A dated line of a doc, read off its body. A repeating one names the words that said it
+ *  and its rule: an RRULE for whole days, or a `step` of minutes kept inside a `span` of the
+ *  day until its `last` day. Its `day` is the first occurrence. A reminding one names the
+ *  words that said it too. */
 export interface DatedLine {
   status?: "open" | "done";
   day: Day;
   at?: number;
   slot?: string;
   rule?: string;
+  step?: number;
+  span?: [number, number];
+  last?: Day;
   every?: string;
+  remind?: Remind;
+  reminder?: string;
   text: string;
   heading?: string;
 }
@@ -63,8 +87,45 @@ export function dayOf(ts: string, zone?: string): Day | undefined {
   return c ? { year: c.year, month: c.month + 1, day: c.day } : undefined;
 }
 
+/** The minute `ts` falls on, on the org's clock, counted as a wall clock counts: the day's
+ *  serial times a day's minutes, plus the minute of the day. The clock reads reminders this
+ *  way, so a line at 9:00 fires at 9:00 on either side of a change of offset. */
+export function wallOf(ts: string, zone?: string): number | undefined {
+  const c = clockOf(ts, zone);
+  return c
+    ? serial({ year: c.year, month: c.month + 1, day: c.day }) * DAY_MINUTES + c.hour * 60 +
+      c.minute
+    : undefined;
+}
+
+/** A wall minute as its ISO stamp on the org's clock, `2026-11-06T10:00`. */
+export function wallStamp(wall: number): string {
+  const d = daySerial(Math.floor(wall / DAY_MINUTES));
+  const two = (n: number) => String(n).padStart(2, "0");
+  const m = wall - serial(d) * DAY_MINUTES;
+  return `${d.year}-${two(d.month)}-${two(d.day)}T${two(Math.floor(m / 60))}:${two(m % 60)}`;
+}
+
+const DAY_MINUTES = 1440;
+
 function serial(d: Day): number {
   return Date.UTC(d.year, d.month - 1, d.day) / 864e5;
+}
+
+function daySerial(s: number): Day {
+  const t = new Date(s * 864e5);
+  return { year: t.getUTCFullYear(), month: t.getUTCMonth() + 1, day: t.getUTCDate() };
+}
+
+/** A doc as a line's tail names it: by its name in the agent's own scope, under its scope
+ *  in the two the org shares. */
+export function docName(h: Pick<DocHeader, "scope" | "name">): string {
+  return h.scope === "agent" ? h.name : `${h.scope}/${h.name}`;
+}
+
+/** The day after `d`. */
+export function nextDay(d: Day): Day {
+  return daySerial(serial(d) + 1);
 }
 
 function real(d: Day): boolean {
@@ -94,11 +155,14 @@ const GROUND = /\s*\(\d{1,2} [A-Za-z]{3}[^()]*\)\s*$/;
 const WEEKDAY =
   "mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?";
 const AND = /\s*,\s*|\s+and\s+|\s+/i;
+const UNIT = "minute|hour|day|week|month|year";
 /** A repeat opening a line's words: a unit with its count, a unit, an nth weekday of the
- *  month or a list of weekdays, then an optional last day. It ends where a word does. */
+ *  month or a list of weekdays, then an optional span of the day and an optional last day.
+ *  It ends where a word does. */
 const EVERY = new RegExp(
-  `^every\\s+(?:(\\d+)\\s+(day|week|month|year)s|(day|week|month|year)|` +
+  `^every\\s+(?:(\\d+)\\s+(${UNIT})s?|(${UNIT})|` +
     `(1st|2nd|3rd|4th|5th|last)\\s+(${WEEKDAY})|((?:${WEEKDAY})(?:(?:${AND.source})(?:${WEEKDAY}))*))` +
+    `(?:\\s+from\\s+(\\d{1,2}):(\\d{2})\\s+to\\s+(\\d{1,2}):(\\d{2}))?` +
     `(?:\\s+until\\s+(?:(\\d{1,2}) ([A-Za-z]{3})(?: (\\d{4}))?|(\\d{4})-(\\d{2})-(\\d{2})))?(?=\\s|$)`,
   "i",
 );
@@ -108,7 +172,18 @@ const FREQ: Record<string, string> = {
   month: "MONTHLY",
   year: "YEARLY",
 };
+/** The units a repeat steps by within the day, in minutes. */
+const STEP: Record<string, number> = { minute: 1, hour: 60 };
 const NTH: Record<string, number> = { "1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "5th": 5, last: -1 };
+/** A reminder opening a line's words, after any repeat. */
+const REMIND =
+  /^remind(?:\s+(\d+)\s+(minute|hour|day|week)s?\s+before)?(?:\s+at\s+(\d{1,2}):(\d{2}))?(?=\s|$)/i;
+const BACK: Record<string, number> = {
+  minute: 1,
+  hour: 60,
+  day: DAY_MINUTES,
+  week: 7 * DAY_MINUTES,
+};
 
 /** A weekday's name as BYDAY spells it. */
 function byDayCode(name: string): string {
@@ -118,35 +193,78 @@ function byDayCode(name: string): string {
   ];
 }
 
-/** The repeat that opens a line's words, as an RRULE, and the words after it; words that
- *  open with none are all text. Nothing when its `until` names no real date. A yearless
- *  `until` is the first such date from the line's own. */
-function repeatOf(
-  words: string,
-  start: Day,
-): { rule?: string; every?: string; text: string } | undefined {
+interface Repeat {
+  rule?: string;
+  step?: number;
+  span?: [number, number];
+  last?: Day;
+  every?: string;
+  text: string;
+}
+
+/** The repeat that opens a line's words, and the words after it; words that open with none
+ *  are all text. Whole days read as an RRULE; minutes and hours as a step from the line's
+ *  time, which they need. Nothing when the repeat cannot hold: an `until` that names no
+ *  real date, a span on whole days, a step on a line with no time. A yearless `until` is
+ *  the first such date from the line's own. */
+function repeatOf(words: string, start: Day, at?: number): Repeat | undefined {
   const m = EVERY.exec(words);
   if (!m) return { text: words };
+  const unit = (m[2] ?? m[3])?.toLowerCase();
+  const step = unit && STEP[unit] ? STEP[unit] * (m[1] ? +m[1] : 1) : undefined;
+  let span: [number, number] | undefined;
+  if (m[7] !== undefined) {
+    const from = minutes(m[7], m[8]), to = minutes(m[9], m[10]);
+    if (from === undefined || to === undefined || step === undefined) return undefined;
+    span = [from, to];
+  }
+  if (step !== undefined && (at === undefined || step === 0)) return undefined;
+  let last: Day | undefined;
+  if (m[11]) {
+    const month = MONTHS.findIndex((x) => x.toLowerCase() === m[12].toLowerCase()) + 1;
+    if (month === 0) return undefined;
+    last = { year: m[13] ? +m[13] : start.year, month, day: +m[11] };
+    if (!m[13] && serial(last) < serial(start)) last = { ...last, year: start.year + 1 };
+  } else if (m[14]) last = { year: +m[14], month: +m[15], day: +m[16] };
+  if (last && !real(last)) return undefined;
+  const every = m[0], text = words.slice(m[0].length).trim();
+  if (step !== undefined) {
+    return { step, ...(span ? { span } : {}), ...(last ? { last } : {}), every, text };
+  }
   const rule = m[1]
-    ? [`FREQ=${FREQ[m[2].toLowerCase()]}`, `INTERVAL=${+m[1]}`]
+    ? [`FREQ=${FREQ[unit!]}`, `INTERVAL=${+m[1]}`]
     : m[3]
-    ? [`FREQ=${FREQ[m[3].toLowerCase()]}`]
+    ? [`FREQ=${FREQ[unit!]}`]
     : m[4]
     ? ["FREQ=MONTHLY", `BYDAY=${NTH[m[4].toLowerCase()]}${byDayCode(m[5])}`]
     : ["FREQ=WEEKLY", `BYDAY=${[...new Set(m[6].split(AND).map(byDayCode))].join(",")}`];
-  let last: Day | undefined;
-  if (m[7]) {
-    const month = MONTHS.findIndex((x) => x.toLowerCase() === m[8].toLowerCase()) + 1;
-    if (month === 0) return undefined;
-    last = { year: m[9] ? +m[9] : start.year, month, day: +m[7] };
-    if (!m[9] && serial(last) < serial(start)) last = { ...last, year: start.year + 1 };
-  } else if (m[10]) last = { year: +m[10], month: +m[11], day: +m[12] };
   if (last) {
-    if (!real(last)) return undefined;
     const two = (n: number) => String(n).padStart(2, "0");
     rule.push(`UNTIL=${last.year}${two(last.month)}${two(last.day)}`);
   }
-  return { rule: rule.join(";"), every: m[0], text: words.slice(m[0].length).trim() };
+  return { rule: rule.join(";"), every, text };
+}
+
+/** The reminder that opens a line's words, and the words after it. Words that open with
+ *  none, or with one the line cannot keep (a count back from a line with no time, a time of
+ *  day after minutes or hours), are all text. */
+function remindOf(
+  words: string,
+  at?: number,
+): { remind?: Remind; reminder?: string; text: string } {
+  const m = REMIND.exec(words);
+  if (!m) return { text: words };
+  const unit = m[2]?.toLowerCase();
+  const back = unit ? +m[1] * BACK[unit] : 0;
+  const time = minutes(m[3], m[4]);
+  if (m[3] !== undefined && time === undefined) return { text: words };
+  let remind: Remind;
+  if (time !== undefined) {
+    if (back % DAY_MINUTES !== 0) return { text: words };
+    remind = { days: back / DAY_MINUTES, at: time };
+  } else if (at !== undefined) remind = { back };
+  else return { text: words };
+  return { remind, reminder: m[0], text: words.slice(m[0].length).trim() };
 }
 
 /** A time of day as minutes, or nothing when it names no real minute. */
@@ -187,10 +305,11 @@ function momentAndText(rest: string, today: Day) {
     : end === undefined
     ? clock(at)
     : `${clock(at)}-${clock(end)}`;
-  const repeat = repeatOf(g[4] ?? "", day);
+  const repeat = repeatOf(g[4] ?? "", day, at);
   if (!repeat) return undefined;
-  const text = repeat.text.replace(GROUND, "").trim();
-  return { day, at, slot, rule: repeat.rule, every: repeat.every, text };
+  const { text: words, ...rule } = repeat;
+  const { text, ...remind } = remindOf(words, at);
+  return { day, at, slot, ...rule, ...remind, text: text.replace(GROUND, "").trim() };
 }
 
 /** Every dated line of a doc's body, with the heading of the block it stands in. Fenced
@@ -218,7 +337,12 @@ export function datedLines(body: string, today: Day): DatedLine[] {
       ...(item[1] !== undefined ? { status: item[1] === " " ? "open" : "done" } : {}),
       day: m.day,
       ...(m.at !== undefined ? { at: m.at, slot: m.slot } : {}),
-      ...(m.rule ? { rule: m.rule, every: m.every } : {}),
+      ...(m.rule ? { rule: m.rule } : {}),
+      ...(m.step ? { step: m.step } : {}),
+      ...(m.span ? { span: m.span } : {}),
+      ...(m.last ? { last: m.last } : {}),
+      ...(m.every ? { every: m.every } : {}),
+      ...(m.remind ? { remind: m.remind, reminder: m.reminder } : {}),
       text: m.text,
       ...(heading ? { heading } : {}),
     });
@@ -226,16 +350,109 @@ export function datedLines(body: string, today: Day): DatedLine[] {
   return out;
 }
 
-/** A doc's lines on `today`, dated to it or repeating onto it, as entries: a checkbox stays
- *  on the line, so a done item reads as done, and a repeat closes the tail. */
-export function docEntries(name: string, body: string, today: Day): Entry[] {
-  return datedLines(body, today)
-    .filter((l) => l.rule ? ruleTakes(l.rule, l.day, today) : serial(l.day) === serial(today))
-    .map((l) => ({
-      ...(l.at !== undefined ? { at: l.at, slot: l.slot } : {}),
-      text: `${l.status === "open" ? "[ ] " : l.status === "done" ? "[x] " : ""}${l.text}`,
-      tail: `${l.heading ? `${name} › ${l.heading}` : name}${l.every ? `, ${l.every}` : ""}`,
-    }));
+/** The minutes of day `d` a timed line stands at: its time on a day its rule takes, or each
+ *  step that falls on the day inside its span. */
+function timesOn(l: DatedLine, d: Day): number[] {
+  if (l.at === undefined) return [];
+  if (!l.step) return takes(l, d) ? [l.at] : [];
+  const day = serial(d);
+  if (day < serial(l.day) || (l.last && day > serial(l.last))) return [];
+  const first = serial(l.day) * DAY_MINUTES + l.at;
+  const out: number[] = [];
+  const from = day * DAY_MINUTES;
+  for (
+    let t = first + Math.max(0, Math.ceil((from - first) / l.step)) * l.step;
+    t < from + DAY_MINUTES;
+    t += l.step
+  ) {
+    const m = t - from;
+    const [a, b] = l.span ?? [0, DAY_MINUTES - 1];
+    if (a <= b ? a <= m && m <= b : m >= a || m <= b) out.push(m);
+  }
+  return out;
+}
+
+/** Whether a line stands on day `d`: its own day, a day its rule takes, a day one of its
+ *  steps falls on. */
+function takes(l: DatedLine, d: Day): boolean {
+  if (l.step) return timesOn(l, d).length > 0;
+  return l.rule ? ruleTakes(l.rule, l.day, d) : serial(l.day) === serial(d);
+}
+
+/** Where a line stands, as a section's tail and a reminder name it: the doc, the heading
+ *  of its block, its repeat and its reminder. */
+function tailOf(name: string, l: DatedLine): string {
+  return `${l.heading ? `${name} › ${l.heading}` : name}${l.every ? `, ${l.every}` : ""}${
+    l.reminder ? `, ${l.reminder}` : ""
+  }`;
+}
+
+/** A line's words with its checkbox, so a done item reads as done. */
+function boxed(l: DatedLine): string {
+  return `${l.status === "open" ? "[ ] " : l.status === "done" ? "[x] " : ""}${l.text}`;
+}
+
+/** A doc's lines on day `d`, dated to it or repeating onto it, as entries: a stepping line
+ *  at its first step of the day, and its repeat and reminder close the tail. */
+export function docEntries(name: string, body: string, d: Day): Entry[] {
+  return datedLines(body, d)
+    .filter((l) => takes(l, d))
+    .map((l) => {
+      const at = l.step ? timesOn(l, d)[0] : l.at;
+      return {
+        ...(at !== undefined ? { at, slot: l.step ? clock(at) : l.slot } : {}),
+        text: boxed(l),
+        tail: tailOf(name, l),
+      };
+    });
+}
+
+/** A reminder that came due: the wall minute it fires at, and the line it reminds of. */
+export interface Due {
+  fire: number;
+  text: string;
+}
+
+/** The reminders of a doc's lines that fall due in the wall minutes `(from, to]`, each line
+ *  once, at the latest of its due ones: a clock that was down fires a repeat once, not once
+ *  per step it missed. Each names the occurrence it reminds of, the line and where it
+ *  stands. */
+export function remindersDue(
+  name: string,
+  body: string,
+  from: number,
+  to: number,
+  today: Day,
+): Due[] {
+  const out: Due[] = [];
+  for (const l of datedLines(body, today)) {
+    if (!l.remind || l.status === "done") continue;
+    const r = l.remind;
+    let due: { fire: number; day: number; at?: number } | undefined;
+    const hit = (fire: number, day: number, at?: number) => {
+      if (fire > from && fire <= to && (!due || fire > due.fire)) due = { fire, day, at };
+    };
+    if ("days" in r) {
+      for (let fd = Math.floor(from / DAY_MINUTES); fd <= Math.floor(to / DAY_MINUTES); fd++) {
+        const day = fd + r.days;
+        if (takes(l, daySerial(day))) {
+          hit(fd * DAY_MINUTES + r.at, day, timesOn(l, daySerial(day))[0]);
+        }
+      }
+    } else {
+      const lo = from + r.back, hi = to + r.back;
+      for (let day = Math.floor(lo / DAY_MINUTES); day <= Math.floor(hi / DAY_MINUTES); day++) {
+        for (const m of timesOn(l, daySerial(day))) hit(day * DAY_MINUTES + m - r.back, day, m);
+      }
+    }
+    if (!due) continue;
+    const d = daySerial(due.day);
+    const when = `${d.day} ${MONTHS[d.month - 1]}${d.year === today.year ? "" : ` ${d.year}`}${
+      due.at === undefined ? "" : ` ${clock(due.at)}`
+    }`;
+    out.push({ fire: due.fire, text: `${when} ${boxed(l)} — ${tailOf(name, l)}` });
+  }
+  return out;
 }
 
 /* ── the calendar ──────────────────────────────────────────────────────────────────── */
@@ -433,16 +650,17 @@ export function calendarEntries(rows: MessageEvent[], today: Day, zone?: string)
   return out;
 }
 
-/** The anchor's `today` section: the whole-day entries first, then the rest by the minute
- *  they start, ties in the order they came. Nothing on the day, no section. */
-export function todayOn(entries: Entry[]): string[] {
+/** The anchor's section for one day, `today` or `tomorrow`: the whole-day entries first,
+ *  then the rest by the minute they start, ties in the order they came. Nothing on the day,
+ *  no section. */
+export function daySection(label: string, entries: Entry[]): string[] {
   if (entries.length === 0) return [];
   const sorted = entries
     .map((e, i) => ({ e, i }))
     .sort((a, b) => (a.e.at ?? -1) - (b.e.at ?? -1) || a.i - b.i)
     .map(({ e }) => e);
   return [
-    `today — ${entries.length}:`,
+    `${label} — ${entries.length}:`,
     ...sorted.map((e) => `· ${e.slot ? `${e.slot} ` : ""}${e.text} — ${e.tail}`),
   ];
 }

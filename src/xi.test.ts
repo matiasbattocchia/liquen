@@ -821,9 +821,9 @@ Deno.test("attention: asleep, the ambient world waits for morning — the princi
   assertEquals(decide([...pile, own], SESSION, WAKE, night), "think");
 });
 
-/* ── the scheduled wake (§10): an alarm is news the agent addressed to itself ── */
+/* ── the alarm (§10): a reminder is news the agent's own lines asked for ── */
 
-/** A fired timer, as main publishes it: harness-authored (no `agent`), the note as text. */
+/** A fired alarm, as the clock publishes it: harness-authored (no `agent`), its words as text. */
 const alarm = (minAgo: number, base = NOON, conv = "slack:C1") =>
   ev(
     "alarm",
@@ -1177,14 +1177,9 @@ Deno.test("specsOf: `tools` names what the model sees — unset offers everythin
   const bash = { spec: { name: "bash", description: "", input_schema: { type: "object" } } };
   const ports = { exec: { bash } } as unknown as XiPorts;
   const names = (tools?: string[]) => specsOf(ports, { ...CONFIG, tools }).map((t) => t.spec.name);
-  assertEquals(names(), ["send", "search", "schedule", "cancel", "conversation", "bash"]);
+  assertEquals(names(), ["send", "search", "cancel", "conversation", "bash"]);
   // the coding-agent shape: built-ins and exec filter alike, by name
-  assertEquals(names(["search", "schedule", "cancel", "bash"]), [
-    "search",
-    "schedule",
-    "cancel",
-    "bash",
-  ]);
+  assertEquals(names(["search", "cancel", "bash"]), ["search", "cancel", "bash"]);
   assertEquals(names([]), []); // an empty list is a model with no tools at all
   // the address book is offered where an account keeps one, and only there
   const withBook = {
@@ -1197,7 +1192,6 @@ Deno.test("specsOf: `tools` names what the model sees — unset offers everythin
   assertEquals(offered([{ service: "slack" }, { service: "whatsapp" }]), [
     "send",
     "search",
-    "schedule",
     "cancel",
     "conversation",
     "contact",

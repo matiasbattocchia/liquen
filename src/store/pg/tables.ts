@@ -3,7 +3,7 @@
  *
  * Each is the SQLite adapter's statements in Postgres's words — `jsonb` operators for
  * `json_extract`, `ON CONFLICT` targets for `INSERT OR REPLACE` — answering through the
- * same row mappers. The claims (a lease's steal, a timer's claim) stay one conditional
+ * same row mappers. The claims (a lease's steal, a report's claim) stay one conditional
  * UPDATE each: under READ COMMITTED the second writer waits on the row, re-reads its
  * predicate against the first writer's commit, and touches nothing.
  */
@@ -27,17 +27,8 @@ import {
   nameTaken,
 } from "../connections.ts";
 import { routedSession } from "../../session.ts";
-import {
-  CLAIM_LEASE_MS,
-  nextFire,
-  type Raw,
-  timerOf,
-  type TimerRow,
-  type Timers,
-} from "../timers.ts";
 import { type Gates, owedOf, type RulingRow } from "../gates.ts";
 import { RETRY_BACKOFF_MS, STALLED_AFTER_MS, type Sweeper } from "../sweep.ts";
-import { newId } from "../id.ts";
 import type { Event, PermissionRequestEvent, ToolUseEvent } from "../../types.ts";
 import { count, type Db, rows } from "./sql.ts";
 
@@ -365,87 +356,6 @@ export function pgConnections(db: Db): Connections {
            AND deleted_at IS NULL`,
         [now, service, connection, address],
       );
-    },
-  };
-}
-
-export function pgTimers(db: Db): Timers {
-  return {
-    async arm(row) {
-      const armed: TimerRow = { ...row, id: newId(), armedAt: new Date().toISOString() };
-      // a named wake is the operator's handle: arming the name again replaces the row
-      // whole, id and all. An unnamed row conflicts with nothing.
-      await count(
-        db,
-        `INSERT INTO timers
-           (id, agent_id, session_id, fire_at, cron, note, name, conversation, ref_id, created_at)
-         VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text,
-           $8::text, $9::text, $10::text)
-         ON CONFLICT (agent_id, session_id, name) WHERE name IS NOT NULL DO UPDATE SET
-           id = excluded.id, fire_at = excluded.fire_at, cron = excluded.cron,
-           note = excluded.note, conversation = excluded.conversation,
-           ref_id = excluded.ref_id, created_at = excluded.created_at`,
-        [
-          armed.id,
-          armed.agentId,
-          armed.sessionId,
-          armed.fireAt,
-          armed.cron ?? null,
-          armed.note,
-          armed.name ?? null,
-          armed.conversation,
-          armed.refId ?? null,
-          armed.armedAt!,
-        ],
-      );
-      return armed;
-    },
-    async due(nowIso) {
-      return (await rows<Raw>(
-        db,
-        "SELECT * FROM timers WHERE fire_at <= $1::text ORDER BY fire_at, id",
-        [nowIso],
-      )).map(timerOf);
-    },
-    async claim(id, nowIso) {
-      const horizon = new Date(Date.parse(nowIso) + CLAIM_LEASE_MS).toISOString();
-      const [raw] = await rows<Raw>(
-        db,
-        `UPDATE timers SET fire_at = $1::text WHERE id = $2::text AND fire_at <= $3::text
-         RETURNING *`,
-        [horizon, id, nowIso],
-      );
-      return raw ? timerOf(raw) : null;
-    },
-    async settle(id, nowIso, tz) {
-      const [raw] = await rows<Raw>(db, "SELECT * FROM timers WHERE id = $1::text", [id]);
-      if (raw === undefined) return;
-      const row = timerOf(raw);
-      // past NOW, not past the stamp it was due at: a long outage collapses to one fire
-      if (row.cron) {
-        await count(db, "UPDATE timers SET fire_at = $1::text WHERE id = $2::text", [
-          nextFire(row.cron, nowIso, tz),
-          id,
-        ]);
-      } else await count(db, "DELETE FROM timers WHERE id = $1::text", [id]);
-    },
-    async timers(agentId, sessionId) {
-      return (await rows<Raw>(
-        db,
-        `SELECT * FROM timers WHERE agent_id = $1::text AND session_id = $2::text
-         ORDER BY fire_at, id`,
-        [agentId, sessionId],
-      )).map(timerOf);
-    },
-    async armed() {
-      return (await rows<Raw>(db, "SELECT * FROM timers ORDER BY fire_at, id")).map(timerOf);
-    },
-    async disarm(id, agentId, sessionId) {
-      return await count(
-        db,
-        "DELETE FROM timers WHERE id = $1::text AND agent_id = $2::text AND session_id = $3::text",
-        [id, agentId, sessionId],
-      ) > 0;
     },
   };
 }

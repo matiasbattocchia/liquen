@@ -21,7 +21,7 @@ import { MIND, routedSession } from "./session.ts";
 import { clipEnd } from "./exec/truncate.ts";
 import { describeCall } from "./describe.ts";
 import type { DocEntry, DocKind, DocScope, Where } from "./store/docs.ts";
-import { MONTHS } from "./store/timers.ts";
+import { MONTHS } from "./moment.ts";
 import { DEFAULT_COMPACT_AT } from "./config.ts";
 import type {
   AlarmEvent,

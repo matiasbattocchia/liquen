@@ -1,11 +1,12 @@
 /**
- * tick: one beat of the clock over a real store — due wakes become alarms, unanswered asks
- * lapse, and a second beat over the same rows owes nothing.
+ * tick: one beat of the clock over a real store — due reminders become alarms, unanswered
+ * asks lapse, and a second beat over the same rows owes nothing.
  */
 
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { lapseGates, tick } from "./tick.ts";
+import { type Clock, lapseGates, tick } from "./tick.ts";
 import { openLog } from "./store/log.ts";
+import type { DocEntry, DocScope } from "./store/docs.ts";
 import { RETRY_BACKOFF_MS } from "./store/sweep.ts";
 import type {
   Draft,
@@ -37,51 +38,107 @@ const card = (ref: string, ts: string, agent = "a1"): Draft<PermissionRequestEve
   }],
 });
 
-Deno.test("a beat: the due wake is an alarm in the arming session's room, the old ask lapses, and the next beat is quiet", async () => {
+/** A clock over one agent's docs, by scope and name, each a lazy memory read on demand. */
+function clockOver(
+  docs: Record<string, string>,
+  timezone = "America/Argentina/Buenos_Aires",
+): Clock {
+  const entries = (): DocEntry[] =>
+    Object.keys(docs).map((key) => {
+      const [scope, name] = key.split(":") as [DocScope, string];
+      return {
+        header: { scope, kind: "memory", name, load: "lazy", handle: `/${scope}/${name}.md` },
+      };
+    });
+  return {
+    agents: () => [{ agentId: "a1", timezone }],
+    docs: {
+      list: () => Promise.resolve(entries()),
+      read: (_ctx, ref) => Promise.resolve(docs[`${ref.scope}:${ref.name}`] ?? null),
+    },
+  };
+}
+
+const NOBODY: Clock = {
+  agents: () => [],
+  docs: { list: () => Promise.resolve([]), read: () => Promise.resolve(null) },
+};
+
+const textOf = (e: Event) => e.parts?.[0].type === "text" ? e.parts[0].text : undefined;
+
+Deno.test("a beat: the lines due remind as one alarm in the mind's room, the old ask lapses, and the next beat is quiet", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
   try {
-    const now = Date.now();
-    await log.arm({
-      agentId: "a1",
-      sessionId: "build",
-      fireAt: at(1, now),
-      note: "check the build",
-      conversation: "build@a1",
-    });
-    await log.arm({
-      agentId: "a1",
-      sessionId: "mind",
-      fireAt: at(-1, now), // an hour from now: not this beat's
-      note: "later",
-      conversation: "mind@a1",
-    });
+    const now = Date.parse("2026-11-06T13:00:00Z"); // 6 Nov 10:00 on the agent's clock
+    const board = (jana: string) =>
+      [
+        "# Playas",
+        "## Agendado",
+        `- @7 Nov 15:00 remind 1 day before at 10:00 ${jana} (4 Nov, 5c356f)`,
+        "- @7 Nov 15:00 remind 1 day before at 10:00 Ringo (4 Nov, 5efe54)",
+        "- @7 Nov 17:30 remind 1 day before at 11:00 Leo V",
+        "- [x] @6 Nov 10:30 remind 1 hour before ya está",
+      ].join("\n");
+    const docs = {
+      "agent:playas": board("Jana"),
+      "shared:equipo": "- @6 Nov 10:00 remind Reunión de equipo", // a shared line reminds too
+    };
     await log.publish([card("old", at(30, now)), card("fresh", at(1, now))]);
-    const settings = () => undefined;
-    assertEquals(await tick(log, settings, now), {
-      fired: 1,
+    assertEquals(await tick(log, clockOver(docs), now), {
+      fired: 2,
       lapsed: 1,
       swept: 0,
       reported: 0,
       failed: [],
     });
     const alarms = await log.read({ types: ["alarm"] });
-    assertEquals(alarms.length, 1);
-    assertEquals(alarms[0].envelope.conversation.address, "build@a1");
+    assertEquals(alarms.length, 2);
+    assertEquals(textOf(alarms[1]), "6 Nov 10:00 Reunión de equipo — shared/equipo, remind");
+    assertEquals(alarms[0].envelope.conversation.address, "mind@a1");
     assertEquals(alarms[0].agent, undefined); // harness-authored: the relational rule wakes on it
     assertEquals(
-      alarms[0].parts?.[0].type === "text" && alarms[0].parts[0].text,
-      "check the build",
+      textOf(alarms[0]),
+      "7 Nov 15:00 Jana — playas › Agendado, remind 1 day before at 10:00\n" +
+        "7 Nov 15:00 Ringo — playas › Agendado, remind 1 day before at 10:00",
     );
-    assertEquals((alarms[0].extra?.timer as { session_id: string }).session_id, "build");
+    assertEquals(alarms[0].extra?.reminder, { doc: "playas", at: "2026-11-06T10:00" });
     assertEquals((await log.gates()).map((c) => c.payload.ref_id), ["fresh"]);
-    assertEquals(await tick(log, settings, now), {
-      fired: 0,
-      lapsed: 0,
-      swept: 0,
-      reported: 0,
-      failed: [],
-    });
+    // a line edited after it reminded, a beat later: what it reminded of stays reminded
+    docs["agent:playas"] = board("Jana Techno Camp");
+    assertEquals((await tick(log, clockOver(docs), now + 60_000)).fired, 0);
+    // at its own minute, the next line
+    assertEquals((await tick(log, clockOver(docs), now + 3_600_000)).fired, 1);
+    assertEquals(
+      textOf((await log.read({ types: ["alarm"] })).at(-1)!),
+      "7 Nov 17:30 Leo V — playas › Agendado, remind 1 day before at 11:00",
+    );
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a clock that was down fires a repeat once, at the latest step it missed", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(`${dir}/log`);
+  try {
+    const docs = {
+      "agent:wakes":
+        "- @1 Nov 2026 0:00 every 90 minutes from 19:30 to 12:00 remind Revisar la cola.",
+    };
+    // 6 Nov 13:10: the last step inside the span was 12:00
+    const now = Date.parse("2026-11-06T16:10:00Z");
+    assertEquals((await tick(log, clockOver(docs), now)).fired, 1);
+    const [alarm] = await log.read({ types: ["alarm"] });
+    assertEquals(alarm.extra?.reminder, { doc: "wakes", at: "2026-11-06T12:00" });
+    assertEquals(
+      textOf(alarm),
+      "6 Nov 12:00 Revisar la cola. — wakes, every 90 minutes from 19:30 to 12:00, remind",
+    );
+    // the quiet span passes with nothing, and 19:30 is the next
+    assertEquals((await tick(log, clockOver(docs), Date.parse("2026-11-06T22:29:00Z"))).fired, 0);
+    assertEquals((await tick(log, clockOver(docs), Date.parse("2026-11-06T22:30:00Z"))).fired, 1);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -151,7 +208,7 @@ Deno.test("a send that failed for good is told against the call that sent it, on
     await log.setDelivery(retrying.id, failed(503)); // the ladder offers it again
     await log.setDelivery(exhausted.id, failed(503, RETRY_BACKOFF_MS.length));
     await log.setDelivery(copy.id, failed(422)); // nobody's turn to tell
-    const beat = await tick(log, () => undefined, now);
+    const beat = await tick(log, NOBODY, now);
     assertEquals(beat.reported, 2);
     const updates = (await log.read({ types: ["tool_result"] })) as ToolResultEvent[];
     assertEquals(updates.map((r) => r.payload.ref_id), [uses[0].id, uses[2].id]);
@@ -172,7 +229,7 @@ Deno.test("a send that failed for good is told against the call that sent it, on
       outcomeLine(updates[1]),
       `still failing after ${RETRY_BACKOFF_MS.length} retries`,
     );
-    assertEquals((await tick(log, () => undefined, now)).reported, 0); // told once
+    assertEquals((await tick(log, NOBODY, now)).reported, 0); // told once
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -200,9 +257,9 @@ Deno.test("a send not out past the stall is told so, still tried, and told again
         attempts: 2,
       },
     });
-    assertEquals((await tick(log, () => undefined, now + 14 * 60_000)).reported, 0);
+    assertEquals((await tick(log, NOBODY, now + 14 * 60_000)).reported, 0);
     const stall = now + 16.5 * 60_000;
-    assertEquals((await tick(log, () => undefined, stall)).reported, 2);
+    assertEquals((await tick(log, NOBODY, stall)).reported, 2);
     const told = (await log.read({ types: ["tool_result"] })) as ToolResultEvent[];
     assertEquals(told.map((r) => r.payload.ref_id), [uses[0].id, uses[1].id]);
     assertEquals(told[0].payload.final, undefined); // it may yet go out
@@ -219,13 +276,13 @@ Deno.test("a send not out past the stall is told so, still tried, and told again
       "nothing has taken it to whatsapp: its connector is not running. It is offered again " +
         "while it waits",
     );
-    assertEquals((await tick(log, () => undefined, stall + 60_000)).reported, 0); // once
+    assertEquals((await tick(log, NOBODY, stall + 60_000)).reported, 0); // once
     // the bridge is back: the next re-offer goes out
     await log.setDelivery(retrying.id, {
       external_id: "whatsapp:wamid.1",
       status: { state: "dispatched", dispatched_at: after(21.5) },
     });
-    assertEquals((await tick(log, () => undefined, now + 22 * 60_000)).reported, 1);
+    assertEquals((await tick(log, NOBODY, now + 22 * 60_000)).reported, 1);
     const [late] = (await log.read({ types: ["tool_result"] })).slice(2) as ToolResultEvent[];
     assertEquals(late.payload.ref_id, uses[0].id);
     assertEquals(late.payload.final, true);
@@ -267,7 +324,7 @@ Deno.test("a withdrawn send is told to the session that sent it, final, naming w
       external_id: "whatsapp:wamid.4",
       status: { state: "dispatched", dispatched_at: new Date(now + 2.5 * 60_000).toISOString() },
     });
-    assertEquals((await tick(log, () => undefined, now)).reported, 4);
+    assertEquals((await tick(log, NOBODY, now)).reported, 4);
     const told = (await log.read({ types: ["tool_result"] })) as ToolResultEvent[];
     assertEquals(told.map((r) => r.payload.ref_id), uses.map((u) => u.id));
     assertEquals(told.every((r) => r.payload.final === true), true);
@@ -283,7 +340,7 @@ Deno.test("a withdrawn send is told to the session that sent it, final, naming w
       "send(to: Banco Hipotecario SA, text: ya voy) → delivered after all, 2m after it was " +
       "sent: it was already on its way when bo took it back",
     ]);
-    assertEquals((await tick(log, () => undefined, now + 60_000)).reported, 0); // once
+    assertEquals((await tick(log, NOBODY, now + 60_000)).reported, 0); // once
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -296,12 +353,16 @@ Deno.test("a failing pass is reported in the beat, and the passes after it still
   try {
     const now = Date.now();
     await log.publish([card("old", at(30, now))]);
-    const broken = { ...log, due: () => Promise.reject(new Error("timers table gone")) };
-    const beat = await tick(broken, () => undefined, now);
+    const docs = clockOver({ "agent:x": "" }).docs;
+    const broken: Clock = {
+      agents: () => [{ agentId: "a1" }],
+      docs: { ...docs, list: () => Promise.reject(new Error("docs gone")) },
+    };
+    const beat = await tick(log, broken, now);
     assertEquals(beat.fired, 0);
     assertEquals(beat.lapsed, 1); // the lapse pass ran after the fire pass failed
     assertEquals(beat.failed.map((f) => f.pass), ["fire"]);
-    assertEquals((beat.failed[0].error as Error).message, "timers table gone");
+    assertEquals((beat.failed[0].error as Error).message, "docs gone");
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

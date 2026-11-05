@@ -10,7 +10,7 @@ Deno.test("syncTasks: what the org lacks is added in its own lines; what it has 
       "{",
       '  "tasks": {',
       '    "start": "deno run -A --env-file=.env @liquen/liquen/start",',
-      '    "schedule": "deno run -A @liquen/liquen/schedule",',
+      '    "status": "deno run -A @liquen/liquen/status",',
       '    "bench": "deno run -A bench.ts" // ours',
       "  }",
       "}",
@@ -19,11 +19,11 @@ Deno.test("syncTasks: what the org lacks is added in its own lines; what it has 
     Deno.writeTextFileSync(`${tmp}/deno.jsonc`, raw);
     const scaffold = await scaffoldTasks();
     const { added, differing } = await syncTasks(tmp, scaffold);
-    assertEquals(added, Object.keys(scaffold).filter((n) => n !== "start" && n !== "schedule"));
-    assertEquals(differing.map(([n]) => n), ["schedule"]);
+    assertEquals(added, Object.keys(scaffold).filter((n) => n !== "start" && n !== "status"));
+    assertEquals(differing.map(([n]) => n), ["status"]);
     const after = Deno.readTextFileSync(`${tmp}/deno.jsonc`);
     const tasks = (parse(after) as { tasks: Record<string, unknown> }).tasks;
-    assertEquals(tasks.schedule, "deno run -A @liquen/liquen/schedule"); // never rewritten
+    assertEquals(tasks.status, "deno run -A @liquen/liquen/status"); // never rewritten
     assertEquals(tasks.stop, scaffold.stop);
     assertEquals(tasks.start, scaffold.start); // the package's command, now described
     assertEquals(tasks.bench, "deno run -A bench.ts");

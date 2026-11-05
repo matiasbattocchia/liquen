@@ -7,8 +7,8 @@
  * of the second row, and absence is a fact about the whole log, never about a window: a card
  * is open until something answers it, however much traffic has flowed past. So the list the
  * anchor shows, the card `cancel` withdraws, the one a surface `/y` lands on and the ruling
- * `act` still owes an outcome to are all read here, the way an armed wake is read off the
- * timers table — by the session, off the store, independent of the turn's window.
+ * `act` still owes an outcome to are all read here: by the session, off the store,
+ * independent of the turn's window.
  *
  * Two anti-joins, one index. `gates` is the request rows with no response for the same use;
  * `owed` is the allowing responses given by someone other than the model (no `turn_id`)

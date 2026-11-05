@@ -35,7 +35,6 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
         "conversation",
         "edit",
         "read",
-        "schedule",
         "search",
         "send",
         "write",

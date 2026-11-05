@@ -28,7 +28,6 @@ import { logSuite } from "./suite/log.ts";
 import { rosterSuite } from "./suite/roster.ts";
 import { rulesSuite } from "./suite/rules.ts";
 import { sweepSuite } from "./suite/sweep.ts";
-import { timersSuite } from "./suite/timers.ts";
 import { postgres, postgresDocs } from "./suite/mod.ts";
 
 const url = Deno.env.get("LIQUEN_TEST_PG");
@@ -46,7 +45,6 @@ if (url === undefined) {
   agentsSuite(pg);
   connectionsSuite(pg);
   rulesSuite(pg);
-  timersSuite(pg);
   gatesSuite(pg);
   sweepSuite(pg);
   rosterSuite(pg);
