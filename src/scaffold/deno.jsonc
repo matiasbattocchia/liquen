@@ -43,7 +43,7 @@
     },
     "status": {
       "command": "deno run -A --env-file=.env @liquen/liquen/status",
-      "description": "what the org holds — agents, connections, wakes, vault keys"
+      "description": "what the org holds — agents, connections, vault keys"
     },
     "log": {
       "command": "deno run -A --env-file=.env @liquen/liquen/log",

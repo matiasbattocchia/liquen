@@ -2627,7 +2627,8 @@ export function actedOn(e: MessageEvent): EventId | undefined {
  *  bare text. Every voice in the user role wears a tag render writes and escapes — the
  *  world, the harness, the summary, the principal — so the model reads who is speaking off
  *  the element's shape, and bare text is the model's own voice alone. Composed like a
- *  world line (escaped text, then markers), stamped with the org clock. A line that acts on
+ *  world line (escaped text, then markers), stamped with the org clock, and handled by its
+ *  `id` as a world line is, so what the principal says can ground a memory. A line that acts on
  *  another names it in `on`: the quote (`onAttr`) of a row the window holds, or ` re="…"`
  *  for one drawn just ahead in a `<before>`, empty when nothing names it. An edit, a
  *  deletion or a reply wears `action` and `on` on the element (an edit's words are the new
@@ -2663,7 +2664,9 @@ function principalEl(
   // email is who they are — the wire's, or the address itself where it is one
   const mail = senderEmail(e);
   const email = mail ? ` email="${escAttr(mail)}"` : "";
-  return `<principal${name}${email} at="${hhmm(e.ts, zone)}"${acts}>${body}</principal>`;
+  return `<principal id="${shortId(e.id)}"${name}${email} at="${
+    hhmm(e.ts, zone)
+  }"${acts}>${body}</principal>`;
 }
 
 /** How much of the line a principal's line acts on `on` quotes — enough to tell two
