@@ -2677,7 +2677,7 @@ const MONTHS_LONG = [
   "December",
 ];
 
-interface Clock {
+export interface Clock {
   year: number;
   month: number; // 0-based
   day: number;
@@ -2710,7 +2710,7 @@ function fmtFor(zone?: string): Intl.DateTimeFormat {
 }
 
 /** The stamp's wall-clock fields IN `zone`. Unparseable ⇒ null (callers print the raw ts). */
-function clockOf(ts: string, zone?: string): Clock | null {
+export function clockOf(ts: string, zone?: string): Clock | null {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return null;
   const p: Partial<Record<Intl.DateTimeFormatPartTypes, string>> = {};

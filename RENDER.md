@@ -101,7 +101,7 @@ goes with its words. Each skill the system describes is one file under
 | `<system kind="control">cancelled by your principal — the turn stopped here` | ✗ | |
 | `<system kind="error">` | ✗ | |
 | `<system kind="alarm">` | ✗ | `schedule.md` |
-| `scheduled — N wakes:` `· … — fires …, repeats \`…\` · id … · the org's \`name\`` | ✗ | `schedule.md`, `cancel.md` |
+| `scheduled — N wakes:` `· … — fires …, repeats \`…\` · id … · the org's \`name\`` | ✗ | The wakes after today. `schedule.md`, `cancel.md` |
 
 ## Knowledge · `instructions/60-knowledge.md`
 
@@ -130,6 +130,17 @@ goes with its words. Each skill the system describes is one file under
 |---|---|---|
 | A line's `id`, as the ground of a memory | ✓ | Conduct |
 | `<checkpoint>`, as short-term memory | ✓ | Conduct |
+
+## Agenda · `instructions/90-agenda.md`
+
+| Item | Described in system | Note |
+|---|---|---|
+| A dated line `- [ ] @7 Nov 17:30 … #tag (2 Nov, 8be1d0)` | ✓ | A format the agent writes |
+| `today — N:` | ✓ | The whole day, the whole-day entries first, then by the minute |
+| `· 17:30 [ ] … #tag — doc › heading` | ✓ | A memory's line dated today, under its doc and the heading under its title |
+| `· 17:30-18:15 … — calendar …, in …` | ✓ | The calendar's events the log holds for today, a series on each day its rule takes |
+| `· 9:00 … — wake, repeats \`…\` · id … · the org's \`name\`` | ✓ | A wake that fires today. `cancel.md` |
+| A board, its `##` headings as columns | ✓ | A format the agent writes |
 
 ## Environment
 

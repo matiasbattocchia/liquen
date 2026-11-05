@@ -198,6 +198,7 @@ export function docsSuite(s: DocsSubstrate): void {
           "60-knowledge",
           "70-memory",
           "80-people",
+          "90-agenda",
         ]
           .map((s) => `system/instruction/instructions/${s}`),
         "system/skill/skills/profile",

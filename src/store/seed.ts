@@ -124,6 +124,7 @@ const SKILL_INSTRUCTIONS = [
   "60-knowledge",
   "70-memory",
   "80-people",
+  "90-agenda",
 ];
 
 /** Copy templates into the bed — a foldered template only where its FOLDER does not exist,
