@@ -430,6 +430,10 @@ Deno.test("span: the API's ceiling is the one hard one — a refused request com
   for (let k = 1; k <= 3; k++) events.push(...step(k));
   const refused = [...events, errorEv("prompt is too long: 213462 tokens > 200000 maximum")];
   assert(overflowed(refused));
+  // Gemini's wording, as a refused think and as the checkpoint it then could not write
+  const gemini = "400 The input token count exceeds the maximum number of tokens allowed 1048576.";
+  assert(overflowed([...events, errorEv(gemini)]));
+  assert(overflowed([...events, errorEv(`checkpoint failed: ${gemini}`)]));
   assert(!overflowed([...events, errorEv("overloaded")]));
   assertEquals(compactionSpan([...events, errorEv("overloaded")], SESSION, 1_000_000, 0), null);
   const span = compactionSpan(refused, SESSION, 1_000_000, 0);
