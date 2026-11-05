@@ -100,14 +100,6 @@ export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves un
 // It is also the most one WUM — a run of world lines between two turns — may weigh in the
 // prompt (render.ts `capRun`): a flood of the world is shared equally among its rooms and
 // the rest left to `search`, while the agent's own history is the checkpoints' to bound.
-//
-// An unload is the turn that writes down what a span taught before a checkpoint folds it
-// (unload.ts). It runs before any checkpoint whose span reaches past the last one, and
-// also when the span since then outweighs `unloadAt`, and once a day at `unloadDaily` on
-// the org's clock: a span short enough to read in one turn, and a day that never ends
-// without its facts in a doc.
-export const DEFAULT_UNLOAD_AT = 20_000;
-export const DEFAULT_UNLOAD_DAILY = "04:00";
 
 // system — harness machinery
 // The shutdown grace: how long a stop that was ASKED FOR waits for work already running —
@@ -157,8 +149,6 @@ export interface AgentDefaults {
   maxTokens: number;
   compactAt: number; // the window (§5): est. tokens before a checkpoint, and a WUM's cap
   keepRecent: number; //   est. tokens a checkpoint leaves uncovered; below compactAt
-  unloadAt: number; // est. tokens since the last unload before the next one runs
-  unloadDaily: string | null; //   org-clock "HH:MM" of the daily unload; null ⇒ none
   provider: ProviderName | null; // the transport seam; null ⇒ anthropic
   tools: string[] | null; // the tools offered to the model, by name; null ⇒ all of them
   rules: Rule[]; // permission policy as data (§9)
@@ -381,18 +371,6 @@ const AGENT: Entry[] = [
     key: "keepRecent",
     value: DEFAULT_KEEP_RECENT,
     doc: "est. tokens a checkpoint leaves uncovered; below compactAt",
-  },
-  {
-    key: "unloadAt",
-    value: DEFAULT_UNLOAD_AT,
-    doc: "est. tokens the window may gather since the last unload, the turn that writes " +
-      "down what a span taught, before the next one runs; one also runs before any " +
-      "checkpoint that would fold away what no unload read",
-  },
-  {
-    key: "unloadDaily",
-    value: DEFAULT_UNLOAD_DAILY,
-    doc: 'org-clock "HH:MM" of the daily unload, for what the day left unread; null ⇒ none',
   },
   {
     key: "provider",
@@ -1343,17 +1321,11 @@ function validateAgent(a: Partial<AgentDefaults>, path: string): void {
       `${path}: sleepHours "${a.sleepHours}" — an org-clock span like "23-8" expected`,
     );
   }
-  if (a.unloadDaily != null && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(a.unloadDaily)) {
-    throw new Error(
-      `${path}: unloadDaily "${a.unloadDaily}" — an org-clock time like "04:00" expected`,
-    );
-  }
   for (
     const [key, v] of [
       ["engagedMinutes", a.engagedMinutes],
       ["digestAfterMessages", a.digestAfterMessages],
       ["digestMinutes", a.digestMinutes],
-      ["unloadAt", a.unloadAt],
     ] as const
   ) {
     if (v != null && !(v > 0)) {

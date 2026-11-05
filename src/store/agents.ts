@@ -43,8 +43,6 @@ export interface AgentSettings {
   processors?: string[];
   compactAt?: number;
   keepRecent?: number;
-  unloadAt?: number;
-  unloadDaily?: string | null;
 }
 
 export interface AgentRow {

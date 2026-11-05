@@ -12,34 +12,15 @@
  *
  * The cursor is the last event the latest answered notice covered: a notice whose turn
  * failed or was cut moves nothing, and the span stays owed. Past the cursor, a span is
- * owed when it holds a line someone else wrote (the agent's own words answer lines; they
- * teach nothing a line did not) and one of three holds: the checkpoint about to run would
- * fold such a line away, the span outweighs `unloadAt`, or such a line has waited past the
- * day's `unloadDaily`. An unload runs between turns, as a checkpoint does, and only while
- * no news waits: its turn's closing consumes what the window held, so a line it reads
- * would otherwise go unanswered.
+ * owed when the checkpoint about to run would fold away a line someone else wrote (the
+ * agent's own words answer lines; they teach nothing a line did not). An unload runs
+ * between turns, as a checkpoint does, and only while no news waits: its turn's closing
+ * consumes what the window held, so a line it reads would otherwise go unanswered.
  */
 
 import type { AlarmEvent, Draft, Event, EventId, Session } from "./types.ts";
-import {
-  applySummary,
-  closingBoundary,
-  estTokens,
-  mediaTokens,
-  ownVoice,
-  silenced,
-  unloadOf,
-} from "./render.ts";
+import { applySummary, closingBoundary, ownVoice, silenced, unloadOf } from "./render.ts";
 import { LOCAL_CONNECTION } from "./session.ts";
-import { DEFAULT_TIMEZONE, DEFAULT_UNLOAD_AT, DEFAULT_UNLOAD_DAILY } from "./config.ts";
-
-/** The knobs an unload reads; unset ⇒ the catalog's, and `unloadDaily: null` ⇒ no daily
- *  one. */
-export interface UnloadWake {
-  timezone?: string;
-  unloadAt?: number;
-  unloadDaily?: string | null;
-}
 
 /** The span an unload covers: the first line it asks to be written down, and the last event
  *  it reads through, which becomes the cursor once its turn closes. */
@@ -74,39 +55,10 @@ function pastCursor(events: Event[], session: Session): { past: Event[]; taught:
   return { past, taught: past.filter((e) => teaches(e, session)) };
 }
 
-/** Is an unload owed now? `folding` is what the checkpoint about to run would cover (null ⇒
- *  none would run): an unload goes first when it folds a line no unload read. The caller
- *  decides whether the moment is free, since that is attention's question. */
-export function unloadOwed(
-  events: Event[],
-  session: Session,
-  wake: UnloadWake,
-  now: number,
-  folding: Event[] | null,
-): boolean {
-  const { past, taught } = pastCursor(events, session);
-  if (taught.length === 0) return false;
-  if (folding && taught.some((e) => folding.includes(e))) return true;
-  const weight = estTokens(past) + mediaTokens(past, session);
-  if (weight > (wake.unloadAt ?? DEFAULT_UNLOAD_AT)) return true;
-  const daily = wake.unloadDaily === undefined ? DEFAULT_UNLOAD_DAILY : wake.unloadDaily;
-  if (daily === null) return false;
-  const slot = lastSlot(now, daily, wake.timezone ?? DEFAULT_TIMEZONE);
-  return taught.some((e) => Date.parse(e.ts) < slot);
-}
-
-/** Would the checkpoint `folding` covers take a line no unload read? Then it waits for one. */
+/** Would the checkpoint `folding` covers take a line no unload read? Then an unload is owed
+ *  first. */
 export function foldsUnread(events: Event[], session: Session, folding: Event[]): boolean {
   return pastCursor(events, session).taught.some((e) => folding.includes(e));
-}
-
-/** The latest moment at or before `now` whose org-clock time is `hhmm`. */
-function lastSlot(now: number, hhmm: string, zone: string): number {
-  const [hour, minute] = hhmm.split(":").map(Number);
-  const at = Temporal.Instant.fromEpochMilliseconds(now).toZonedDateTimeISO(zone);
-  let slot = at.with({ hour, minute, second: 0, millisecond: 0, microsecond: 0, nanosecond: 0 });
-  if (Temporal.ZonedDateTime.compare(slot, at) > 0) slot = slot.subtract({ days: 1 });
-  return slot.epochMilliseconds;
 }
 
 /** The span the next unload covers: from the first line past the cursor that teaches, to

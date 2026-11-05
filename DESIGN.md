@@ -1882,11 +1882,9 @@ layer**:
   start and the notice is a stored row, so neither is a tail of its own, and the writes
   stand in the window whether a checkpoint follows or not. Its **cursor** is the `through`
   of the latest notice a closing answered; one whose turn failed or was cut moves
-  nothing. Past the cursor, an unload is owed when a line someone else wrote stands there
-  and one of three holds: the checkpoint about to run would fold such a line away, the span
-  outweighs `unloadAt` (20K est. tokens), or such a line has waited past the day's
-  `unloadDaily` (04:00 on the org's clock; the metronome brings that look). The gap asks
-  for it before the checkpoint, so the next look, past the unload's turn, compacts. An
+  nothing. An unload is owed when the checkpoint about to run would fold away a line
+  someone else wrote past the cursor. The gap asks for it before the checkpoint, so the
+  next look, past the unload's turn, compacts. An
   unload's closing consumes everything its window held, so it runs only while no news
   waits, and a checkpoint that would fold an unread line waits with it, until the digest
   answers what was waiting. A window the API refused takes neither wait: it compacts.

@@ -150,7 +150,7 @@ import {
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { checkpoint, type ModelTransport, nu, type TurnConfig } from "./nu.ts";
 import { compactionSpan, overflowed } from "./compact.ts";
-import { foldsUnread, unloadNotice, unloadOwed, unloadSpan } from "./unload.ts";
+import { foldsUnread, unloadNotice, unloadSpan } from "./unload.ts";
 
 /* ── the poke, the class filter, and the owed-derivation ──────────────── */
 
@@ -221,10 +221,6 @@ export interface Wake {
    *  compacting it, and what the checkpoint leaves uncovered. Unset ⇒ the catalog's. */
   compactAt?: number;
   keepRecent?: number;
-  /** The unload (unload.ts): what the span since the last one may weigh, and the org-clock
-   *  "HH:MM" of the daily one; null ⇒ none. Unset ⇒ the catalog's. */
-  unloadAt?: number;
-  unloadDaily?: string | null;
 }
 
 /** Decide — once, from one window — what is owed. Position-aware, so a late invocation that
@@ -250,7 +246,7 @@ export function decide(
   // The turn that just ended ends the same way whether it closed, failed or was cut — and
   // the one that failed for its size (the API's ceiling, the only hard one) is exactly the
   // window that has to shrink before the next think can run.
-  const idle = (patient: boolean): Decision => gap(events, session, wake, now, patient);
+  const idle = (patient: boolean): Decision => gap(events, session, wake, patient);
   if (justFailed(events)) return idle(false); // idle-after-error
   if (cutStands(events, session)) return idle(false); // the principal cut it: idle until news
   if (unclosedChain(events, session)) return "think";
@@ -258,27 +254,20 @@ export function decide(
   return v === "ignore" ? idle(true) : v;
 }
 
-/** What the idle gap is spent on (§5): an unload when one is owed, then a checkpoint when
- *  the window is over budget, else nothing. The span is the question the checkpoint turn
- *  asks, so the verdict and the work never disagree. An unload's turn closes over the whole
- *  window, so it waits until no news does. A `patient` gap is attention's quiet one, whose
- *  news a later look answers: there a checkpoint that would fold a line no unload read
- *  waits for that look and the unload after it. A dead turn's gap is not: nothing answers
- *  its news until new input comes, so it compacts as it stands, and so does a window the
- *  API refused, which no think can read until it shrinks. */
-function gap(
-  events: Event[],
-  session: Session,
-  wake: Wake,
-  now: number,
-  patient: boolean,
-): Decision {
+/** What the idle gap is spent on (§5): a checkpoint when the window is over budget, else
+ *  nothing, and an unload before a checkpoint that would fold a line no unload read. The
+ *  span is the question the checkpoint turn asks, so the verdict and the work never
+ *  disagree. An unload's turn closes over the whole window, so it waits until no news
+ *  does. A `patient` gap is attention's quiet one, whose news a later look answers: there
+ *  the checkpoint waits for that look and the unload after it. A dead turn's gap is not:
+ *  nothing answers its news until new input comes, so it compacts as it stands, and so does
+ *  a window the API refused, which no think can read until it shrinks. */
+function gap(events: Event[], session: Session, wake: Wake, patient: boolean): Decision {
   const span = compactionSpan(events, session, wake.compactAt, wake.keepRecent);
-  if (overflowed(events)) return span ? "compact" : "ignore";
-  const quiet = newsOf(events, session).length === 0;
-  if (quiet && unloadOwed(events, session, wake, now, span?.covered ?? null)) return "unload";
   if (!span) return "ignore";
-  return quiet || !patient || !foldsUnread(events, session, span.covered) ? "compact" : "ignore";
+  if (overflowed(events) || !foldsUnread(events, session, span.covered)) return "compact";
+  if (newsOf(events, session).length === 0) return "unload";
+  return patient ? "ignore" : "compact";
 }
 
 /** The unload's work (unload.ts): no model call, only the notice, whose wake is the turn

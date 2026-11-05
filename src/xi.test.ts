@@ -471,26 +471,12 @@ Deno.test("decide: the unload's cursor is the latest notice a closing answered",
   // a notice whose turn died moves nothing: its news stands, and the dead gap compacts
   const died = [...first, notice(first[0].id, first[1].id), err("overloaded")];
   assertEquals(decideOver(died), "compact");
-  assertEquals(decide([...died, peerMsg(), selfMsg()], SESSION, { unloadAt: 1 }), "unload");
+  assertEquals(decideOver([...died, peerMsg(), selfMsg()]), "unload");
 });
 
-Deno.test("decide: an unload runs on the span's weight, and on the day's slot", () => {
-  const closed = [peerMsg(), selfMsg()];
-  assertEquals(decide(closed, SESSION, { unloadAt: 1 }), "unload"); // under compactAt
-  assertEquals(decide(closed, SESSION, WAKE), "ignore");
-  // the daily slot: a line that has waited past it is owed, one after it waits a day
-  const at = (ts: string) => ({ ts });
-  const wrote = [
-    ev("message", at("2026-11-04T03:00:00Z")),
-    ev("message", { ...SELF, payload: { turn_id: "T0" }, ...at("2026-11-04T03:01:00Z") }),
-  ] as Event[];
-  const daily: Wake = { timezone: "UTC", unloadDaily: "04:00" };
-  assertEquals(decide(wrote, SESSION, daily, Date.parse("2026-11-04T04:05:00Z")), "unload");
-  assertEquals(decide(wrote, SESSION, daily, Date.parse("2026-11-04T03:30:00Z")), "ignore");
-  assertEquals(
-    decide(wrote, SESSION, { ...daily, unloadDaily: null }, Date.parse("2026-11-04T04:05:00Z")),
-    "ignore",
-  );
+Deno.test("decide: an unload runs only before a checkpoint", () => {
+  // a closed window under budget owes nothing, however much it taught
+  assertEquals(decide([peerMsg(), selfMsg()], SESSION, WAKE), "ignore");
 });
 
 Deno.test("decide: an unload waits for quiet news, and a checkpoint that would fold an unread line waits with it", () => {

@@ -13,7 +13,7 @@ One file per person or group, in your workspace's `profiles/` folder, named afte
 kind: memory
 description: Juan Pérez, friend from school
 load: conditional
-keywords: [el Juancho, Juan Pérez, amigos]
+keywords: [Juancho, Juan Pérez, friends]
 conversations: [whatsapp:5492610000001, instagram:juancho.perez]
 ---
 # Juan Pérez
@@ -25,7 +25,8 @@ conversations: [whatsapp:5492610000001, instagram:juancho.perez]
 
 ## How your principal writes to him
 
-- Spanish, no greeting, short lines, voice notes welcome. (4 Nov, 8be1d0)
+- "dale, el sábado llevo el bajo" (8be1d0)
+- "jaja no llego, arranquen sin mí" (41c2aa)
 ```
 
 A group's adds its members:
@@ -35,10 +36,10 @@ A group's adds its members:
 kind: memory
 description: the band's WhatsApp group
 load: conditional
-keywords: [la banda, ensayo]
+keywords: [the band, rehearsal]
 conversations: [whatsapp:120363000000000001@g.us]
 ---
-# La banda
+# The band
 
 - Rehearses on Thursdays at 20:00. (2 Nov, 3f9a2c)
 

@@ -749,8 +749,6 @@ function rowOf(p: AgentConfig & Policy): AgentRow {
       processors: p.processors,
       compactAt: p.compactAt,
       keepRecent: p.keepRecent,
-      unloadAt: p.unloadAt,
-      unloadDaily: p.unloadDaily,
     },
   };
 }
@@ -818,9 +816,6 @@ async function compileRoster(
         // the window (§5): what the agent holds in view is its work's shape
         compactAt: cfg.compactAt ?? org.compactAt,
         keepRecent: cfg.keepRecent ?? org.keepRecent,
-        // the unload (unload.ts): null survives the funnel, a day with no daily unload
-        unloadAt: cfg.unloadAt ?? org.unloadAt,
-        unloadDaily: cfg.unloadDaily !== undefined ? cfg.unloadDaily : org.unloadDaily,
       },
     });
   }

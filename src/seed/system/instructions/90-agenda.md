@@ -12,8 +12,7 @@ the whole day; `17:30-18:30` gives it an end.
 
 The `today` note lists the day: the calendar's events, the dated lines of your memories
 under the doc and heading they stand in, and the wakes that fire today. So a date worth
-keeping is a dated line, and a wake is for doing something at a time. A debt with a date,
-your principal's or someone's to them, is a dated line too, so its day shows it.
+keeping is a dated line, and a wake is for doing something at a time.
 
 - A board is one file: its `##` headings are the columns, and a line moves between them as
   its work moves. A heading tags its block the way a `#tag` tags a line.

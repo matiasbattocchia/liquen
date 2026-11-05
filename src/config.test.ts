@@ -624,25 +624,6 @@ Deno.test("keepRecent: below compactAt, or a checkpoint has nothing to cover", a
   });
 });
 
-Deno.test("unloadAt and unloadDaily: a weight and an org-clock time, or no daily unload", async () => {
-  await withDir(async (root) => {
-    const write = (agents: Record<string, unknown>) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ organization: { agents } }));
-    await write({});
-    const defaults = (await readConfig(root)).organization.agents;
-    assertEquals([defaults.unloadAt, defaults.unloadDaily], [20_000, "04:00"]);
-    await write({ unloadDaily: null, unloadAt: 5_000 });
-    const set = (await readConfig(root)).organization.agents;
-    assertEquals([set.unloadAt, set.unloadDaily], [5_000, null]);
-    for (const bad of ["4", "24:00", "4:60", "morning"]) {
-      await write({ unloadDaily: bad });
-      await assertRejects(() => readConfig(root), Error, "unloadDaily");
-    }
-    await write({ unloadAt: 0 });
-    await assertRejects(() => readConfig(root), Error, "unloadAt must be");
-  });
-});
-
 Deno.test("deployment.mounts: the bubble's view of the machine, checked at boot", async () => {
   await withDir(async (root) => {
     const write = (section: string, body: unknown) =>
