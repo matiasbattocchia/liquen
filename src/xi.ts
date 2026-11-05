@@ -85,8 +85,8 @@ import { roomPart } from "./room.ts";
 import { type ToolShape, wordedAll } from "./tooldoc.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
 import type { ConversationRow } from "./store/connections.ts";
-import { fireAtOf, momentOf, type TimerRow, type Timers } from "./store/timers.ts";
-import { calendarEntries, clock, dayOf, docEntries, type Entry, todayOn } from "./agenda.ts";
+import { momentOf } from "./moment.ts";
+import { calendarEntries, dayOf, daySection, docEntries, docName, nextDay } from "./agenda.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import type { Sweeper } from "./store/sweep.ts";
 import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./store/media.ts";
@@ -116,7 +116,6 @@ import {
   bookEl,
   CALL_CLIP,
   callLine,
-  clockOf,
   cutStands,
   docEl,
   drawnIn,
@@ -1028,7 +1027,6 @@ export interface XiPorts {
       | "renameConversation"
       | "closeConversation"
     >
-    & Pick<Timers, "arm" | "timers" | "disarm">
     & Pick<Gates, "gates" | "owed">
     & Pick<Sweeper, "withdraw">;
   docs: Docs;
@@ -1510,15 +1508,14 @@ export async function attachmentsOf(
 }
 
 /** The anchor's standing lists (§5): what is still in the air — background jobs, surfaces
- *  down, scheduled wakes, open approvals, unanswered conversations — one grammar, so the
- *  model reads them as one kind of fact. A section is present only while it has items:
+ *  down, open approvals, unanswered conversations — one grammar, so the model reads them
+ *  as one kind of fact. A section is present only while it has items:
  *
  *    <section> — <n> <things>:
  *    · <what> — <when> · <handle>
  *
- *  `what` is the item in the model's own words (the command, the note, the call, the
- *  room's name); `when` is a verb and a stamp on the org's clock (`fires`, `asked`,
- *  `since`) or a duration (`running`, for a job); `handle` is what acts on it — `id` for
+ *  `what` is the item in the model's own words (the command, the call, the room's name);
+ *  `when` is a verb and a stamp on the org's clock (`asked`, `since`) or a duration (`running`, for a job); `handle` is what acts on it — `id` for
  *  `cancel`, `pid` for `kill`. A conversation's handle is its name, which `send` and
  *  `search` both take, so its slot carries the one flag that changes whether to open it. */
 
@@ -1599,20 +1596,9 @@ export function downOn(surfaces: ConnectionRow[], zone?: string, now = Date.now(
   ];
 }
 
-/** A wake's handles: a cron carries its expression so the model knows the wake comes back,
- *  and a name says the org armed that one (§10): the note is an instruction, not a thing
- *  this session chose, and cancelling it is a decision about the org's standing work. */
-function wakeTail(t: TimerRow): string {
-  return `${t.cron ? `, repeats \`${t.cron}\`` : ""} · id ${shortId(t.id)}${
-    t.name ? ` · the org's \`${t.name}\`` : ""
-  }`;
-}
-
-/** The day and what lies past it (§5): `today` holds the calendar's events the log has for
- *  the day, the dated lines of the agent's memories (`agenda.ts`) and the wakes that fire
- *  today; `scheduled` the wakes after it. This session's wakes only (§4): an id the anchor
- *  shows is one it can cancel. A memory's lines are the agent's own, so system docs and
- *  the shared instructions, whose examples carry dates, are not read. */
+/** The day and the next (§5): `today` and `tomorrow` hold the calendar's events the log has
+ *  for each day and the dated lines of every doc the agent reads, whatever its scope
+ *  (`agenda.ts`), a reminding one saying so. The clock fires reminders off the same docs. */
 async function dayOn(
   config: AgentConfig,
   ports: XiPorts,
@@ -1621,13 +1607,7 @@ async function dayOn(
   now = new Date().toISOString(),
 ): Promise<string[]> {
   const today = dayOf(now, config.timezone);
-  const wakes = await ports.log.timers(config.agentId, config.sessionId);
   if (!today) return [];
-  const isToday = (ts: string) => {
-    const d = dayOf(ts, config.timezone);
-    return d !== undefined && d.year === today.year && d.month === today.month &&
-      d.day === today.day;
-  };
   const rows = await (ports.history ?? ports.log).read({
     types: ["message"],
     broadcasts: true,
@@ -1635,29 +1615,17 @@ async function dayOn(
       (e as MessageEvent).parts?.some((p) => p.type === "data" && p.kind === "calendar"),
   }) as MessageEvent[];
   const memories = await Promise.all(
-    docs.filter((d) => d.header.kind === "memory" && d.header.scope !== "system")
-      .map(async (d) => ({
-        name: d.header.name,
-        body: d.body ?? await ports.docs.read(cascade, d.header) ?? "",
-      })),
+    docs.map(async (d) => ({
+      name: docName(d.header),
+      body: d.body ?? await ports.docs.read(cascade, d.header) ?? "",
+    })),
   );
-  const later = wakes.filter((t) => !isToday(t.fireAt));
-  const entries: Entry[] = [
-    ...calendarEntries(rows, today, config.timezone),
-    ...memories.flatMap((m) => docEntries(m.name, m.body, today)),
-    ...wakes.filter((t) => isToday(t.fireAt)).map((t) => {
-      const c = clockOf(t.fireAt, config.timezone)!;
-      const at = c.hour * 60 + c.minute;
-      return { at, slot: clock(at), text: t.note, tail: `wake${wakeTail(t)}` };
-    }),
+  const tomorrow = nextDay(today);
+  const on = (d: typeof today) => [
+    ...calendarEntries(rows, d, config.timezone),
+    ...memories.flatMap((m) => docEntries(m.name, m.body, d)),
   ];
-  return [
-    ...todayOn(entries),
-    ...(later.length === 0 ? [] : [
-      `scheduled — ${later.length} wake${later.length === 1 ? "" : "s"}:`,
-      ...later.map((t) => `· ${t.note} — fires ${hhmm(t.fireAt, config.timezone)}${wakeTail(t)}`),
-    ]),
-  ];
+  return [...daySection("today", on(today)), ...daySection("tomorrow", on(tomorrow))];
 }
 
 /** Open approvals (§9): one per ask nobody has answered, named the way the card named it. */
@@ -3180,34 +3148,6 @@ async function execute(
 ): Promise<Json | ExecOutcome> {
   const { name, input } = use.parts[0].data;
   const args = input as Record<string, Json>;
-  if (name === "schedule") {
-    // a future wake is the one thing the log cannot hold (§10): it records what happened,
-    // and this hasn't. So it is a row — and the row is not the wake: when it comes due the
-    // clock publishes an alarm carrying the note, and THAT is the wake, log-shaped like
-    // everything else. What is stored is words, never a call: the agent re-decides at fire
-    // time with today's window in front of it, which is also what keeps the gate meaningful.
-    const note = String(args.note ?? "").trim();
-    if (!note) throw new Error("a wake needs a note — it is what you will read when it fires");
-    const said = (k: "at" | "in" | "cron") =>
-      args[k] === undefined || args[k] === "" ? undefined : String(args[k]);
-    const cron = said("cron");
-    const zone = config.timezone ?? DEFAULT_TIMEZONE;
-    // one reading of when, shared with `liquen schedule` (§10) — horizon and all
-    const fireAt = fireAtOf({ at: said("at"), in: said("in"), cron }, zone);
-    // a wake belongs to the SESSION that armed it (§4): that session lists it, cancels it,
-    // and is the one woken — so the row carries the session and the conversation it speaks
-    // in, and firing needs no guess about where the note goes.
-    const armed = await ports.log.arm({
-      agentId: self.id,
-      sessionId: self.session_id,
-      fireAt,
-      ...(cron !== undefined ? { cron } : {}),
-      note,
-      conversation: sessionAddress(self.id, self.session_id),
-      refId: use.id,
-    });
-    return { armed: shortId(armed.id), fires: hhmm(fireAt, config.timezone), at: fireAt };
-  }
   if (name === "cancel") {
     // withdraw an open ask (§9): the one settlement invariant does all the work — a
     // permission_response ref'ing the use closes the card, so the anchor line drops and a
@@ -3219,16 +3159,10 @@ async function execute(
     const card = (await ports.log.gates({ agentId: self.id, sessionId: self.session_id }))
       .find((c) => byId(c.payload.ref_id));
     if (!card) {
-      // the same verb unsets a scheduled wake (§10): one "withdraw by id" the model can
-      // reach for without knowing which list the id came from
-      const timer = (await ports.log.timers(self.id, self.session_id)).find((t) => byId(t.id));
-      if (timer) {
-        await ports.log.disarm(timer.id, self.id, self.session_id);
-        return { disarmed: shortId(timer.id), note: timer.note };
-      }
-      // and a message still waiting to go, in a room this session can write to, whoever sent
-      // it: withdrawn, never offered again (store/sweep.ts), and the dispatcher reads the row
-      // once more before it posts. The session that sent it is told (late.ts)
+      // the same verb withdraws a message still waiting to go, in a room this session can
+      // write to, whoever sent it: withdrawn, never offered again (store/sweep.ts), and the
+      // dispatcher reads the row once more before it posts. The session that sent it is
+      // told (late.ts)
       const sent = (e: Event) => byId(e.id) && e.agent !== undefined;
       const waiting = [
         ...await ports.log.read({ types: ["message"], state: "queued", filter: sent }),
@@ -3261,8 +3195,8 @@ async function execute(
         );
       }
       throw new Error(
-        `"${id}" is not an open ask, a scheduled wake of yours or an unsent message — it was ` +
-          "answered, lapsed, fired or went out, or the id is not one your window and lists name",
+        `"${id}" is not an open ask or an unsent message — it was answered, lapsed or went ` +
+          "out, or the id is not one your window and lists name",
       );
     }
     const call = card.parts[0].data.call;
@@ -4666,21 +4600,6 @@ export const OWN_TOOLS: ToolShape[] = [
       },
     },
     vars: { search_limit: SEARCH_LIMIT, around_max: AROUND_MAX, call_clip: CALL_CLIP },
-  },
-  {
-    spec: {
-      name: "schedule",
-      input_schema: {
-        type: "object",
-        properties: {
-          note: { type: "string" },
-          at: { type: "string" },
-          in: { type: "string" },
-          cron: { type: "string" },
-        },
-        required: ["note"],
-      },
-    },
   },
   {
     spec: {

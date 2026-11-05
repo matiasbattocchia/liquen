@@ -6188,6 +6188,30 @@ connections, so the WhatsApp account was one membership.
 - **Open**: on the table only the agent's own scope takes a write, so a shared conditional
   doc there is the operator's to write. On files `shared/` is everyone's.
 
+### What is due lives in the docs, as reminders, and the anchor shows tomorrow (2026-11-05) — LANDED
+
+A board needs a step taken at a time: confirm the day before, warn the reception an hour
+before. A wake set beside the board kept a second record of the plan, and a line moved to
+another date left its wake behind.
+
+- **A reminder follows the moment and any repeat** (`agenda.ts`): `remind`, `remind 1 hour
+  before`, `remind at 9:00`, `remind 1 day before at 10:00`. A line for the whole day names
+  its time; a done line reminds of nothing.
+- **Steps within the day**: `every 15 minutes`, `every 2 hours`, `from 19:30 to 12:00`. A
+  deployment's poll is a line in a doc it lays.
+- **The clock fires them** (`remindDue` in `tick.ts`): every doc each agent reads, any scope,
+  on the agent's clock, within `REMIND_GRACE_MINUTES` (a day), each line once at its latest
+  due minute. One alarm per doc and minute, keyed by `external_id`, lands in the mind
+  session with `extra.reminder: {doc, at}`.
+- **Gone**: the `schedule` tool, `liquen schedule`, the `timers` table (SQLite v17, Postgres
+  v8 drop it), the anchor's `scheduled` section, `cancel` for wakes, and `status`'s wakes.
+- **`tomorrow — N:`** follows `today`, in its grammar, and both read every doc the agent
+  reads, a shared or system doc named under its scope.
+- **Open**: turtle arms its polls with `liquen schedule --cron` from `sync.ts`. It moves to a
+  doc it lays, `every 90 minutes from 19:30 to 12:00` for the hare and lunar polls and
+  `every day` at 13:00 for the report, before it takes this release. An org whose
+  `config.jsonc` still lists `schedule` among its tools offers nothing under that name.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

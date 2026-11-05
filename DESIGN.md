@@ -261,7 +261,7 @@ arrives through the agent's scoped subscription, already readable (§6).
 | `message` | **yes** — a peer's IS the work; our own closing message is the **self-poke** that catches mid-turn arrivals |
 | `tool_use` · `tool_result` | ours **yes** · another session's **no** (never react to others' tools) |
 | `permission_response` | **yes** (the human moved — the settlement is now derivable) |
-| `alarm` | **yes** — a scheduled wake arriving with its note (§10) |
+| `alarm` | **yes** — a reminder arriving with its lines (§10) |
 | `control` | **no** — it never *starts* work; it ENDS it. The interrupt is the turn lease's: the publish that lands a `control` row in a session's room marks that room's lease (`locks.cancel`), and the store fires the holder's signal — at once in the process that landed it, within a heartbeat in any other |
 | `summary` | **yes** — a checkpoint is a turn of its own (§5): its insert is the next look, which idles or answers what a dead turn left owed |
 | `permission_request` · `thinking` · `delta` · *(unknown)* | **no** (spectators) |
@@ -529,55 +529,41 @@ debounce (write-time abort + coalescing), await timeouts (conversation is the ti
 acts self-timeout), cron (a **peripheral producer**, like a webhook).
 
 **The clock is an optional peripheral** (main's tick today; pg_cron / a delayed queue at
-the edge): timer rows fire by **inserting `alarm` events**. An `alarm` is a *delayed,
-harness-delivered effect* — the agent **scheduled** it (a `tool_use`), the **harness
+the edge): due reminders fire by **inserting `alarm` events**. An `alarm` is a
+*harness-delivered word at a time* — the agent's own line asked for it, the **harness
 fired** it (the sender), so it's `system`-authored (which is *required* — a self-authored
-alarm would be ignored by the relational rule and never wake). Provenance is carried, not
-implied: `payload.ref_id` → the `schedule` call, `extra.timer` → the row that fired, the
-session that armed it and when. A note read cold leads back to the moment it was written.
+alarm would be ignored by the relational rule and never wake).
 
-**An alarm always informs.** Its part is a `text` part of kind `alarm`: the note the agent
-left itself, handed back at the moment it asked for. One shape, no bare variant — a pure
-poke needs no event at all (the tick invokes trigger-less), so an alarm that said nothing
-would be a row with no reader. `decide` counts it as news like anything else that arrives
-with something to say, and it wakes **now**: neither the digest nor `sleepHours` defers a
-time the agent itself chose. What is stored is words, never a call — the agent re-decides
-at fire time against today's window, which is what keeps the permission table meaningful
-(a canned tool_use replayed blind is yesterday's judgment executing itself).
+**The future lives in the docs.** A dated line may carry a reminder after its moment and
+any repeat (`agenda.ts`): `- @7 Nov 17:30 remind 1 day before at 10:00 Leo V`. Writing the
+line arms it, deleting it disarms it, and moving its date moves the reminder with it, so
+what is due has one record, which the agent edits with the tools it already has and the
+principal can read. A board's line carries the reminder its column's step needs, and the
+move to the next column is the edit that changes it. Repeats run the same grammar a
+calendar series is judged by, down to steps within the day (`every 90 minutes from 19:30
+to 12:00`), so a deployment's standing poll is a line in a doc it lays, not a call.
 
-**Scheduling is a tool**, `schedule` — `at` a moment, `in` a delay, or `cron` to repeat,
-plus the note. Gated like every other call (§9): one path, so a policy on `schedule` rules
-scripts and model alike. The horizon is a year: a wake fires in the future and within one —
-a fact further out belongs in the agent's files, not a timer. `cancel` is the universal
-unset — an open approval, an armed wake or a send not yet out (§9), by id. **A wake
-belongs to the session that armed it** (§4): the row carries the session, that session's
-anchor lists it beside the background jobs and the open asks (§5) —
-which is where the ids come from — that session alone can cancel it, and the alarm lands in
-`session.conversation`, where it speaks. Not in the conversation the `tool_use` carries:
-that is the plane every call is stamped on, which names a plane, not a session.
+**Every doc the agent reads reminds it**, whatever its scope: a line in the shared scope
+reminds each agent that reads it. Each beat, the clock reads every agent's cascade on the
+agent's own clock and fires the reminders that came due in the grace before now
+(`REMIND_GRACE_MINUTES`), each line once, at the latest of its due ones: a clock that was
+down fires what came due meanwhile, and a repeat that missed a week fires once, not once
+per step. One alarm per doc and minute carries every line it reminds of, into the agent's
+mind session. Its `external_id` is the agent, the doc and the minute, so the store keeps
+it once whoever sweeps: a second clock, a later beat inside the grace, a line edited after
+it fired. The minute is read as a wall clock reads it, so a line at 9:00 fires at 9:00 on
+either side of a change of offset. The past stays in the log and the future in the docs:
+nothing beside them holds a fact about either.
 
-**A standing wake is the operator's**, `liquen schedule`: the same row armed from outside
-any mind, for work a DEPLOYMENT owns rather than work an agent chose — the quarter-hour
-poll a tenant's org exists to run, armed before anybody has said a word to the agent. Its
-`name` is the handle it is re-armed by, unique per (agent, session), so an entrypoint that
-runs at every boot keeps ONE row instead of stacking one per restart. The handle rides on
-the alarm (`extra.timer.name`) and on the session's own list of what is armed, so a wake
-the agent did not choose says so — and it lands in the mind session like any other, which
-means the agent can cancel it: a wake reaching an agent that cannot name it is worse than
-one it may unset. Reading the table is `liquen status`, beside the vault and the roster;
-arming needs no restart, because the next sweep of the clock is what reads it.
-
-The `timers` table is the one non-log fact about the future — the log records what
-happened, and this hasn't. Rows outlive the process, so recovery is nothing: the first tick
-after a restart fires whatever came due while it was down. Firing consumes the row in the
-same pass — one-shot ⇒ gone, cron ⇒ advanced past **now**, so a week of downtime costs one
-late fire, not one per missed occurrence. Cron is five fields on the **org's clock**
-(`Temporal` owns the zone math and the IANA database with it; DST resolves at the fire, not
-at the arming, and the hour a spring-forward erases lands just past the gap while an hour a
-fall-back repeats fires on its first pass), at minute resolution — the tick's own, so
-nothing is promised that the clock cannot keep. Finding the next fire is a SEARCH, since a
-cron expression is a predicate: candidate days, integer comparisons, and a zone conversion
-only on the days that match.
+**An alarm always informs.** Its part is a `text` part of kind `alarm`: each line that came
+due, its occurrence, its words and where it stands, `7 Nov 17:30 Leo V — playas › Agendado,
+remind 1 day before at 10:00`. One shape, no bare variant — a pure poke needs no event at
+all (the tick invokes trigger-less), so an alarm that said nothing would be a row with no
+reader. `decide` counts it as news like anything else that arrives with something to say,
+and it wakes **now**: neither the digest nor `sleepHours` defers a time the agent's own
+lines chose. What is stored is words, never a call — the agent re-decides at fire time
+against today's window, which is what keeps the permission table meaningful (a canned
+tool_use replayed blind is yesterday's judgment executing itself).
 
 **An update is how work that goes on after its call reaches the agent** (`late.ts`). A
 call can do more than its answer says: a send is accepted ("sent") and then refused or
@@ -868,8 +854,8 @@ and a principal's `/y` to a card is read where it enters the mind, below.
     is state, not history — the transcript already closed those calls. The anchor is
     rewritten every turn, so an ask that gets answered simply stops being listed, and the
     model reads its own open business without anything having to be edited out of history.
-  - **An open ask is STANDING state, read off the store** (`log.gates`, `log.owed`), the way
-    an armed wake is read off the timers table (§10). Open is the absence of a
+  - **An open ask is STANDING state, read off the store** (`log.gates`, `log.owed`). Open
+    is the absence of a
     `permission_response` for the use, and absence is a fact about the whole log, never
     about a window: the anchor's list, the card `cancel` withdraws, the one a surface `/y`
     lands on and the ruling `act` still owes an outcome to all read the same set, so a card
@@ -1739,12 +1725,13 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   is still in the air: surfaces that are down, background jobs, **today**, the wakes after
   it, open approvals (§9 — pending state, not history: the transcript already closed those
   calls, so the only honest place for them is the block that restates the state), and the
-  **unanswered conversations**. **Today** is the day as a phone's agenda shows it
-  (`agenda.ts`): the calendar's events the log holds for the day, a series on each day its
-  rule takes; each memory line dated `@` today, or repeating onto it by the `every` that
-  follows its moment (read as the same RRULE a series carries), under its doc and the
-  heading it stands in; and the wakes that fire today. It lists the whole day, past hours included, so it moves
-  when the day's contents do and never with the clock. Every list speaks one grammar, `<section> — N <things>:`
+  **unanswered conversations**. **Today** and **tomorrow** are each day as a phone's agenda
+  shows it (`agenda.ts`): the calendar's events the log holds for the day, a series on each
+  day its rule takes; each line of every doc the agent reads dated `@` that day, or
+  repeating onto it by the `every` that follows its moment (read as the same RRULE a series
+  carries), under its doc and the heading it stands in, a reminding one saying so. Each
+  lists its whole day, past hours included, so it moves when the day's contents do and never
+  with the clock. Every list speaks one grammar, `<section> — N <things>:`
   and one `· <what> — <when> · <handle>` line per item — the item in the agent's own
   words, a verb with a stamp on the org's clock (or whole minutes, for a job, so its age
   moves with `now`), and the handle
@@ -2094,7 +2081,7 @@ with a time bound.
   path. Main lifts the policy off the principal entry, so xi never sees it — locally the
   scope is a wrapper, on Postgres a credential.
 - Dedicated control tools reduce to **`send` + `search`**; everything else is substrate
-  CRUD (docs, timers via SQL/RLS) or runtime-owned.
+  CRUD (docs via SQL/RLS) or runtime-owned.
 
 ## 7. Sessions: many per agent, one identity
 
@@ -2116,10 +2103,9 @@ with a time bound.
 - **Sessions reach each other the way two agents do**: a direct room both are in (the
   sorted session addresses joined by `,`), so agent-to-agent contact is a case of one rule. No
   tree, no spawn, no inter-session message-passing beyond `send(→envelope)`.
-- **Per session: the turn lock, the window, compaction, its timers.** The lease is
+- **Per session: the turn lock, the window, compaction.** The lease is
   `turn-<session address>`, so siblings run concurrently; the window is the session's
-  scoped view; a checkpoint covers one session's transcript; a wake belongs to the
-  session that armed it (`timers` keys on the pair).
+  scoped view; a checkpoint covers one session's transcript.
 - **Reactive + coalesced, no cursor.** The event log *is* the queue; every readable event
   pokes an xi invocation, coalescing (the turn lock + the closing message's self-poke) →
   one turn per burst. The MIND keeps the attention ladder (§2: summons · engaged · the
@@ -2401,7 +2387,7 @@ longer there matches nothing.
   scheduler is one invoker, the edge platform another. Same harness both places — only
   continuation-trigger and tool-transport drivers differ.
 - **Tool planes**: control plane = **`send` + `search`** (the only dedicated control tools)
-  + substrate CRUD (docs, timers via SQL/RLS) + MCP domain tools (tool-docs + injected
+  + substrate CRUD (docs via SQL/RLS) + MCP domain tools (tool-docs + injected
   credentials), over the storage port; execution plane = bash + agent binaries (+ browser,
   code) in the **sandbox** (subprocess in the org container; micro-VM/E2B/Fly later behind
   a SandboxProvider). Exec-plane security = OS (Unix perms + mounts + egress), not tool gating.
@@ -2709,9 +2695,9 @@ beats a bespoke tool):
   injected by nu (§8) — real tools, but wired at runtime, not part of the core surface.
 
 So the core surface is **`send` · `search` · the substrate primitive (`bash` / the doc
-calls)** +
-the two that act on the agent's own standing state (**`schedule`** arms a wake, **`cancel`**
-unsets a wake, an open approval or a send not yet out, §10) + dynamic MCP. Everything else
+calls)** + **`cancel`**, which acts on the agent's own standing state (an open approval or
+a send not yet out, §9) + dynamic MCP. What is due at a time is a reminder on a dated line
+(§10). Everything else
 is helpers (binaries/functions) + skill.
 
 ### The door (`src/door.ts` + `src/script.ts`) — a script's syscalls are tool_use events
@@ -2951,7 +2937,7 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
 | privacy (`scoped(log, policy)`, §6) | the policy bakes into the port: reads filter BEFORE the window limit, writes are checked before landing (`WITH CHECK`), each agent's subscription delivers only its view | RLS (`USING`/`WITH CHECK`) + the agent's own credential — the wrapper vanishes |
 | Stream | in-process EventEmitter → SSE | Supabase Realtime |
 | the turn lease (§2) | a `locks` row **in the same DB** — `INSERT … ON CONFLICT DO NOTHING` to take, one atomic `UPDATE … WHERE seen <= cutoff` to steal a dead holder's, `DELETE` to release | the same row; a turn's last publish reads it `FOR UPDATE`, so a steal waits for the release |
-| timers / clock | `timers` table + in-mem wheel | pg_cron / pgmq |
+| reminders / clock | dated lines in the docs + main's tick | pg_cron / pgmq |
 | locks / atomicity | transactions (WAL + `busy_timeout`) | transactions · an advisory lock per writer section |
 | agents (`store/agents.ts`) | `agents` table in `log.db`, MIRRORED from the `agents/` folders at start (§9 framework way) | `agents` table (openbsp lineage) |
 | blob | filesystem | object store |
@@ -3704,7 +3690,7 @@ on Postgres).
 - **Three channels** — think (`thinking`, private) · assistant (bare text → principal) ·
   send (tool → peer). `send` is never principal-directed. §2/§5.
 - **Concurrency** — one turn per agent (the turn lock); agents parallel (global cap). §2/§9.
-- **Tools** — core surface = **`send` · `search` · `schedule` · `cancel` · `bash`** +
+- **Tools** — core surface = **`send` · `search` · `cancel` · `bash`** +
   dynamic MCP; background / docs-memory = substrate + skill, *not tools*. The default
   OFFER is the surface minus `send`, which an org adds where its agents have peers or a
   world to write to. §9/§10.

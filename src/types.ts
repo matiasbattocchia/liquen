@@ -71,7 +71,7 @@ export interface TextPart {
   type: "text";
   /** `transcript` = machine-derived words for a message that carried none (a voice note's
    *  ASR text) — ridden by an `action: "add"` event pointing at the audio message (§3).
-   *  `alarm` = the note a scheduled wake carries (§10) — words, not a payload.
+   *  `alarm` = the lines a reminder carries (§10) — words, not a payload.
    *  `anchor` = the state a step's request ended on (§5). */
   kind: "text" | "reaction" | "transcript" | "alarm" | "anchor";
   text: string;
@@ -420,8 +420,8 @@ export interface Payload {
  *  what that step's request held, so render keeps what landed later out from under its
  *  replayed thinking, §5), `bash` (on a script's tool_use and its answer: the id of the bash
  *  call whose script made it through the door, §9 — the answer wakes nobody, and the window
- *  folds the pair into that call), `via` (mirror provenance, §4), `timer` (alarm provenance, §10: the row that fired,
- *  who armed it and when), `unload` (on an alarm the harness raised for an unload, §5: the
+ *  folds the pair into that call), `via` (mirror provenance, §4), `reminder` (alarm provenance, §10: the doc whose
+ *  lines it reminds of, and the minute), `unload` (on an alarm the harness raised for an unload, §5: the
  *  first line of the span it asks written down and the last event it covers), and per-service provenance under the service name —
  *  how the wire said it, not what the event means (`slack: {subtype, authorizations}`,
  *  `raw`). */
@@ -646,16 +646,16 @@ export interface SummaryEvent extends EventBase {
 }
 
 /**
- * A delayed, harness-delivered effect the agent scheduled — system-authored, so it wakes (§2).
+ * A harness-delivered word at a time — system-authored, so it wakes (§2).
  *
- * An alarm always INFORMS: its part is the note the agent left itself, and waking to words
- * is the whole point (a pure poke needs no event — the clock invokes trigger-less, §10). So
- * one shape, a text part, and `decide` counts it as news like anything else that arrives
- * with something to say.
+ * An alarm always INFORMS: its part is what the agent wakes to, and waking to words is the
+ * whole point (a pure poke needs no event — the clock invokes trigger-less, §10). So one
+ * shape, a text part, and `decide` counts it as news like anything else that arrives with
+ * something to say.
  *
- * It arrives in the session that armed it, and says where it came from: `payload.ref_id` is
- * the `schedule` call, `extra.timer` the row that fired (§10). A note read cold deserves to
- * be traceable to the moment it was written.
+ * A reminder's alarm arrives in the agent's mind session, carrying the lines that asked for
+ * it, and says where they stand: `extra.reminder` names the doc and the minute (§10), and
+ * its `external_id` is the two together, so it is stored once whoever sweeps.
  */
 export interface AlarmEvent extends EventBase {
   type: "alarm";

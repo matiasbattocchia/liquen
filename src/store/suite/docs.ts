@@ -210,7 +210,6 @@ export function docsSuite(s: DocsSubstrate): void {
           "conversation",
           "edit",
           "read",
-          "schedule",
           "search",
           "send",
           "write",

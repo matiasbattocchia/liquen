@@ -47,7 +47,7 @@ import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
 import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runner.ts";
 import type { Log, UsageRow } from "./store/log.ts";
 import { databaseOf, storeAt } from "./store/mod.ts";
-import { type ClockSettings, tick } from "./tick.ts";
+import { type Clock, tick } from "./tick.ts";
 import { reportSends, resumeUnended, shellUpdate, updateDraft } from "./late.ts";
 import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
@@ -677,15 +677,17 @@ export async function start(
   // source like the log, a trigger-less invoke on a metronome. Cheap: decide() re-reads
   // one window and mostly answers `ignore`. A constant, not a knob: it is the resolution
   // of the attention intervals, not one of them. The same metronome is the store's clock
-  // (`tick`, §10): due wakes become alarms, unanswered asks lapse, failed sends are
+  // (`tick`, §10): due reminders become alarms, unanswered asks lapse, failed sends are
   // re-offered — nothing here posts, and where the log is a database with its own clock,
   // that pass is the clock's statement. One beat at a time: a tick that lands while a
   // beat is still publishing joins it instead of opening a second.
-  const settingsOf: ClockSettings = (agentId) =>
-    agents.find((a) => a.config.agentId === agentId)?.config;
+  const clock: Clock = {
+    agents: () => agents.map((a) => ({ agentId: a.config.agentId, timezone: a.config.timezone })),
+    docs,
+  };
   let beating: Promise<unknown> | undefined;
   const ticker = setInterval(() => {
-    beating ??= tick(log, settingsOf)
+    beating ??= tick(log, clock)
       .then(
         (beat) => {
           for (const f of beat.failed) console.error(`the tick's ${f.pass} pass failed:`, f.error);

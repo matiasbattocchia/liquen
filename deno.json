@@ -15,7 +15,6 @@
     "./init": "./src/init.ts",
     "./liquen": "./src/liquen.ts",
     "./agent": "./src/agent.ts",
-    "./schedule": "./src/schedule.ts",
     "./connect": "./src/connect/connect.ts",
     "./status": "./src/connect/status.ts",
     "./log": "./src/log.ts"
@@ -53,7 +52,6 @@
     "update": "deno run -A src/update.ts",
     "init": "deno run -A src/init.ts",
     "agent": "deno run -A src/agent.ts",
-    "schedule": "deno run -A src/schedule.ts",
     "connect": "deno run -A --env-file=.env src/connect/connect.ts",
     "status": "deno run -A --env-file=.env src/connect/status.ts",
     "log": "deno run -A --env-file=.env src/log.ts",

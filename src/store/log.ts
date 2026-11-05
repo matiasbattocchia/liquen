@@ -66,7 +66,6 @@ import {
 import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
 import { type Connections, CONNECTIONS_DDL, createConnections, UNPREFIX } from "./connections.ts";
-import { createTimers, type Timers, TIMERS_DDL } from "./timers.ts";
 import { createGates, type Gates, GATES_DDL } from "./gates.ts";
 import { createSweeper, type Sweeper } from "./sweep.ts";
 import { bindRoster, ROSTER_VIEWS } from "./roster.ts";
@@ -360,7 +359,6 @@ export type Log =
   & Registry
   & Standing
   & Connections
-  & Timers
   & Gates
   & Sweeper
   & {
@@ -529,7 +527,6 @@ export async function openLog(
      ${AGENTS_DDL}
      ${RULES_DDL}
      ${CONNECTIONS_DDL}
-     ${TIMERS_DDL}
      ${GATES_DDL}`,
   );
   migrate(db); // schema versions below the current one are rewritten in place, exactly once
@@ -914,7 +911,6 @@ export async function openLog(
     lock: locker.lock, // the turn lease lives HERE — same DB, so one transaction holds both
     //                    a turn's last writes and its release (`publishAndRelease`, §2)
     ...registry, // the agent registry (§9): folders declare, this table mirrors
-    ...createTimers(db), // armed wakes (§10): the one non-log fact about the future
     ...createGates(db, eventOf as (row: unknown) => Event), // open asks (§9): standing state, off the whole log
     ...createSweeper(db), // the harness-led retry (§5): a failed send re-offered as a state move
     ...createStanding(db), // remembered policies (§9): standing verdicts land here
@@ -1052,6 +1048,7 @@ function migrate(db: DatabaseSync) {
   if (v < 14) migrateV14(db);
   if (v < 15) migrateV15(db);
   if (v < 16) migrateV16(db);
+  if (v < 17) migrateV17(db);
 }
 
 /** Whether the `events` table has a column: a store the current DDL created lacks the ones
@@ -1059,6 +1056,14 @@ function migrate(db: DatabaseSync) {
 function hasColumn(db: DatabaseSync, name: string): boolean {
   return db.prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = ?").get(name) !==
     undefined;
+}
+
+/** v17 — what is due lives in the docs, as reminders (§10): the `timers` table goes. */
+function migrateV17(db: DatabaseSync) {
+  writing(db, () => {
+    db.exec("DROP TABLE IF EXISTS timers");
+    db.exec("PRAGMA user_version = 17");
+  });
 }
 
 /** v16 — a thread is a reply chain inside its conversation (§3): `conversation_thread` goes. */
@@ -1151,20 +1156,9 @@ function writing(db: DatabaseSync, body: () => void) {
   }
 }
 
-/** v9 — a standing wake carries the operator's handle (§10): the name `liquen schedule`
- *  re-arms by, unique per session so a redeploy replaces its row instead of stacking one.
- *  Every row already there is an agent's own, which is named by nothing. */
+/** v9 — a step whose table v17 drops: it only raises the version. */
 function migrateV9(db: DatabaseSync) {
-  writing(db, () => {
-    const cols = new Set(
-      (db.prepare("SELECT name FROM pragma_table_info('timers')").all() as { name: string }[])
-        .map((c) => c.name),
-    );
-    if (!cols.has("name")) db.exec("ALTER TABLE timers ADD COLUMN name TEXT");
-    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS timers_named
-      ON timers (agent_id, session_id, name) WHERE name IS NOT NULL`);
-    db.exec("PRAGMA user_version = 9");
-  });
+  writing(db, () => db.exec("PRAGMA user_version = 9"));
 }
 
 /** v8 — spend says what it paid for (§5): a turn, or the checkpoint that displaced one.
@@ -1344,7 +1338,7 @@ function migrateV3(db: DatabaseSync) {
  *  room `mind:<agent>`; under pair semantics those rows would read as a foreign
  *  session's — the mind failing to recognize its own closings re-answers its backlog.
  *  So: a stamp equal to the agent id becomes `mind`, and the local `mind:` rooms take
- *  the `@` spelling, in events, memberships and timers alike. `extra.via` provenance
+ *  the `@` spelling, in events and memberships alike. `extra.via` provenance
  *  keeps the old strings — nothing branches on a local via's conversation. */
 function migrateV6(db: DatabaseSync) {
   db.exec("BEGIN IMMEDIATE");
@@ -1355,10 +1349,7 @@ function migrateV6(db: DatabaseSync) {
        UPDATE events SET conversation_address = 'mind@' || substr(conversation_address, 6)
         WHERE service = 'local' AND conversation_address LIKE 'mind:%';
        UPDATE memberships SET conversation_address = 'mind@' || substr(conversation_address, 6)
-        WHERE service = 'local' AND conversation_address LIKE 'mind:%';
-       UPDATE timers SET conversation = 'mind@' || substr(conversation, 6)
-        WHERE conversation LIKE 'mind:%';
-       UPDATE timers SET session_id = 'mind' WHERE session_id = agent_id;`,
+        WHERE service = 'local' AND conversation_address LIKE 'mind:%';`,
     );
     db.exec("PRAGMA user_version = 6");
     db.exec("COMMIT");
@@ -1409,17 +1400,12 @@ function migrateV5(db: DatabaseSync) {
 }
 
 /** v4 — the vocabulary settles on SESSIONS (§4): an agent's row names its mind session
- *  (`agents.mind`), and an armed wake names the session that armed it (`timers.session_id`,
- *  §10). Pre-v4 rows had one session per agent, so the agent id is the honest backfill. */
+ *  (`agents.mind`). */
 function migrateV4(db: DatabaseSync) {
   const cols = (t: string) =>
     (db.prepare(`SELECT name FROM pragma_table_info('${t}')`).all() as { name: string }[])
       .map((c) => c.name);
   if (cols("agents").includes("home")) db.exec("ALTER TABLE agents RENAME COLUMN home TO mind");
-  if (!cols("timers").includes("session_id")) {
-    db.exec("ALTER TABLE timers ADD COLUMN session_id TEXT NOT NULL DEFAULT ''");
-    db.exec("UPDATE timers SET session_id = agent_id WHERE session_id = ''");
-  }
   db.exec("PRAGMA user_version = 4");
 }
 

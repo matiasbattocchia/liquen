@@ -279,7 +279,7 @@ export function painter(s: Surface): Painter {
         return;
       }
       case "alarm": {
-        // a wake the agent scheduled, handing back its own note: what the turn after it
+        // a reminder of the agent's own lines, handed back: what the turn after it
         // acts on, so it opens a block of its own, stamped like a line
         settle();
         s.gap();
@@ -537,7 +537,7 @@ function viaOf(e: Event): { service?: string } | undefined {
   return (e.extra?.via ?? undefined) as { service?: string } | undefined;
 }
 
-/** A fired wake, as a row: when, and the note the agent left itself when it scheduled it. */
+/** A fired alarm, as a row: when, and the lines it reminds of. */
 function alarmRow(e: AlarmEvent, stamp: (ts: string) => string): string {
   // the harness's own wake, the way a checkpoint is the harness's own write
   const span = unloadOf(e);

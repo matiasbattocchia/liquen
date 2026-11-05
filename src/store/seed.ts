@@ -102,7 +102,6 @@ type Template = [DocScope, string, string, string];
 const TOOL_DOCS = [
   "send",
   "search",
-  "schedule",
   "cancel",
   "conversation",
   "contact",

@@ -34,7 +34,7 @@ export interface Tokens {
 export interface Opener {
   kind:
     | "message"
-    | "wake"
+    | "reminder"
     | "alarm"
     | "update"
     | "verdict"
@@ -49,7 +49,7 @@ export interface Opener {
   who?: string;
   /** The surface a principal's line came in through, for a mirror's copy of it. */
   via?: string;
-  /** A wake's handle (`liquen schedule --name`). */
+  /** The doc a reminder's lines stand in. */
   name?: string;
   /** What it said: a message's words, an alarm's note, a call's tool, the call an update
    *  tells about. */
@@ -125,10 +125,10 @@ export function openerOf(e: Event, ref: SessionRef): Opener | undefined {
     }
     case "alarm": {
       if (unloadOf(e)) return { kind: "unload", ...at };
-      const timer = (e.extra?.timer ?? {}) as { name?: string };
+      const reminder = (e.extra?.reminder ?? {}) as { doc?: string };
       const text = textOf(e);
-      return timer.name
-        ? { kind: "wake", ...at, name: timer.name, text }
+      return reminder.doc
+        ? { kind: "reminder", ...at, name: reminder.doc, text }
         : { kind: "alarm", ...at, text };
     }
     case "permission_response": {
@@ -457,8 +457,8 @@ export function openedBy(o: Opener): string {
       return `message${o.who ? ` from ${o.who}` : ""}${o.via ? ` via ${o.via}` : ""}${
         quote(o.text)
       }`;
-    case "wake":
-      return `wake ${o.name}`;
+    case "reminder":
+      return `reminder ${o.name}${quote(o.text)}`;
     case "alarm":
       return `alarm${quote(o.text)}`;
     case "verdict":

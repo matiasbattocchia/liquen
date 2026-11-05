@@ -139,13 +139,13 @@ Deno.test("turnsOf: the steps from the look to the closing, opened by the news t
   assertStringIncludes(turnLine(t), "end_turn · ");
 });
 
-Deno.test("turnsOf: a wake opens by its handle; a cut ends the turn; a failed first think is a turn", () => {
+Deno.test("turnsOf: a reminder opens by its doc; a cut ends the turn; a failed first think is a turn", () => {
   const wake: Event = {
     id: nextId(),
     ts: at(),
     type: "alarm",
     envelope: here(),
-    extra: { timer: { id: "w", session_id: "mind", name: "poll" } },
+    extra: { reminder: { doc: "wakes", at: "2026-11-06T10:00" } },
     parts: [{ type: "text", kind: "alarm", text: "Time to poll" }],
   } as Event;
   const s1 = step("w1", wake.id, { calls: ["sleep 100"], stop: "tool_use" });
@@ -163,7 +163,7 @@ Deno.test("turnsOf: a wake opens by its handle; a cut ends the turn; a failed fi
   const failed = harnessError("the model refused the key");
   const turns = turnsOf([wake, ...s1, cut, cancelled, again, failed], REF);
   assertEquals(turns.length, 2);
-  assertEquals(openedBy(turns[0].opener), "wake poll");
+  assertEquals(openedBy(turns[0].opener), 'reminder wakes "Time to poll"');
   assertEquals(turns[0].end, "cancel");
   assertEquals(turns[0].tool_errors, 0); // the cut is no tool's failure
   assertEquals(turns[0].span.to, cancelled.id); // its cancelled results still belong to it
@@ -189,7 +189,7 @@ Deno.test("turnsOf: news no step of the open turn read opens the next; news a st
     ts: at(),
     type: "alarm",
     envelope: here(),
-    extra: { timer: { id: "w", session_id: "mind", name: "poll" } },
+    extra: { reminder: { doc: "wakes", at: "2026-11-06T10:00" } },
     parts: [{ type: "text", kind: "alarm", text: "Time to poll" }],
   } as Event;
   const reply = step("c3", r2.id, { text: "here are the top 5" });
@@ -198,7 +198,7 @@ Deno.test("turnsOf: news no step of the open turn read opens the next; news a st
   const turns = turnsOf([ask, ...s1, nudge, r1, ...s2, r2, wake, ...reply, ...next], REF);
   assertEquals(turns.length, 2);
   assertEquals(openedBy(turns[0].opener), 'message from matias "top 5 deals?"');
-  assertEquals(openedBy(turns[1].opener), "wake poll");
+  assertEquals(openedBy(turns[1].opener), 'reminder wakes "Time to poll"');
   assertEquals(turns[1].started, wake.ts);
 });
 

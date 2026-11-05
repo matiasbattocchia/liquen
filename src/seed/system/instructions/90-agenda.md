@@ -13,15 +13,24 @@ the whole day; `17:30-18:30` gives it an end.
 A repeat follows the moment, which is then its first occurrence:
 `- @3 Nov 2026 18:00 every Tue Sam's Spanish class (28 Oct, 3f9a2c)`. It says `every day`,
 `every Tue Thu`, `every 2 weeks`, `every month`, `every last Fri` or `every year`, and
-`until 15 Dec` ends it. A yearless first occurrence turns into the coming year once half a
-year has passed, so a repeat that runs longer gives it its year. A repeating line takes no
-checkbox: one box cannot say which occurrence is done.
+`until 15 Dec` ends it. `every 30 minutes` and `every 2 hours` step from the line's time,
+and `from 9:00 to 18:00` keeps the steps inside those hours. A yearless first occurrence
+turns into the coming year once half a year has passed, so a repeat that runs longer gives
+it its year. A repeating line takes no checkbox: one box cannot say which occurrence is
+done.
 
-The `today` note lists the day: the calendar's events, the dated lines of your memories
-under the doc and heading they stand in, each repeating onto the day, and the wakes that
-fire today. So a date worth
-keeping is a dated line, and a wake is for doing something at a time.
+A reminder follows the moment and any repeat, and wakes you with the line when it comes
+due: `- @7 Nov 17:30 remind 1 day before at 10:00 Sam records the demo (2 Nov, 8be1d0)`. It
+says `remind` for the moment itself, `remind 1 hour before`, `remind at 9:00` or `remind 2
+days before at 9:00`, and a line for the whole day names its time. A line without one wakes
+nobody, and a done line reminds of nothing.
+
+The `today` and `tomorrow` notes list each day: the calendar's events and the dated lines
+of every doc you read, under the doc and heading they stand in, each repeating onto the day.
+So a date worth seeing is a dated line, and something to do at a time is a reminder on it.
 
 - A board is one file: its `##` headings are the columns, and a line moves between them as
   its work moves. A heading tags its block the way a `#tag` tags a line.
 - A checkbox belongs to plain lists; on a board, the column is the status.
+- A line that moves to a column whose step comes at a time takes that step's reminder in
+  the same edit.

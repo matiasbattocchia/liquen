@@ -576,7 +576,7 @@ async function ccParts(
   // an unload is the harness's word to the agent alone: its turn writes docs and ends silent
   if (unloadOf(e)) return null;
   if (e.type === "alarm") {
-    // a wake the agent scheduled, its own note handed back: what the turn after it acts on
+    // a reminder of the agent's own lines, handed back: what the turn after it acts on
     const note = (e as AlarmEvent).parts[0]?.text ?? "";
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ⏰ ${note}` }]);
   }

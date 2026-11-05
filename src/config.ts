@@ -54,7 +54,7 @@ export const DEFAULT_MODEL = "claude-sonnet-5";
 export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + tools + text
 // the default deployment's whole offer: the four built-ins plus the exec plane's bash.
 // A name added at runtime (an MCP server's tools) joins the offer by being listed here.
-export const DEFAULT_TOOLS = ["search", "schedule", "cancel", "bash"];
+export const DEFAULT_TOOLS = ["search", "cancel", "bash"];
 export const DEFAULT_RULES: Rule[] = [
   { tool: "send", service: "local", action: "allow" }, // a word to a peer stays in the org
   { tool: "send", action: "ask" }, // dispatch leaves the org, in the principal's name

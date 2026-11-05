@@ -295,14 +295,10 @@ export const UNPREFIX = [
      WHERE service = 'local' AND conversation_address LIKE 'dm:%'`,
   `UPDATE memberships SET conversation_address = replace(substr(conversation_address, 4), ':', ',')
      WHERE service = 'local' AND conversation_address LIKE 'dm:%'`,
-  `UPDATE timers SET conversation = replace(substr(conversation, 4), ':', ',')
-     WHERE conversation LIKE 'dm:%'`,
   `UPDATE events SET conversation_address = substr(conversation_address, 10)
      WHERE conversation_address LIKE 'calendar:%'`,
   `UPDATE memberships SET conversation_address = substr(conversation_address, 10)
      WHERE conversation_address LIKE 'calendar:%'`,
-  `UPDATE timers SET conversation = substr(conversation, 10)
-     WHERE conversation LIKE 'calendar:%'`,
 ];
 
 /** The order `conversations()` answers in. */

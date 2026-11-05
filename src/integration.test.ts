@@ -22,7 +22,7 @@ import {
 } from "./xi.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { LOCK_TTL_MS } from "./store/lock.ts";
-import { MONTHS } from "./store/timers.ts";
+import { MONTHS } from "./moment.ts";
 import type { AgentRow } from "./store/agents.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { localFiles } from "./store/media.ts";
@@ -3051,7 +3051,7 @@ Deno.test("cancel: a message of ours not yet out is withdrawn, never offered aga
     assertStringIncludes(results[2], "was taken back — it never went out");
     assertStringIncludes(
       results[3],
-      "not an open ask, a scheduled wake of yours or an unsent message",
+      "not an open ask or an unsent message",
     );
   } finally {
     await log.close();
@@ -4069,107 +4069,6 @@ Deno.test("cancel: the agent withdraws one of two asks — and a bare /y settles
   }
 });
 
-Deno.test("schedule: the wake is armed as a row, fires as an alarm, and cancel unsets it", async () => {
-  const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  // the model schedules, then (next turn) narrates; the clock is simulated by firing the
-  // due rows exactly as main's ticker does (§10) — tests must not wait a real minute
-  const transport = scripted([
-    ok([{ kind: "tool_use", name: "schedule", input: { in: "1s", note: "llamar a la clínica" } }]),
-    ok([{ kind: "assistant", text: "listo, te aviso" }]),
-  ]).transport;
-  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
-  const config = { ...CONFIG, timezone: "UTC" };
-  try {
-    await log.publish(principalMsg("recordame llamar a la clínica"));
-    await xi(config, ports); // the turn that calls `schedule`…
-    await xi(config, ports); // …and the act that runs it
-    const [res] = (await log.read({ types: ["tool_result"] })) as ToolResultEvent[];
-    const armed = res.parts[0].data.output as { armed: string; at: string };
-    assert(armed.armed.length > 0, "the result hands back the id cancel takes");
-    // the row is the ONLY record of the future — nothing is in the log yet
-    const [row] = await log.timers("a1", "mind"); // the SESSION's wakes (§4)
-    assertEquals(row.note, "llamar a la clínica");
-    assertEquals(row.sessionId, "mind"); // the session that armed it owns it
-    assertEquals(row.conversation, "mind@a1"); // and is where the note comes back
-    assertEquals(row.refId, res.payload.ref_id); // provenance: the scheduling use
-    assertEquals(await log.read({ types: ["alarm"] }), []);
-    await xi(config, ports); // …and the turn that closes on it
-
-    // the clock: nothing is due a minute early, everything is due once it is
-    assertEquals(await log.due(new Date(Date.parse(row.fireAt) - 1000).toISOString()), []);
-    const now = new Date(Date.parse(row.fireAt) + 1000).toISOString();
-    for (const t of await log.due(now)) {
-      await log.publish(
-        {
-          ts: now,
-          type: "alarm",
-          payload: { ref_id: t.refId! },
-          envelope: {
-            service: "local",
-            connection_address: "default",
-            conversation: { address: t.conversation },
-          },
-          extra: { timer: { id: t.id, session_id: t.sessionId, armed_at: t.armedAt } },
-          parts: [{ type: "text", kind: "alarm", text: t.note }],
-        } satisfies Draft<Event>,
-      );
-      await log.settle(t.id, now);
-    }
-    // one-shot: fired, consumed, gone — and the note is in the log for the mind to read
-    assertEquals(await log.timers("a1", "mind"), []);
-    const [fired] = await log.read({ types: ["alarm"] });
-    assertEquals(fired.parts[0].text, "llamar a la clínica");
-    assertEquals(fired.agent, undefined); // harness-authored, so it wakes (§2)
-    // provenance (§10): the call that armed it, the row that fired, when it was armed
-    assertEquals(fired.payload?.ref_id, res.payload.ref_id);
-    assertEquals((fired.extra?.timer as { id: string }).id, row.id);
-
-    // a second wake, unset by name through the SAME cancel the approvals use
-    const second = await log.arm({
-      agentId: "a1",
-      sessionId: "mind",
-      fireAt: "2030-01-01T09:00:00.000Z",
-      note: "la otra cosa",
-      conversation: "mind@a1",
-    });
-    const cancelling = scripted([
-      ok([{ kind: "tool_use", name: "cancel", input: { id: shortId(second.id) } }]),
-    ]).transport;
-    await xi(config, { ...ports, transport: cancelling }); // the turn that calls `cancel`…
-    await xi(config, { ...ports, transport: cancelling }); // …and the act that runs it
-    const undone = (await log.read({ types: ["tool_result"] }))
-      .map((e) => (e as ToolResultEvent).parts[0].data.output as Json)
-      .find((o) => o && typeof o === "object" && "disarmed" in o);
-    assertEquals((undone as { note: string }).note, "la otra cosa");
-    assertEquals(await log.timers("a1", "mind"), []);
-  } finally {
-    await log.close();
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-Deno.test("schedule: a bare `at` reads the org's clock — 17:00 Buenos Aires is 20:00Z", async () => {
-  const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  // tomorrow's date in UTC: inside the horizon on any run day, and no DST in this zone
-  const day = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
-  const transport = scripted([
-    ok([{ kind: "tool_use", name: "schedule", input: { at: `${day}T17:00`, note: "merienda" } }]),
-  ]).transport;
-  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
-  try {
-    await log.publish(principalMsg("a las cinco"));
-    await xi({ ...CONFIG, timezone: "America/Argentina/Buenos_Aires" }, ports);
-    await xi({ ...CONFIG, timezone: "America/Argentina/Buenos_Aires" }, ports);
-    const [t] = await log.timers("a1", "mind");
-    assertEquals(t.fireAt, `${day}T20:00:00.000Z`);
-  } finally {
-    await log.close();
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
 Deno.test("a conditional doc loads while its conversation has an event in the window, and is indexed otherwise", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -4284,93 +4183,7 @@ Deno.test("the surfaces: the prefix names them, the anchor lists the ones that a
   }
 });
 
-Deno.test("schedule: the horizon — no wake in the past, none beyond a year, no half-read stamp", async () => {
-  const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  const transport = scripted([
-    ok([
-      { kind: "tool_use", name: "schedule", input: { at: "2020-01-01T09:00", note: "tarde" } },
-      {
-        kind: "tool_use",
-        name: "schedule",
-        // a real moment, but past the horizon — offset form so it reads the same any run day
-        input: { at: new Date(Date.now() + 400 * 864e5).toISOString(), note: "lejos" },
-      },
-      // trailing garbage after a valid date: refused whole, never truncated to its date part
-      { kind: "tool_use", name: "schedule", input: { at: "2030-01-01T09:00 mañana", note: "x" } },
-    ]),
-  ]).transport;
-  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
-  try {
-    await log.publish(principalMsg("agendá cosas raras"));
-    await xi({ ...CONFIG, timezone: "UTC" }, ports); // the turn that calls…
-    await xi({ ...CONFIG, timezone: "UTC" }, ports); // …and the act that refuses, loudly
-    assertEquals(await log.timers("a1", "mind"), [], "nothing armed — every call was refused");
-    const errors = (await log.read({ types: ["tool_result"] }))
-      .filter((e) => JSON.stringify(e.parts).includes("is_error"));
-    assertEquals(errors.length, 3);
-    const all = JSON.stringify(errors.map((e) => e.parts));
-    assertStringIncludes(all, "already passed");
-    assertStringIncludes(all, "more than a year out");
-    assertStringIncludes(all, "not a moment");
-  } finally {
-    await log.close();
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the open asks (§5)", async () => {
-  const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
-  const transport: ModelTransport = (params) => {
-    last = params;
-    return Promise.resolve(ok([]));
-  };
-  const config = { ...CONFIG, timezone: "UTC" };
-  const ports = {
-    log,
-    docs: await docsAt(`${dir}/docs`),
-    transport,
-    ambient: () => Promise.resolve(["cwd: /work"]), // the exec plane's lines (§9)
-  };
-  try {
-    const armed = await log.arm({
-      agentId: "a1",
-      sessionId: "mind",
-      fireAt: "2030-03-04T09:30:00.000Z",
-      cron: "30 9 * * *",
-      note: "mandar los recordatorios",
-      name: "recordatorios",
-      conversation: "mind@a1",
-    });
-    // another session's wake: armed on the same agent, and none of this session's business
-    await log.arm({
-      agentId: "a1",
-      sessionId: "s2",
-      fireAt: "2030-03-04T08:00:00.000Z",
-      note: "lo de la otra sesión",
-      conversation: "mind@a1",
-    });
-    await log.publish(principalMsg("hola"));
-    await xi(config, ports);
-    const anchor = JSON.stringify(last?.messages.at(-1)?.content);
-    assertStringIncludes(anchor, "scheduled — 1 wake");
-    assert(!anchor.includes("otra sesión"), "the anchor lists this session's wakes only (§4)");
-    assertStringIncludes(anchor, "4 Mar 9:30"); // when, on the org's clock
-    assertStringIncludes(anchor, "repeats `30 9 * * *`"); // and that it comes back
-    assertStringIncludes(anchor, "mandar los recordatorios");
-    assertStringIncludes(anchor, shortId(armed.id)); // the handle `cancel` takes
-    // a wake the ORG armed says so, so the note reads as an instruction (§10)
-    assertStringIncludes(anchor, "the org's `recordatorios`");
-    assertStringIncludes(anchor, "cwd: /work"); // the other state facts still stand
-  } finally {
-    await log.close();
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-Deno.test("the anchor's `today`: the calendar, the memories' dated lines and the day's wakes (§5)", async () => {
+Deno.test("the anchor's `today` and `tomorrow`: the calendar and the dated lines of every doc it reads (§5)", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
@@ -4383,28 +4196,22 @@ Deno.test("the anchor's `today`: the calendar, the memories' dated lines and the
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
   const shown = `${now.getUTCDate()} ${MONTHS[now.getUTCMonth()]}`;
+  const next = new Date(now.getTime() + 864e5).toISOString().slice(0, 10);
   try {
     await Deno.mkdir(`${dir}/docs/agents/a1/memories`, { recursive: true });
     await Deno.writeTextFile(
       `${dir}/docs/agents/a1/memories/grabaciones.md`,
       `---\nkind: memory\nload: lazy\n---\n# Grabaciones\n## Por grabar\n` +
         `- [ ] @${shown} 23:58 Leo V graba su set #grabacion (2 Nov, 8be1d0)\n` +
-        `- @${date} cumple de Lu\n`,
+        `- @${date} cumple de Lu\n` +
+        `- @${next} 17:30 remind 1 day before at 10:00 Greta graba\n` +
+        `- @2030-03-04 9:30 lo de marzo\n`,
     );
-    await log.arm({
-      agentId: "a1",
-      sessionId: "mind",
-      fireAt: `${date}T23:59:00.000Z`,
-      note: "mirar la agenda",
-      conversation: "mind@a1",
-    });
-    await log.arm({
-      agentId: "a1",
-      sessionId: "mind",
-      fireAt: "2030-03-04T09:30:00.000Z",
-      note: "lo de marzo",
-      conversation: "mind@a1",
-    });
+    await Deno.mkdir(`${dir}/docs/shared`, { recursive: true });
+    await Deno.writeTextFile(
+      `${dir}/docs/shared/equipo.md`,
+      `---\nkind: memory\nload: lazy\n---\n- @${date} 23:59 every day Mirar la agenda\n`,
+    );
     await log.upsertConnections([{ service: "google", address: "me@x.com", agentId: "a1" }]);
     await log.publish({
       ts: now.toISOString(),
@@ -4436,10 +4243,14 @@ Deno.test("the anchor's `today`: the calendar, the memories' dated lines and the
       anchor,
       "· 23:58 [ ] Leo V graba su set #grabacion — memories/grabaciones › Por grabar",
     );
-    assertStringIncludes(anchor, "· 23:59 mirar la agenda — wake · id ");
-    // a wake past today stays under `scheduled`, and today's is not listed twice
-    assertStringIncludes(anchor, "scheduled — 1 wake:");
-    assertStringIncludes(anchor, "· lo de marzo — fires 4 Mar 9:30");
+    // a shared doc's line is the agent's to see too, named under its scope
+    assertStringIncludes(anchor, "· 23:59 Mirar la agenda — shared/equipo, every day");
+    assertStringIncludes(anchor, "tomorrow — 2:");
+    assertStringIncludes(
+      anchor,
+      "· 17:30 Greta graba — memories/grabaciones › Por grabar, remind 1 day before at 10:00",
+    );
+    assert(!anchor.includes("lo de marzo"), "a day past tomorrow is in its doc, not the anchor");
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

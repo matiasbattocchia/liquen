@@ -57,7 +57,7 @@ Deno.test("a connection's name is its route on the edge — one the edge cannot 
 Deno.test("the reader only reads: an absent file is the defaults, and stays absent", async () => {
   await withDir(async (root) => {
     const cfg = await readConfig(root);
-    assertEquals(cfg.organization.agents.tools, ["search", "schedule", "cancel", "bash"]);
+    assertEquals(cfg.organization.agents.tools, ["search", "cancel", "bash"]);
     assertEquals(cfg.agents, {});
     await assertRejects(() => Deno.stat(`${root}/config.jsonc`), Deno.errors.NotFound);
   });

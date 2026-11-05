@@ -2,10 +2,12 @@ import { assertEquals } from "@std/assert";
 import {
   calendarEntries,
   datedLines,
+  daySection,
   docEntries,
   nearestYear,
+  remindersDue,
   ruleTakes,
-  todayOn,
+  wallOf,
 } from "./agenda.ts";
 import type { CalendarData, MessageEvent } from "./types.ts";
 
@@ -139,21 +141,102 @@ Deno.test("a repeating line shows on each day its rule takes, never before its f
   assertEquals(on(1, 12, 2027).map((e) => e.text), ["Clase de inglés"]); // past its last
 });
 
+Deno.test("a step of minutes or hours runs from the line's time, inside its span of the day", () => {
+  const line = (words: string, moment = "1 Nov 2026 0:00") =>
+    datedLines(`- @${moment} ${words} x`, NOV4)[0];
+  assertEquals(line("every 15 minutes").step, 15);
+  assertEquals(line("every hour").step, 60);
+  assertEquals(line("every 90 minutes from 19:30 to 12:00").span, [1170, 720]);
+  assertEquals(line("every 2 hours until 6 Nov").last, { year: 2026, month: 11, day: 6 });
+  assertEquals(line("every 2 hours", "1 Nov 2026"), undefined); // a step needs a time to run from
+  assertEquals(line("every day from 9:00 to 18:00"), undefined); // a span is for steps
+  const body =
+    "- @1 Nov 2026 0:00 every 90 minutes from 19:30 to 12:00 until 5 Nov Revisar la cola";
+  const on = (day: number) => docEntries("wakes", body, { year: 2026, month: 11, day });
+  assertEquals(on(4), [{
+    at: 0,
+    slot: "0:00",
+    text: "Revisar la cola",
+    tail: "wakes, every 90 minutes from 19:30 to 12:00 until 5 Nov",
+  }]);
+  assertEquals(on(6), []); // past its last
+  // a span inside the day starts the day at its first step in it
+  const late = "- @1 Nov 2026 9:00 every 2 hours from 13:00 to 17:00 Mirar el correo";
+  assertEquals(docEntries("x", late, NOV4).map((e) => e.slot), ["13:00"]);
+});
+
+Deno.test("a reminder follows the moment and any repeat; one the line cannot keep is text", () => {
+  const line = (words: string, moment = "7 Nov 17:30") =>
+    datedLines(`- @${moment} ${words} Leo V`, NOV4)[0];
+  assertEquals(line("remind").remind, { back: 0 });
+  assertEquals(line("remind 1 hour before").remind, { back: 60 });
+  assertEquals(line("remind 30 minutes before").remind, { back: 30 });
+  assertEquals(line("remind 2 days before").remind, { back: 2880 });
+  assertEquals(line("remind 1 day before at 10:00").remind, { days: 1, at: 600 });
+  assertEquals(line("remind at 9:00").remind, { days: 0, at: 540 });
+  assertEquals(line("remind 1 week before at 9:00", "20 Nov").remind, { days: 7, at: 540 });
+  assertEquals(line("every Sat remind 1 hour before").reminder, "remind 1 hour before");
+  // whole days need a time of day; minutes and hours carry their own
+  assertEquals(line("remind", "7 Nov").text, "remind Leo V");
+  assertEquals(line("remind 1 hour before", "7 Nov").remind, undefined);
+  assertEquals(line("remind 2 hours before at 10:00").remind, undefined);
+  assertEquals(line("reminder of Leo").text, "reminder of Leo Leo V");
+  assertEquals(docEntries("playas", "- @4 Nov 17:30 remind 1 hour before Leo V", NOV4), [{
+    at: 1050,
+    slot: "17:30",
+    text: "Leo V",
+    tail: "playas, remind 1 hour before",
+  }]);
+});
+
+Deno.test("a reminder is due at the minute it names, once per line, never for a done one", () => {
+  const zone = "America/Argentina/Buenos_Aires";
+  const wall = (iso: string) => wallOf(iso, zone)!;
+  const body = [
+    "## Agendado",
+    "- @5 Nov 10:00 remind 1 hour before Ale Castro",
+    "- @7 Nov remind 2 days before at 9:30 Greta: falta el horario",
+    "- [x] @5 Nov 9:30 remind ya está",
+    "- @3 Nov 2026 18:00 every Tue remind 15 minutes before Clase de inglés",
+  ].join("\n");
+  const due = (from: string, to: string) =>
+    remindersDue("playas", body, wall(from), wall(to), NOV4).map((d) => d.text);
+  // 5 Nov 9:00 on the agent's clock is 12:00Z
+  assertEquals(due("2026-11-05T11:59:00Z", "2026-11-05T12:00:00Z"), [
+    "5 Nov 10:00 Ale Castro — playas › Agendado, remind 1 hour before",
+  ]);
+  assertEquals(due("2026-11-05T12:29:00Z", "2026-11-05T12:30:00Z"), [
+    "7 Nov Greta: falta el horario — playas › Agendado, remind 2 days before at 9:30",
+  ]);
+  assertEquals(due("2026-11-05T12:30:00Z", "2026-11-05T13:00:00Z"), []); // the done line is quiet
+  // a week down: the class reminds once, of the latest one it missed
+  assertEquals(
+    due("2026-11-03T00:00:00Z", "2026-11-18T00:00:00Z").filter((t) => t.includes("Clase")),
+    [
+      "17 Nov 18:00 Clase de inglés — playas › Agendado, every Tue, remind 15 minutes before",
+    ],
+  );
+});
+
 Deno.test("the section: the whole day first, then by the minute, ties as they came", () => {
   assertEquals(
-    todayOn([
+    daySection("today", [
       { at: 1050, slot: "17:30", text: "graba Leo", tail: "memories/grabaciones" },
       { text: "cumple de Lu", tail: "profiles/lu" },
-      { at: 540, slot: "9:00", text: "mandar los recordatorios", tail: "wake · id ab12" },
+      { at: 540, slot: "9:00", text: "mandar los recordatorios", tail: "memories" },
     ]),
     [
       "today — 3:",
       "· cumple de Lu — profiles/lu",
-      "· 9:00 mandar los recordatorios — wake · id ab12",
+      "· 9:00 mandar los recordatorios — memories",
       "· 17:30 graba Leo — memories/grabaciones",
     ],
   );
-  assertEquals(todayOn([]), []);
+  assertEquals(daySection("tomorrow", [{ text: "cumple de Lu", tail: "profiles/lu" }]), [
+    "tomorrow — 1:",
+    "· cumple de Lu — profiles/lu",
+  ]);
+  assertEquals(daySection("today", []), []);
 });
 
 Deno.test("a rule takes the days RFC 5545 gives it", () => {
@@ -247,7 +330,7 @@ Deno.test("the calendar's day: last state, whole days, series and what left them
       exdates: ["2026-11-04T20:00:00-03:00"],
     }),
   ];
-  assertEquals(todayOn(calendarEntries(rows, NOV4, zone)), [
+  assertEquals(daySection("today", calendarEntries(rows, NOV4, zone)), [
     "today — 4:",
     "· Feriado — calendar Personal",
     "· 7:00-8:00 Yoga — calendar Personal",

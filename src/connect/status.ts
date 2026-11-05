@@ -1,9 +1,9 @@
 /**
  * connect/status.ts — connection management, read side: what the machinery holds (§4).
  *
- *   deno task status             # agents · connections · memberships · wakes · vault (REDACTED)
+ *   deno task status             # agents · connections · memberships · vault (REDACTED)
  *                                #   · each agent's turns: the running one, the last one's end,
- *                                #   the next wake, the last error
+ *                                #   the last error
  *   deno task status --json      # the same facts, one JSON document
  *
  * The setup flows (`liquen connect <service>`: pastes, pairing, a sign-in) WRITE the map;
@@ -29,9 +29,9 @@ import type { ErrorEvent, Json } from "../types.ts";
 
 export const USAGE = `usage: liquen status [--dir <org>] [--json]
 
-  What the org holds: the agents, the connections, who is enrolled where, the armed wakes,
-  the vault's keys (never a value), and each agent's turns — the one running, how the last
-  one ended, the next wake, the last error. --json says the same as one JSON document.`;
+  What the org holds: the agents, the connections, who is enrolled where, the vault's keys
+  (never a value), and each agent's turns — the one running, how the last one ended, the
+  last error. --json says the same as one JSON document.`;
 
 /** How far back the turn read looks for the last error and the turns around it. */
 const TURNS = 2;
@@ -51,15 +51,6 @@ export interface AgentTurns {
       checkpoint: boolean;
     }
     | null;
-  /** The next armed wake of the agent's, any session's. */
-  next_wake: {
-    id: string;
-    fire_at: string;
-    session: string;
-    name?: string;
-    cron?: string;
-    note: string;
-  } | null;
   /** The newest harness error in the mind's room. */
   last_error: { id: string; ts: string; error: string } | null;
 }
@@ -83,15 +74,6 @@ export interface OrgStatus {
     session?: string;
     left?: string;
   }[];
-  wakes: {
-    id: string;
-    fire_at: string;
-    agent: string;
-    session: string;
-    name?: string;
-    cron?: string;
-    note: string;
-  }[];
   vault: { key: string; owner: string | null; fields: string[] }[];
   turns: AgentTurns[];
 }
@@ -99,7 +81,6 @@ export interface OrgStatus {
 /** Every fact `status` reports, read through the store's ports. */
 export async function statusOf(log: Log, creds: Credentials): Promise<OrgStatus> {
   const agents = await log.agents();
-  const armed = await log.armed();
   const turns: AgentTurns[] = [];
   for (const a of agents) {
     const ref = { agentId: a.agentId, id: MIND };
@@ -108,8 +89,6 @@ export async function statusOf(log: Log, creds: Credentials): Promise<OrgStatus>
     const held = await log.lock(turnLockOf(home)).held();
     const open = recent.at(-1)?.end === "open" ? recent.at(-1) : undefined;
     const ended = recent.findLast((t) => t.end !== "open");
-    const wake = armed.filter((t) => t.agentId === a.agentId)
-      .sort((x, y) => x.fireAt < y.fireAt ? -1 : 1)[0];
     const [error] = await log.read({ conversation: home, types: ["error"], limit: 1 });
     turns.push({
       agent: a.agentId,
@@ -134,16 +113,6 @@ export async function statusOf(log: Log, creds: Credentials): Promise<OrgStatus>
           opened_by: openedBy(ended.opener),
           ...(ended.error ? { error: ended.error } : {}),
           checkpoint: ended.checkpoint !== undefined,
-        }
-        : null,
-      next_wake: wake
-        ? {
-          id: wake.id,
-          fire_at: wake.fireAt,
-          session: wake.sessionId,
-          ...(wake.name ? { name: wake.name } : {}),
-          ...(wake.cron ? { cron: wake.cron } : {}),
-          note: wake.note,
         }
         : null,
       last_error: error
@@ -175,15 +144,6 @@ export async function statusOf(log: Log, creds: Credentials): Promise<OrgStatus>
       agent: m.agentId,
       session: m.sessionId,
       ...(m.deletedAt ? { left: m.deletedAt } : {}),
-    })),
-    wakes: armed.map((t) => ({
-      id: t.id,
-      fire_at: t.fireAt,
-      agent: t.agentId,
-      session: t.sessionId,
-      ...(t.name ? { name: t.name } : {}),
-      ...(t.cron ? { cron: t.cron } : {}),
-      note: t.note,
     })),
     // the vault shares the store (§4) — keys and value FIELD NAMES only, never secrets
     vault: (await creds.list("")).map((r) => ({
@@ -237,17 +197,6 @@ if (import.meta.main) {
         );
       }
 
-      // armed wakes (§10): the one non-log fact about the future, so the only way to read it
-      // is the table. A handle means the org armed it from `liquen schedule`; the rest the
-      // agent chose for itself, and a cron says the wake comes back.
-      console.log("\narmed wakes (the future — handle = the org's, §10):");
-      for (const t of s.wakes) {
-        const repeats = t.cron ? `  repeats=${t.cron}` : "";
-        const handle = t.name ? `  ${t.name}` : "";
-        console.log(`  ${t.fire_at}  ${t.agent}/${t.session}${handle}${repeats}  id=${t.id}`);
-        console.log(`    ${t.note}`);
-      }
-
       console.log("\nvault (keys and value field names only — secrets never print):");
       for (const r of s.vault) {
         console.log(
@@ -273,11 +222,6 @@ if (import.meta.main) {
               t.last.error ? `: ${t.last.error}` : ""
             } at ${t.last.ended} · ${took(t.last.duration_ms)} · ${t.last.tool_errors} tool errors`
             : "    last     none",
-        );
-        console.log(
-          t.next_wake
-            ? `    wake     ${t.next_wake.fire_at}${t.next_wake.name ? ` ${t.next_wake.name}` : ""}`
-            : "    wake     none armed",
         );
         console.log(
           t.last_error

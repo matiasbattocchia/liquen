@@ -11,7 +11,7 @@ const room = {
 };
 const self = { id: "ana", session_id: "mind" };
 
-Deno.test("status --json: the org's facts, and each agent's turns — running, the last one's end, the next wake, the last error", async () => {
+Deno.test("status --json: the org's facts, and each agent's turns — running, the last one's end, the last error", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
   const creds = await openCredentials(dir);
@@ -55,22 +55,6 @@ Deno.test("status --json: the org's facts, and each agent's turns — running, t
       extra: { consumed: again.id },
       parts: [{ type: "data", kind: "tool_use", data: { name: "bash", input: { command: "ls" } } }],
     });
-    await log.arm({
-      agentId: "ana",
-      sessionId: "mind",
-      fireAt: "2026-10-14T16:00:00.000Z",
-      note: "poll",
-      name: "poll",
-      conversation: "mind@ana",
-    });
-    await log.arm({
-      agentId: "ana",
-      sessionId: "mind",
-      fireAt: "2026-10-14T15:00:00.000Z",
-      note: "earlier",
-      conversation: "mind@ana",
-    });
-
     // the second turn is open, but nobody holds the lease: nothing is running
     let s = await statusOf(log, creds);
     assertEquals(s.vault, [{ key: "slack:T1", owner: null, fields: ["token", "team"] }]);
@@ -82,7 +66,6 @@ Deno.test("status --json: the org's facts, and each agent's turns — running, t
       "end_turn",
       'message from matias "hola"',
     ]);
-    assertEquals(ana.next_wake?.note, "earlier");
     assertEquals(ana.last_error?.error, "overloaded");
 
     // a held lease is a running turn: the open one

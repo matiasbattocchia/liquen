@@ -45,7 +45,6 @@ liquen log turns         # the last turns: what opened each, the errors, the tok
 liquen log errors        # what went wrong, grouped by message
 liquen log export --turn last   # one turn as a transcript
 liquen log tail -f       # watch an agent work, without a word to it
-liquen schedule --help   # wake an agent on a clock
 liquen update            # move to the newest release
 liquen stop              # end the run
 ```
