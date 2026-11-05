@@ -87,10 +87,11 @@ export interface CompactInput {
 }
 
 /** The API refused the request for its size: "prompt is too long: N tokens > M maximum"
- *  (Anthropic's wording, the one measured). The window's own estimate is chars/4 over the
- *  raw events — order-of-magnitude, and blind to inlined media — so the ceiling that
- *  counts is the API's, and this is how it says so. */
-const TOO_LONG = /prompt is too long/i;
+ *  (Anthropic's wording), "The input token count exceeds the maximum number of tokens
+ *  allowed N." (Gemini's). The window's own estimate is chars/4 over the raw events —
+ *  order-of-magnitude, and blind to inlined media — so the ceiling that counts is the
+ *  API's, and this is how it says so. */
+const TOO_LONG = /prompt is too long|input token count exceeds the maximum/i;
 
 /** The last event says the previous request was over the model's ceiling: the window has to
  *  shrink before any think can run, whatever `compactAt` says. */
