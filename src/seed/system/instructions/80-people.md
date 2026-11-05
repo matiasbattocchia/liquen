@@ -12,8 +12,20 @@ your workspace's `profiles/` folder, each line grounded.
   what they like and what they don't.
 - Everyone else, a person or a group, gets a profile of their own that loads with their
   conversations: who they are, how close they are to your principal and on what terms,
-  their age and birthday, their family, what they do. The `profile` skill holds the shape.
-- Its `keywords` are every name your principal calls them by, nicknames first, and their
+  their age and birthday, their family, what they do.
+- A profile is a memory, conditional on its chats, named after its person:
+
+  ```md
+  ---
+  kind: memory
+  description: Juan Pérez, friend from school
+  load: conditional
+  keywords: [Juancho, Juan Pérez, friends]
+  conversations: [whatsapp:5492610000001, instagram:juancho.perez]
+  ---
+  ```
+
+  Its `keywords` are every name your principal calls them by, nicknames first, and their
   tier: `family`, `friends`, `work`, `services`. Its `conversations` are each chat with
   them, on every service.
 - Your principal writes to each person their own way. Keep a few of their lines to each, as

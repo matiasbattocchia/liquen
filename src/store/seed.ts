@@ -174,7 +174,6 @@ export async function seedOrg(bed: Seedbed): Promise<void> {
       `tools/${tool}`,
       `system/tools/${tool}.md`,
     ]),
-    ["system", "", "skills/profile", "system/skills/profile.md"],
     ["system", "", "skills/workflows", "system/skills/workflows.md"],
     ["system", "", "skills/transcribe-audio", "system/skills/transcribe-audio.md"],
     ["shared", "", "instructions", "organization.md"],

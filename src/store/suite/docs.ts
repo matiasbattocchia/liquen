@@ -201,7 +201,6 @@ export function docsSuite(s: DocsSubstrate): void {
           "90-agenda",
         ]
           .map((s) => `system/instruction/instructions/${s}`),
-        "system/skill/skills/profile",
         "system/skill/skills/transcribe-audio",
         "system/skill/skills/workflows",
         ...[

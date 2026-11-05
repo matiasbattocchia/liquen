@@ -126,7 +126,7 @@ agent's working directory lies under it.
 
 # Then: the social agent
 
-Decided 3 and 4 Nov 2026. The agent learns its principal's life and people, writes to each
+Decided 3 and 4 Nov 2026; all but §7 landed 5 Nov. The agent learns its principal's life and people, writes to each
 the way the principal does, keeps debts in sight, and reads a calendar off its docs.
 
 What `new`'s mind showed on 4 Nov: asked to pass "el Gonza" his contact, it searched, listed
@@ -206,9 +206,10 @@ so the agenda shows it.
   down what the span taught as `70-memory` says, and it ends silent. The instructions are in
   the prefix from the start; the notice is a stored event, and the turn's writes stand in the
   window whether a checkpoint follows or not.
-- **Its own cursor**, the last event it covered. It runs before any checkpoint whose span
-  reaches past the cursor (`decide` opens it first), when the span grows past a size, and on
-  a daily wake.
+- **Its own cursor**, the last event it covered. It runs before any checkpoint that would
+  fold a line someone else wrote past the cursor (`decide` opens it first), and only while
+  no news waits, as a checkpoint does. A size trigger and a daily one wait until the
+  behavior before a checkpoint is seen.
 
 ## 7. The checkpoint stops at its cut
 
@@ -247,7 +248,7 @@ Argon on.
 ## Order
 
 1. Header lists, conditional docs indexed while out of view, search over docs.
-2. Profiles, links and tiers, as instructions and a template skill.
+2. Profiles, links and tiers, as an instruction with a header example.
 3. Read before writing.
 4. Unload, its cursor and its rule in `decide`; debts split in `compaction.md`.
 5. The checkpoint stopped at its cut, after the two smoke tests.
