@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { buildSummary, compactionSpan, overflowed, turnOver } from "./compact.ts";
-import { applySummary, estTokens, render, SILENCE } from "./render.ts";
+import { buildSummary, compactionSpan, overflowed, pinnedCut, turnOver } from "./compact.ts";
+import { applySummary, type Archive, estTokens, render, SILENCE } from "./render.ts";
 import type {
   Event,
   MessageEvent,
@@ -20,15 +20,29 @@ const PROMPT = () =>
   Deno.readTextFile(new URL("./seed/system/compaction.md", import.meta.url))
     .then((t) => t as string | null);
 
-/** The window as nu hands it to the checkpoint: the next think's rendering, closing on
- *  the instruction. */
-const windowOf = (events: Event[]) => (tail: string) =>
-  render({ events, docs: [], session: SESSION, now: "2026-07-20T10:05:00Z", tail }).messages;
+/** The window as nu hands it to the checkpoint: the thinks' rendering, through the span,
+ *  closing on the instruction. */
+const windowOf = (events: Event[]) => (archive: Archive) =>
+  render({ events, docs: [], session: SESSION, now: "2026-07-20T10:05:00Z", archive }).messages;
 
-/** The text of a request's last block — where the instruction lands. */
+/** The text of a request's last block — where the instruction lands, a system block's
+ *  inside it. */
 const lastText = (p: Anthropic.MessageCreateParamsNonStreaming): string => {
-  const content = p.messages.at(-1)!.content as { type: string; text?: string }[];
-  return content.at(-1)!.text ?? "";
+  const content = p.messages.at(-1)!.content as {
+    type: string;
+    text?: string;
+    content?: { text: string }[];
+  }[];
+  const b = content.at(-1)!;
+  return b.text ?? b.content?.[0]?.text ?? "";
+};
+
+/** `[compactAt, keepRecent]` that pin the cut at the first turn end at or past `events[at]`,
+ *  the window one token over the threshold. */
+const pinAt = (events: Event[], at: number): [number, number] => {
+  const compactAt = estTokens(events) - 1;
+  const span = events.slice(0, at + 1).reduce((s, e) => s + estTokens([e]), 0) - 1;
+  return [compactAt, compactAt - span];
 };
 
 const msg = (text: string, self: boolean, conv = "mind@a1"): MessageEvent => ({
@@ -78,15 +92,13 @@ Deno.test("span: covers the older closed events, keeps the recent budget", () =>
     msg("respuesta dos", true), // boundary
     msg("tres — trailing", false),
   ];
-  const span = compactionSpan(events, SESSION, 1, 200)!;
+  const span = compactionSpan(events, SESSION, ...pinAt(events, 1))!;
   assert(span !== null);
-  // ~200 est. tokens keeps the recent tail (the trailing message included); the oldest
-  // exchange gets covered
-  assertEquals(span.covers[0], events[0].id);
-  assert(span.covered.length >= 1 && span.covered.length < 4);
-  assertEquals(span.covers[1], span.covered.at(-1)!.id);
-  // the trailing message is never covered
-  assert(!span.covered.includes(events[4]));
+  // the oldest exchange gets covered, the rest stays recent
+  assertEquals(span.covered, events.slice(0, 2));
+  assertEquals(span.covers, [events[0].id, events[1].id]);
+  // the trailing message is never covered, however far the span reaches
+  assert(!compactionSpan(events, SESSION, 1, 0)!.covered.includes(events[4]));
 });
 
 Deno.test("buildSummary: mints a summary event; the request is the window as the think reads it, closing on the instruction", async () => {
@@ -103,82 +115,62 @@ Deno.test("buildSummary: mints a summary event; the request is the window as the
       canned([{ kind: "assistant", text: "## Ongoing threads\n- informe viernes" }]),
     );
   };
+  const [compactAt, keepRecent] = pinAt(events, 1);
   const out = await buildSummary({
     events,
     window: windowOf(events),
     session: SESSION,
     model: "claude-x",
-    compactAt: 1,
-    keepRecent: 0,
+    compactAt,
+    keepRecent,
     prompt: PROMPT,
   }, stepping(transport));
   assert(out !== null && out.type === "summary");
-  assertEquals(out.payload.covers[0], events[0].id);
+  // the pinned cut: the first turn end past `compactAt − keepRecent`
+  assertEquals(out.payload.covers, [events[0].id, events[1].id]);
   assertStringIncludes(out.parts[0].text, "informe viernes");
-  // the window, laid out by render: the same blocks the next think would carry
-  const think = render({ events, docs: [], session: SESSION, now: "2026-07-20T10:05:00Z" });
-  assertEquals(seen[0].messages.slice(0, -1), think.messages.slice(0, -1));
-  assertStringIncludes(JSON.stringify(seen[0].messages), "necesito el informe");
-  assertStringIncludes(JSON.stringify(seen[0].messages), "dale, lo agendo");
-  // the instruction closes the request where the anchor goes, naming where the archive ends
+  // the span, laid out by render as every think drew it, the cut its one mark
+  const think = render({
+    events,
+    docs: [],
+    session: SESSION,
+    now: "2026-07-20T10:05:00Z",
+    cut: events[1].id,
+  });
+  assertEquals(
+    seen[0].messages.slice(0, -1),
+    think.messages.slice(0, 2).map((m, i) =>
+      i === 1 ? m : {
+        ...m,
+        content: (m.content as Anthropic.TextBlockParam[]).map(({ cache_control: _, ...b }) => b),
+      }
+    ),
+  );
+  // the request ends where the span does: the instruction after the agent's own words is a
+  // user turn of text, and nothing past the cut is in it
   const tail = lastText(seen[0]);
-  assert(tail.startsWith("<archived-through>me: de nada</archived-through>\n\n"), tail);
-  assertStringIncludes(tail, "The conversation above is being archived");
-  assert(!JSON.stringify(seen[0].messages).includes("now: "));
-  assert(!tail.includes("<conversation>\n"));
+  assert(tail.startsWith('<system kind="checkpoint">\nThe conversation above'), tail);
+  const all = JSON.stringify(seen[0].messages);
+  for (const gone of ["gracias", "de nada", "now: ", "<conversation>\n"]) {
+    assert(!all.includes(gone), gone);
+  }
 });
 
-Deno.test("buildSummary: the archive ends where the kept tail begins — the quote is the last archived line", async () => {
-  const events = [
-    msg("uno", false),
-    msg("respuesta uno", true),
-    msg("dos", false),
-    msg("respuesta dos", true),
-    msg("tres", false),
-  ];
-  const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
-  const out = await buildSummary(
-    {
-      events,
-      window: windowOf(events),
-      session: SESSION,
-      model: "claude-x",
-      compactAt: 1,
-      keepRecent: 200, // keeps the last exchange and the trailing message
-      prompt: PROMPT,
-    },
-    stepping((p) => {
-      seen.push(p);
-      return Promise.resolve(canned([{ kind: "assistant", text: "## Open" }]));
-    }),
-  );
-  assert(out !== null && out.type === "summary");
-  const cut = events.find((e) => e.id === out.payload.covers[1])!;
-  assert(cut !== events.at(-1)); // something was kept
-  const who = cut.agent ? "me" : "Ana";
-  assertStringIncludes(
-    lastText(seen[0]),
-    `<archived-through>${who}: ${cut.parts[0].text}</archived-through>`,
-  );
-  // and the kept tail is in the request, in view, after the line quoted
-  assertStringIncludes(JSON.stringify(seen[0].messages), "tres");
-});
-
-Deno.test("buildSummary: a span that draws no block goes as a transcript — there is nothing to quote", async () => {
-  // a turn that worked its tools and closed in silence: its closing draws no body
+Deno.test("buildSummary: a span of tool work and a silent closing goes as the thinks drew it", async () => {
   const work = step(1);
   const quiet = msg(SILENCE, true);
   quiet.extra = { silence: true };
   const events: Event[] = [...work, quiet, msg("hola", false), msg("¡hola!", true)];
   const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const [compactAt, keepRecent] = pinAt(events, 3);
   const out = await buildSummary(
     {
       events,
       window: windowOf(events),
       session: SESSION,
       model: "claude-x",
-      compactAt: 1,
-      keepRecent: estTokens(events.slice(-2)) + 1, // keeps the last exchange, nothing more
+      compactAt,
+      keepRecent,
       prompt: PROMPT,
     },
     stepping((p) => {
@@ -188,9 +180,10 @@ Deno.test("buildSummary: a span that draws no block goes as a transcript — the
   );
   assert(out !== null && out.type === "summary", JSON.stringify(out));
   assertEquals(out.payload.covers[1], quiet.id);
-  const prompt = lastText(seen[0]);
-  assertStringIncludes(prompt, "<conversation>\n[me → bash(step 1)]");
-  assert(!prompt.startsWith("<archived-through>"));
+  const blocks = seen[0].messages.flatMap((m) => m.content as { type: string }[]);
+  assertEquals(blocks.filter((b) => b.type === "tool_use").length, 1);
+  assert(!lastText(seen[0]).includes("<conversation>\n"));
+  assert(!JSON.stringify(seen[0].messages).includes("hola"));
 });
 
 Deno.test("buildSummary: folds a previous checkpoint via the merge prompt", async () => {
@@ -329,15 +322,16 @@ Deno.test("span: a running turn is never cut, whatever it weighs — not even it
   for (let k = 1; k <= 8; k++) events.push(...step(k));
   assertEquals(compactionSpan(events, SESSION, 1, 0), null);
   assertEquals(turnOver(events, SESSION), false);
-  // the moment it closes, the same window compacts — and the whole turn is closed history
+  // the moment it closes, the same window compacts — and the whole turn is closed history:
+  // a span whose weight falls inside it takes it whole, through the closing
   const closed = [...events, msg("listo", true)];
   assertEquals(turnOver(closed, SESSION), true);
-  const span = compactionSpan(closed, SESSION, 1, 0);
+  const span = compactionSpan(closed, SESSION, estTokens(closed.slice(0, 5)) + 1, 1);
   assert(span !== null);
-  assertEquals(span.covered.at(-1), closed.at(-1)); // through the closing
+  assertEquals(span.covered.at(-1), closed.at(-1));
 });
 
-Deno.test("span: the covered span ends where a turn ends — a keepRecent cut inside the last turn falls back to the turn before it", () => {
+Deno.test("span: the covered span ends where a turn ends — the turn its weight falls in goes whole", () => {
   // the summarizer reads a turn cut in half as a turn in flight: what its kept tail settled
   // (a batch acked, a reply sent) it records as still open
   const events: Event[] = [
@@ -348,28 +342,55 @@ Deno.test("span: the covered span ends where a turn ends — a keepRecent cut in
   for (let k = 1; k <= 24; k++) events.push(...step(k));
   const closing = msg("listo, informe enviado", true);
   events.push(closing);
-  const span = compactionSpan(events, SESSION, 1, 1_000); // the last few steps
+  // a span short of the first closing cuts there
+  const span = compactionSpan(events, SESSION, ...pinAt(events, 1));
   assert(span !== null);
-  assertEquals(span.covered, events.slice(0, 2)); // through the previous turn's closing
+  assertEquals(span.covered, events.slice(0, 2));
   assertEquals(span.covers[1], events[1].id);
+  // one whose weight falls among the steps takes their turn whole
+  const whole = compactionSpan(events, SESSION, ...pinAt(events, 5));
+  assertEquals(whole?.covered, events);
 });
 
-Deno.test("span: when the turn the keepRecent cut falls in is the window's first, it goes whole", () => {
+Deno.test("span: when the window holds one turn, it goes whole", () => {
   const events: Event[] = [msg("hacé el informe", false)];
   for (let k = 1; k <= 24; k++) events.push(...step(k));
   events.push(msg("listo, informe enviado", true));
-  const span = compactionSpan(events, SESSION, 1, 1_000);
+  const span = compactionSpan(events, SESSION, 1, 0);
   assert(span !== null);
   assertEquals(span.covered, events); // closed, so covered whole rather than half
   // a previous checkpoint at the head of the window is no turn of this window's: the turn
   // after it still goes whole, and the range chains from the checkpoint's start
   const old = summaryEv(["e000", "e000"], "## Open\n- informe");
-  const chained = compactionSpan([old, ...events], SESSION, 1, 1_000);
+  const chained = compactionSpan([old, ...events], SESSION, 1, 0);
   assert(chained !== null);
   assertEquals(chained.covered, [old, ...events]);
   assertEquals(chained.covers, ["e000", events.at(-1)!.id]);
-  // and a window that fits keepRecent whole leaves its one turn alone
-  assertEquals(compactionSpan(events, SESSION, 1, 1_000_000), null);
+  // and a window under the threshold leaves its one turn alone
+  assertEquals(compactionSpan(events, SESSION, estTokens(events) + 1, 0), null);
+});
+
+Deno.test("pinnedCut: the cut stands still while the window grows, before any checkpoint is due", () => {
+  const events = [
+    msg("uno", false),
+    msg("respuesta uno", true),
+    msg("dos", false),
+    msg("respuesta dos", true),
+  ];
+  const span = estTokens([events[0]]) + estTokens([events[1]]) - 1;
+  // compactAt − keepRecent is the span's weight: the first closing reaches it
+  const at = (es: Event[]) => pinnedCut(es, SESSION, span + 1_000, 1_000);
+  assertEquals(at(events.slice(0, 1)), undefined); // no turn end yet
+  assertEquals(at(events), events[1].id);
+  const grown = [...events, msg("tres", false), msg("respuesta tres", true)];
+  assertEquals(at(grown), events[1].id);
+  // the checkpoint due on the grown window cuts there…
+  const due = estTokens(grown) - 1;
+  assertEquals(compactionSpan(grown, SESSION, due, due - span)?.covers[1], events[1].id);
+  // …and one that waited until the window outgrew compactAt by a whole span takes the
+  // next pin, leaving about keepRecent
+  const late = compactionSpan(grown, SESSION, span + 1, 1);
+  assert(late !== null && late.covers[1] > events[1].id);
 });
 
 Deno.test("span: a closing step's words stay together — the turn ends on its last row", () => {
@@ -378,10 +399,8 @@ Deno.test("span: a closing step's words stay together — the turn ends on its l
   const second = msg("respuesta, segunda parte", true);
   second.payload = { turn_id: first.payload!.turn_id };
   const events = [ask, first, second, msg("dos", false), msg("respuesta dos", true)];
-  const at = events.indexOf(first);
-  // keepRecent sized so the budget cut falls between the two halves of the first closing
-  const keep = estTokens(events.slice(at + 1)) + 1;
-  const span = compactionSpan(events, SESSION, 1, keep);
+  // the span's weight falls between the two halves of the first closing
+  const span = compactionSpan(events, SESSION, ...pinAt(events, events.indexOf(first)));
   assert(span !== null);
   assertEquals(span.covered, [ask, first, second]);
 });
@@ -447,7 +466,7 @@ Deno.test("buildSummary: a window the API refused goes as a transcript — the t
   assertStringIncludes(prompt, "bash(step 1)");
   assertStringIncludes(prompt, "out 1");
   assertStringIncludes(prompt, "[error] prompt is too long"); // and how it ended
-  assertStringIncludes(prompt, "When the conversation comes as a <conversation> block");
+  assertStringIncludes(prompt, "the block is the whole of what is archived");
 });
 
 Deno.test("buildSummary: a refused window's transcript caps the world's runs as the window does", async () => {
@@ -505,7 +524,10 @@ Deno.test("buildSummary: a dead turn's chain reaches the checkpoint whole — tr
   assertEquals(blocks.filter((b) => b.type === "tool_use").length, 3);
   assertEquals(blocks.filter((b) => b.type === "tool_result").length, 3);
   assertStringIncludes(JSON.stringify(blocks), "overloaded"); // the row that killed it
-  assertStringIncludes(lastText(seen[0]), "<archived-through>error: overloaded</archived-through>");
+  // the span ends on a user turn, so the instruction is a system block in it
+  const last = seen[0].messages.at(-1)!.content as { type: string }[];
+  assertEquals(last.at(-1)!.type, "mid_conv_system");
+  assert(lastText(seen[0]).startsWith("The conversation above is being archived"));
 });
 
 Deno.test("buildSummary: a cut checkpoint is an error, not a record", async () => {

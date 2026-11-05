@@ -126,7 +126,7 @@ agent's working directory lies under it.
 
 # Then: the social agent
 
-Decided 3 and 4 Nov 2026; all but §7 landed 5 Nov. The agent learns its principal's life and people, writes to each
+Decided 3 and 4 Nov 2026; landed 5 Nov. The agent learns its principal's life and people, writes to each
 the way the principal does, keeps debts in sight, and reads a calendar off its docs.
 
 What `new`'s mind showed on 4 Nov: asked to pass "el Gonza" his contact, it searched, listed
@@ -214,18 +214,23 @@ so the agenda shows it.
 ## 7. The checkpoint stops at its cut
 
 - **The request ends where the archive does**: the frozen prefix, the `<checkpoint>`, the
-  archived span, then `compaction.md` as a trailing system block, or as `<system
-  kind="checkpoint">` text where a lone system block is refused. No anchor, no `keepRecent`
-  tail, no `<archived-through>`: the position is the boundary, and the anchor's state stays
-  the anchor's.
-- **The cut is pinned early**: once the window holds more than `keepRecent` past a turn's
-  end, that end is the next checkpoint's cut.
+  archived span, then `compaction.md`: a system block where the span ends on a user turn,
+  and `<system kind="checkpoint">` text after the agent's own words, since the API refuses a
+  system block alone in a user message. No anchor, no `keepRecent` tail, no
+  `<archived-through>`: the position is the boundary, and the anchor's state stays the
+  anchor's.
+- **The cut is pinned early**: a pin is the first turn end past each multiple of
+  `compactAt − keepRecent`, and the cut is the latest pin the window's weight has reached.
+  A checkpoint due at `compactAt` takes the first and leaves about `keepRecent`; one that
+  waited until the window outgrew `compactAt` by a whole span takes the next, so a late
+  checkpoint never leaves more than `compactAt` behind it.
 - **The cut is kept warm.** A read lands only where an earlier request placed a breakpoint,
-  and an entry lives an hour from its last read, so the cut's entry dies an hour after the
-  turn that followed it. Every request marks the pinned cut with the fourth breakpoint. Two
-  smoke tests come first: that a breakpoint finding its entry refreshes it while a later one
-  serves the read, and that a user message may hold a system block alone. Without the first,
-  the span goes uncached: at $3 per million tokens, about $0.09 more per checkpoint.
+  or within 20 blocks behind one, and a request refreshes every entry its breakpoints reach.
+  Every think marks the pinned cut with the fourth breakpoint. Both smoke tests ran on 5 Nov
+  (Haiku 5.5, Sonnet 5, at 5 minutes and at the hour): the cut's entry stays warm while a
+  later breakpoint serves the read, and an unmarked entry 30 blocks back expires.
+- **The anchor carries the tail's mark**, on the text inside its `mid_conv_system` block,
+  which the API accepts and caches: the next request reads the anchor back too.
 
 ## 8. Contact cards
 
@@ -241,9 +246,10 @@ so the agenda shows it.
 A scribe session, which needs more definition: on the daily wake it would read, through
 search, the conversations the mind never saw (`seen="never"`), and make the cold start, the
 principal's profile and the people closest to them, from the log. A manners section in each
-profile. Caching on other providers: Gemini's implicit cache
-matches prefixes on its own, without a guarantee, and its explicit one is gone from Gemini 4
-Argon on.
+profile. Caching on other providers: Gemini's implicit cache matches prefixes on its own,
+without a guarantee (measured 5 Nov: 3.8 Flash cached 59% of prompt tokens from the second
+request on, 4 Argon 18–36% and only now and then), and its explicit one is refused from
+Gemini 4 Argon on.
 
 ## Order
 

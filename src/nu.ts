@@ -29,7 +29,7 @@ import type { DocEntry } from "./store/docs.ts";
 import type { MediaBlock } from "./store/media.ts";
 import { newId } from "./store/id.ts";
 import { LOCAL_CONNECTION, sessionAddress } from "./session.ts";
-import { buildSummary } from "./compact.ts";
+import { buildSummary, pinnedCut } from "./compact.ts";
 import {
   anchorDue,
   anchorText,
@@ -222,6 +222,7 @@ function renderInput(input: TurnInput, session: Session, env: Env, now: string):
     roster: input.roster,
     connections: input.connections,
     compactAt: input.config.compactAt,
+    cut: pinnedCut(input.events, session, input.config.compactAt, input.config.keepRecent),
   };
 }
 
@@ -247,7 +248,7 @@ export async function checkpoint(
   const summary = await buildSummary({
     system: systemOf({ events: input.events, docs: input.docs, env }),
     tools: input.tools,
-    window: (tail) => render({ ...renderInput(input, session, env, now), tail }).messages,
+    window: (archive) => render({ ...renderInput(input, session, env, now), archive }).messages,
     events: input.events,
     session,
     model: config.model,

@@ -1581,8 +1581,12 @@ before plus new rows, until a checkpoint moves the floor:
   one's tail is the next one's: a tool round-trip, and the next turn after a wake, read back
   everything already paid for (0.1× input) and write only the new rows. The hour, because
   the next request is often more than five minutes away; a 2× write on each step's new rows
-  buys 0.1× reads across the gaps between wakes. Three marks in all: the system prefix, the
-  previous request's tail, this one's.
+  buys 0.1× reads across the gaps between wakes. Four marks in all: the system prefix, the
+  previous request's tail, this one's, and the pinned cut (§5 Compaction). A read lands only
+  where an earlier request placed a mark, or within 20 blocks behind one, and a read
+  refreshes every entry the request's marks reach; an entry no request reaches dies an hour
+  after its last read. A tail that closes on the anchor carries its mark on the text inside
+  the `mid_conv_system` block, so the next request reads the anchor back too.
 
 ### Media (kept like the rest, until the checkpoint)
 
@@ -1827,7 +1831,7 @@ layer**:
   envelopes; our checkpoint is non-destructive, the log keeps everything and
   `search` reads it back). The closing's own insert is that look (the self-poke, §2), so
   the checkpoint runs the moment the turn ends, in the gap: **one model call over the
-  window, no tool called**, keeping the most recent `keepRecent` (~20K) uncovered, its
+  window, no tool called**, leaving about `keepRecent` (~20K) uncovered, its
   summary committed as the batch (publishAndRelease). Its insert wakes the next look —
   `summary` is the one self-authored non-message that passes `relevant` (§2) — which finds
   the visible window light and idles, or thinks over the record when the input a dead
@@ -1856,10 +1860,13 @@ layer**:
   The cut falls at the end of a turn — after its closing's last row, the error that killed
   it, or the cancel and what the cut turn still wrote — so every turn a span touches is in
   it whole: a summarizer reading half a turn reads it as in flight, and records as open
-  what the kept half settled. `keepRecent` is therefore a tail of whole turns: when the
-  budget falls inside a turn the span ends at the turn before it, and when no turn ends
-  before it the turn it falls in (closed, since the span runs only between turns) goes
-  whole. Within that, the cut falls where no tool step straddles it — pi's
+  what the kept half settled. **The cut is pinned**: a pin is the first turn end past each
+  multiple of `compactAt − keepRecent`, so it stands still while the window grows, and the
+  cut is the latest pin the window's weight has reached — the first until the window
+  outgrows `compactAt` by a whole span, the next after that — so a checkpoint due at
+  `compactAt` leaves about `keepRecent`, and one that waited long leaves no more. Every
+  think marks the cut with the fourth breakpoint, which keeps its entry warm for the
+  checkpoint's read. Within that, the cut falls where no tool step straddles it — pi's
   never-cut-a-tool-result rule, structurally: a step (the events sharing a call's
   `turn_id`) replays as one API turn, and stays whole on either side of the cut — and never
   after unanswered input a closing left unconsumed: a world message is INPUT, and a
@@ -1908,18 +1915,20 @@ layer**:
   doesn't), and the two forms the window takes (below).
 - **The request is the think's.** The checkpoint call carries the think's tools (offered
   with `tool_choice: none`, none called), the system prefix the think reads — instructions,
-  memories, environment — and the window as render lays it out for the next think, closing
-  on the instruction where the anchor goes. The model sees what already stands in the
-  agent's prompt and leaves it out of the record, and it reads the conversation in the form
-  it works from. And the request reads the cache the turn just wrote: the cached prefix is
-  the tools, the system, then the window through the last request's tail, all
-  byte-identical to the think's, so only the instruction is written. The
-  instruction says where the archive ends — `<archived-through>` quotes the last archived
-  line, who said it and how it begins — and what follows stays in view. Two windows go as a
-  **transcript** instead, a `<conversation>` block of the covered span with the previous
-  checkpoint beside it as `<previous-summary>`: one the API refused as too long (sending it
-  again would be refused again; the transcript cuts each tool outcome short and inlines no
-  media), and one whose span holds no line to quote (only thinking and tool traffic).
+  memories, environment — and the window as render laid it out for the thinks, through the
+  cut and no further, closing on the instruction: the position is the boundary, with no
+  anchor and nothing past the cut. The model sees what already stands in the agent's
+  prompt and leaves it out of the record, and it reads the conversation in the form it
+  works from. And the request reads its span from the cache: the tools, the system, then
+  the window through the cut, all byte-identical to the thinks' and marked at the cut by
+  each of them, so only the instruction is written. After the agent's own words the
+  instruction is a user turn of `<system kind="checkpoint">` text, since the API takes a
+  `mid_conv_system` block only after other content in a user turn; after a user turn (an
+  error, a cancel) it is that block. Two windows go as a **transcript** instead, a
+  `<conversation>` block of the covered span with the previous checkpoint beside it as
+  `<previous-summary>`: one the API refused as too long (sending it again would be refused
+  again; the transcript cuts each tool outcome short and inlines no media), and one whose
+  span draws no block.
 - **Prompt shape** = open ends, not a record: what is still open (each by the name and
   address the window shows, whose move it is, with the figures that move needs) · what a
   principal said here that the prefix does not already say. Closed threads, standing facts

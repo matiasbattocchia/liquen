@@ -26,6 +26,7 @@ goes with its words. Each skill the system describes is one file under
 | Item | Described in system | Note |
 |---|---|---|
 | `<checkpoint before="…">` | ✓ | Reading it back: `search.md` |
+| The checkpoint call's instruction, after the span: `<system kind="checkpoint">` text, or a system block | ✗ | It is `compaction.md` itself, read only by that call |
 | `<before>` atop a `<conv>` | ✓ | Its lines are from before the checkpoint |
 | `<before>` just ahead of a `<principal>` | ✓ | The far line their `re` acts on |
 | `… N not shown` inside `<before>` | ✗ | |

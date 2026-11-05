@@ -3,7 +3,7 @@ import { checkpoint, nu, type TurnConfig } from "./nu.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission } from "./mu.ts";
 import { canned } from "./testing.ts";
-import { SILENCE } from "./render.ts";
+import { estTokens, SILENCE } from "./render.ts";
 import type { Delta, Draft, Event, MessageEvent, ThinkingEvent, ToolUseEvent } from "./types.ts";
 
 // the checkpoint instruction every turn here reads: what a compacting window sends
@@ -332,12 +332,15 @@ Deno.test("checkpoint: a window under budget is nothing to do — no call, no ev
 Deno.test("checkpoint: its request opens on the think's prefix — the same tools, offered and none called", async () => {
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   const tools: Anthropic.Tool[] = [{ name: "send", input_schema: { type: "object" } }];
+  // the window one token over budget, the cut pinned at the first exchange's end
+  const compactAt = estTokens(events) - 1;
+  const span = estTokens([events[0]]) + estTokens([events[1]]) - 1;
   const input = {
     events,
     docs: [],
     tools,
     compactPrompt: PROMPT,
-    config: { ...CONFIG, compactAt: 1, keepRecent: 0 },
+    config: { ...CONFIG, compactAt, keepRecent: compactAt - span },
   };
   const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
   const transport = (p: Anthropic.MessageCreateParamsNonStreaming) => {
@@ -351,12 +354,13 @@ Deno.test("checkpoint: its request opens on the think's prefix — the same tool
   assertEquals(check.system, think.system);
   assertEquals(check.tool_choice, { type: "none" });
   assertEquals(think.tool_choice, undefined);
-  // and the window: the think's messages to the last block before its anchor, then the
-  // instruction in the anchor's place — the request reads the entry the think wrote
-  assertEquals(check.messages.slice(0, -1), think.messages.slice(0, -1));
+  // and the window: the think's messages through the cut it marked, then the instruction —
+  // the request reads the entry the thinks kept warm
+  assertEquals(check.messages.slice(0, -1), think.messages.slice(0, 2));
+  const cut = (think.messages[1].content as { cache_control?: unknown }[]).at(-1)!;
+  assertEquals(cut.cache_control, { type: "ephemeral", ttl: "1h" });
   const tail = (check.messages.at(-1)!.content as { text?: string }[]).at(-1)!.text!;
-  assertEquals(tail.startsWith("<archived-through>me: respuesta 5</archived-through>"), true, tail);
-  assertEquals(tail.endsWith("Write a checkpoint."), true);
+  assertEquals(tail, '<system kind="checkpoint">\nWrite a checkpoint.\n</system>');
 });
 
 Deno.test("nu: a checkpoint cut at max_tokens is an error, not a record — and no second call", async () => {

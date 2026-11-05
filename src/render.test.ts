@@ -692,20 +692,29 @@ const blocksOf = (ms: Anthropic.MessageParam[]): Anthropic.ContentBlockParam[] =
 
 /** cache_control marks the breakpoint; it is metadata, not content — the cached prefix is
  *  the blocks themselves, so comparisons drop it. */
-const bare = (b: Anthropic.ContentBlockParam) => {
+const bare = (b: Anthropic.ContentBlockParam): unknown => {
   const { cache_control: _mark, ...rest } = b as { cache_control?: unknown };
-  return rest;
+  return b.type === "mid_conv_system"
+    ? { ...rest, content: b.content.map((c) => bare(c as Anthropic.ContentBlockParam)) }
+    : rest;
 };
 
-const marked = (ms: Anthropic.MessageParam[]) =>
-  blocksOf(ms).filter((b) => (b as { cache_control?: unknown }).cache_control !== undefined);
+/** The block a mark sits on: the block, or the text inside a `mid_conv_system` one. */
+const markedIn = (b: Anthropic.ContentBlockParam): Anthropic.ContentBlockParam | undefined => {
+  if ((b as { cache_control?: unknown }).cache_control !== undefined) return b;
+  if (b.type !== "mid_conv_system") return undefined;
+  const inner = b.content.at(-1) as Anthropic.ContentBlockParam | undefined;
+  return (inner as { cache_control?: unknown } | undefined)?.cache_control !== undefined
+    ? inner
+    : undefined;
+};
+
+const marked = (ms: Anthropic.MessageParam[]) => blocksOf(ms).flatMap((b) => markedIn(b) ?? []);
 
 /** The blocks a breakpoint covers — what a later request must reproduce byte-for-byte. */
 const prefixOf = (ms: Anthropic.MessageParam[], nth = 0) => {
   const bs = blocksOf(ms);
-  const at = bs.flatMap((b, i) =>
-    (b as { cache_control?: unknown }).cache_control !== undefined ? [i] : []
-  );
+  const at = bs.flatMap((b, i) => markedIn(b) ? [i] : []);
   return bs.slice(0, at[nth] + 1).map(bare);
 };
 
@@ -718,10 +727,11 @@ Deno.test("every request is the last one plus new rows: its first mark is the la
     mindMsg("e03", t(2), "dos", false),
   ];
   const a = render({ ...base, events: opening, now: t(3) }).messages;
-  // the last request's tail (before the step it made) and this one's; the anchor out
+  // the last request's tail (before the step it made) and this one's, which rides the
+  // anchor the request closes on
   assertEquals(marked(a).map(txt), [
     '<principal name="Ana" at="20 Jul 10:00">uno</principal>',
-    '<principal name="Ana" at="20 Jul 10:02">dos</principal>',
+    anchorText(t(3), "UTC"),
   ]);
   for (const m of marked(a)) {
     assertEquals((m as { cache_control?: unknown }).cache_control, {
@@ -729,17 +739,17 @@ Deno.test("every request is the last one plus new rows: its first mark is the la
       ttl: "1h",
     });
   }
-  assertEquals(marked([a.at(-1)!]).length, 1); // "dos": the anchor beside it wears none
 
-  // a tool round-trip appends a step and its result: what `a` ended on is `b`'s first mark,
-  // so everything `a` paid for reads back
+  // a tool round-trip appends a step and its result, and the anchor nu wrote with it:
+  // what `a` ended on is `b`'s first mark, so everything `a` paid for reads back
   const step = [
+    anchorE("a3", t(3), anchorText(t(3), "UTC")),
     toolUseE("u1", t(3), "T2", "bash", { command: "ls" }),
     toolResultE("r1", t(3), "T2", "a.txt", "u1"),
   ];
   const b = render({ ...base, events: [...opening, ...step], now: t(4) }).messages;
   assertEquals(prefixOf(b, 0), prefixOf(a, 1));
-  assertEquals(marked(b)[1].type, "tool_result");
+  assertEquals(txt(marked(b)[1]).startsWith("now: "), true);
 
   // the turn closes and the next opens: nothing before collapses, the history only grows
   const c = render({
@@ -747,6 +757,7 @@ Deno.test("every request is the last one plus new rows: its first mark is the la
     events: [
       ...opening,
       ...step,
+      anchorE("a4", t(4), anchorText(t(4), "UTC")),
       mindMsg("e05", t(5), "vale", true, "T3"),
       mindMsg("e06", t(6), "tres", false),
     ],
@@ -756,25 +767,62 @@ Deno.test("every request is the last one plus new rows: its first mark is the la
   assertEquals(blocksOf(c).map(bare).slice(0, prefixOf(b, 1).length), prefixOf(b, 1));
 });
 
-Deno.test("the checkpoint's window is the next think's, closing on its instruction — the anchor out, the marks in place", () => {
+Deno.test("the checkpoint's window is the thinks' through the cut they marked, closing on its instruction", () => {
   const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
   const base = { docs: [] as DocEntry[], session: SESSION, zone: "UTC" };
   const events: Event[] = [
     mindMsg("e01", t(0), "uno", false),
-    mindMsg("e02", t(1), "listo", true, "T1"),
+    mindMsg("e02", t(1), "listo", true, "T1"), // the pinned cut
     mindMsg("e03", t(2), "dos", false),
-    mindMsg("e04", t(3), "vale", true, "T2"), // the turn that just closed
+    mindMsg("e04", t(3), "vale", true, "T2"),
   ];
-  const think = render({ ...base, events, now: t(4), ambient: ["cwd: /work"] }).messages;
-  const check = render({ ...base, events, now: t(4), tail: "WRITE THE CHECKPOINT" }).messages;
-  // every block but the last is the think's, mark for mark
-  assertEquals(check.slice(0, -1), think.slice(0, -1));
-  assertEquals(marked(check).map(txt), marked(think).map(txt));
-  // the instruction stands where the anchor would, a plain user block, unmarked
-  const last = blocksOf(check).at(-1)!;
-  assertEquals(last, { type: "text", text: "WRITE THE CHECKPOINT" });
-  assertEquals(JSON.stringify(check).includes("now: "), false);
-  assertEquals(JSON.stringify(check).includes("cwd: /work"), false);
+  const think = render({ ...base, events, now: t(4), ambient: ["cwd: /work"], cut: "e02" })
+    .messages;
+  // the think's fourth mark is the cut
+  assertEquals(marked(think).map(txt).includes("listo"), true);
+  const check = render({
+    ...base,
+    events,
+    now: t(4),
+    archive: { covered: new Set(["e01", "e02"]), cut: "e02", instruction: "WRITE IT" },
+  }).messages;
+  // the span is the think's, block for block, through the cut: its one mark
+  assertEquals(prefixOf(check), prefixOf(think, marked(think).map(txt).indexOf("listo")));
+  assertEquals(marked(check).map(txt), ["listo"]);
+  // after the agent's own words the instruction is a user turn of text, and nothing past
+  // the cut is drawn: no later line, no anchor
+  assertEquals(check.at(-1), {
+    role: "user",
+    content: [{ type: "text", text: '<system kind="checkpoint">\nWRITE IT\n</system>' }],
+  });
+  for (const gone of ["dos", "vale", "now: ", "cwd: /work"]) {
+    assertEquals(JSON.stringify(check).includes(gone), false, gone);
+  }
+});
+
+Deno.test("a checkpoint whose span ends on a user turn closes on a system block in it", () => {
+  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
+  const events: Event[] = [
+    mindMsg("e01", t(0), "uno", false),
+    {
+      ...mindMsg("e02", t(1), "", false),
+      type: "error",
+      parts: [{ type: "data", kind: "error", data: { error: "overloaded" } }],
+    } as Event,
+  ];
+  const check = render({
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    events,
+    now: t(2),
+    archive: { covered: new Set(["e01", "e02"]), cut: "e02", instruction: "WRITE IT" },
+  }).messages;
+  const last = (check.at(-1)!.content as Anthropic.ContentBlockParam[]).at(-1)!;
+  assertEquals(bare(last), {
+    type: "mid_conv_system",
+    content: [{ type: "text", text: "WRITE IT" }],
+  });
 });
 
 /* ── the world as XML: clustering, escaping, delivery status (§5) ── */

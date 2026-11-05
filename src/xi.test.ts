@@ -18,6 +18,7 @@ import {
 } from "./xi.ts";
 import type { Draft, Envelope, Event, Session, ToolUseEvent } from "./types.ts";
 import { type Log, openLog } from "./store/log.ts";
+import { estTokens } from "./render.ts";
 import { localFiles } from "./store/media.ts";
 import { parseDirect } from "./session.ts";
 
@@ -465,9 +466,10 @@ Deno.test("decide: the unload's cursor is the latest notice a closing answered",
   const answered = [...first, notice(first[0].id, first[1].id), silence()];
   // past the cursor only the notice and its own silence: nothing teaches, the gap compacts
   assertEquals(decideOver(answered), "compact");
-  // a line after the cursor is owed again
+  // a line after the cursor is owed again, once a checkpoint would fold it
   const later = [...answered, peerMsg(), selfMsg()];
-  assertEquals(decideOver(later), "unload");
+  const reach = { compactAt: estTokens(later) - 1, keepRecent: estTokens(later.slice(-1)) };
+  assertEquals(decide(later, SESSION, reach), "unload");
   // a notice whose turn died moves nothing: its news stands, and the dead gap compacts
   const died = [...first, notice(first[0].id, first[1].id), err("overloaded")];
   assertEquals(decideOver(died), "compact");

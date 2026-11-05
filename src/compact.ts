@@ -6,10 +6,11 @@
  * window outgrows `compactAt`, one mu call writes a structured checkpoint over the older
  * CLOSED turns — whole ones: a span ends where a turn ends, never inside one — published as
  * a `summary` event with `covers: [from, to]`. The call is the think's own request — its
- * tools (offered, none called), its system prefix, the window as render lays it out —
- * closing on the instruction where the anchor goes, so it reads the cache entry the turn
- * just wrote and the model reads the window in the form it works from; a window the API
- * refused as too long, or a span that collapses to nothing, goes as a transcript instead.
+ * tools (offered, none called), its system prefix, the window as render lays it out — cut
+ * where the span ends and closing on the instruction: the position is the boundary, and
+ * the model reads the span in the form it works from. The cut is pinned well before the
+ * checkpoint is due, and every think marks it, so the span is a cache read. A window the
+ * API refused as too long, or a span that draws nothing, goes as a transcript instead.
  * Iterative: a later compaction folds the previous summary in (pi's update rule), and
  * `covers` chains from the previous summary's start so survivors get re-covered.
  *
@@ -28,7 +29,7 @@
 import type { Draft, ErrorEvent, Event, Session, SummaryEvent } from "./types.ts";
 import {
   applySummary,
-  CANCELLED,
+  type Archive,
   closingBoundary,
   cutStands,
   deferredInput,
@@ -38,10 +39,6 @@ import {
   outcomeLine,
   ownVoice,
   scripted,
-  silenced,
-  silent,
-  textOf,
-  unloadOf,
   worldCapped,
 } from "./render.ts";
 import type { StepCall, StepInput } from "./mu.ts";
@@ -58,9 +55,6 @@ export const SUMMARY_MAX_TOKENS = 16_384;
 /** How much of one tool outcome the checkpoint transcript carries. */
 const RESULT_CHARS = 500;
 
-/** How much of the last archived line the instruction quotes. */
-const QUOTE_CHARS = 80;
-
 export interface CompactInput {
   /** The turn's interrupt (§2) — a cut checkpoint call is the cut turn's. */
   signal?: AbortSignal;
@@ -70,10 +64,10 @@ export interface CompactInput {
   /** The think's tools, offered and never called: the cached prefix is tools, then system,
    *  so only the think's own tools let the checkpoint read the think's cache entry. */
   tools?: Anthropic.Tool[];
-  /** The window as the next think reads it, closing on `tail` where the anchor goes
-   *  (render.ts): byte for byte the think's messages up to the turn that just closed, so
-   *  the request reads the entry that turn wrote and writes only its own instruction. */
-  window: (tail: string) => Anthropic.MessageParam[];
+  /** The window as the thinks read it, up to the cut and closing on the instruction
+   *  (render.ts `Archive`): byte for byte their messages up to the block every think
+   *  marked, so the request reads the span from the cache and writes only the instruction. */
+  window: (archive: Archive) => Anthropic.MessageParam[];
   events: Event[]; // the window, log order
   session: Session; // whose window it is, and where it speaks (§4)
   model: string;
@@ -179,9 +173,11 @@ function turnEnds(events: Event[], session: Session): (i: number) => boolean {
   };
 }
 
-/** Decide the covered span: everything up to the last turn end before the keep-recent
- *  tail. Null ⇒ nothing to do: under the threshold, a turn still running, or nothing
- *  coverable yet. */
+/** The pictures the window inlines weigh with the rows. */
+const weightOf = (es: Event[], session: Session) => estTokens(es) + mediaTokens(es, session);
+
+/** Decide the covered span: everything up to the cut (`cutIndex`). Null ⇒ nothing to do:
+ *  under the threshold, a turn still running, or nothing coverable yet. */
 export function compactionSpan(
   events: Event[],
   session: Session,
@@ -193,13 +189,54 @@ export function compactionSpan(
   // Chaining survives: the summary sits first in the visible window, so a new span covers
   // it and `covers[0]` chains from it.
   events = applySummary(events);
-  // the ceiling that counts is the API's: a window it refused shrinks whatever it estimates.
-  // The pictures the window inlines weigh with the rows
-  const weight = (es: Event[]) => estTokens(es) + mediaTokens(es, session);
-  if (weight(events) <= compactAt && !overflowed(events)) return null;
+  // the ceiling that counts is the API's: a window it refused shrinks whatever it estimates
+  if (weightOf(events, session) <= compactAt && !overflowed(events)) return null;
   // never under a running turn (see the header): its replayed thinking is bound to the
   // prefix as it stands
   if (!turnOver(events, session)) return null;
+  const cut = cutIndex(events, session, compactAt, keepRecent, true);
+  if (cut < 0) return null; // everything is recent, or nothing has ended — nothing coverable yet
+  const covered = events.slice(0, cut + 1);
+  const chain = covered.find((e): e is SummaryEvent => e.type === "summary");
+  const content = covered.filter((e) => e.type !== "summary");
+  if (content.length === 0) return null; // the previous checkpoint alone — nothing new
+  // the range the checkpoint stands for: from the previous checkpoint's own start (its
+  // survivors are re-covered here, so the chain never breaks) to the newest event folded in
+  const from = chain ? chain.payload.covers[0] : content[0].id;
+  const to = content.reduce((m, e) => e.id > m ? e.id : m, content[0].id);
+  return { covered, covers: [from, to] };
+}
+
+/** The pinned cut (§5): the last event of the span the next checkpoint will cover, once the
+ *  window holds one, whether or not a checkpoint is due. Every think marks it, so the
+ *  checkpoint's request reads its span from the cache. Undefined ⇒ no cut pinned yet. */
+export function pinnedCut(
+  events: Event[],
+  session: Session,
+  compactAt = DEFAULT_COMPACT_AT,
+  keepRecent = DEFAULT_KEEP_RECENT,
+): string | undefined {
+  const view = applySummary(events);
+  const cut = cutIndex(view, session, compactAt, keepRecent, false);
+  return cut < 0 ? undefined : view[cut].id;
+}
+
+/**
+ * Where the cut falls, as an index into the visible window; -1 ⇒ nowhere yet. The cut is
+ * PINNED: a turn end past a multiple of `compactAt − keepRecent`, so it stands still while
+ * the window grows behind it, and every think from then on marks the same block. A
+ * checkpoint due at `compactAt` leaves about `keepRecent` uncovered. `due` is the
+ * checkpoint asking: a dead turn is then covered whole, and a window with no pin yet (one
+ * turn heavier than the span) cuts where the keep-recent tail allows.
+ */
+function cutIndex(
+  events: Event[],
+  session: Session,
+  compactAt: number,
+  keepRecent: number,
+  due: boolean,
+): number {
+  const weight = (es: Event[]) => weightOf(es, session);
   const boundary = closingBoundary(events, session);
   const deferred = deferredInput(events, session, boundary);
   // walk back from the end keeping ~keepRecent est. tokens uncovered: `kept` = the first
@@ -222,34 +259,44 @@ export function compactionSpan(
   // avoid; nothing continues the turn, so its results are not being worked from; and the
   // record carries what it was asked and what its tools found, which is what the next
   // think answers from. `keepRecent` is a live conversation's tail, and does not apply.
-  // A live conversation's tail is whole turns: when the budget falls inside a turn, the
-  // span stops at the end of the turn before it; when no turn ends before it, the turn it
-  // falls in is closed (the span only runs between turns) and goes whole.
-  const ended = dead(events, session);
+  // A live conversation's span is whole turns: the turn the span's weight falls in goes in
+  // whole, and the cut is its end.
+  const ended = due && dead(events, session);
   const safe = cutPoints(events);
   const ends = turnEnds(events, session);
   const cuttable = (c: number) => safe.has(c) && (c <= boundary || ended) && ends(c);
   const firstDeferred = events.findIndex((e) => deferred.has(e));
   const limit = firstDeferred === -1 ? events.length : firstDeferred;
-  const reach = ended ? events.length : kept;
-  const ceiling = Math.min(reach, limit);
-  let cut = -1;
-  for (let c = ceiling - 1; c >= 0 && cut < 0; c--) if (cuttable(c)) cut = c;
+  if (ended) {
+    for (let c = limit - 1; c >= 0; c--) if (cuttable(c)) return c;
+    return -1;
+  }
+  // the pins: the first turn end past each multiple of the span's weight, the summary the
+  // window opens on weighing with it. The cut is the latest pin the window's weight has
+  // reached: the first until the window outgrows `compactAt` by a whole span, the next
+  // after that, so a checkpoint that waited long still leaves about `keepRecent`
+  const span = Math.max(1, compactAt - keepRecent);
+  const total = weight(events);
+  const reach = total <= compactAt ? 1 : Math.floor((total - compactAt) / span) + 1;
+  let pin = -1;
+  let next = 1;
+  let sum = 0;
+  for (let c = 0; c < limit && next <= reach; c++) {
+    sum += weight([events[c]]);
+    if (sum > next * span && cuttable(c)) {
+      pin = c;
+      next = Math.floor(sum / span) + 1;
+    }
+  }
+  if (pin >= 0 || !due) return pin;
+  // no pin: the span's weight lies past every turn end, so the cut is the last one before
+  // the keep-recent tail
+  const ceiling = Math.min(kept, limit);
+  for (let c = ceiling - 1; c >= 0; c--) if (cuttable(c)) return c;
   // the fallback needs content past the budget: a tail that holds every turn stays whole
   const over = events.slice(0, kept).some((e) => e.type !== "summary");
-  if (cut < 0 && over) {
-    for (let c = ceiling; c < limit && cut < 0; c++) if (cuttable(c)) cut = c;
-  }
-  if (cut < 0) return null; // everything is recent, or nothing has ended — nothing coverable yet
-  const covered = events.slice(0, cut + 1);
-  const chain = covered.find((e): e is SummaryEvent => e.type === "summary");
-  const content = covered.filter((e) => e.type !== "summary");
-  if (content.length === 0) return null; // the previous checkpoint alone — nothing new
-  // the range the checkpoint stands for: from the previous checkpoint's own start (its
-  // survivors are re-covered here, so the chain never breaks) to the newest event folded in
-  const from = chain ? chain.payload.covers[0] : content[0].id;
-  const to = content.reduce((m, e) => e.id > m ? e.id : m, content[0].id);
-  return { covered, covers: [from, to] };
+  if (over) { for (let c = ceiling; c < limit; c++) if (cuttable(c)) return c; }
+  return -1;
 }
 
 /** The covered span as a plain transcript + the previous checkpoint (if one is inside).
@@ -292,28 +339,6 @@ function transcript(
   return { text: lines.join("\n"), previous };
 }
 
-/** The last archived line as the model finds it in the window: who said it, and how it
- *  begins. Undefined when nothing in the span is a line — a message, an error, a cut, an
- *  alarm — but only thinking and tool traffic, so that span goes as a transcript instead. */
-function archivedThrough(covered: Event[], session: Session): string | undefined {
-  for (const e of [...covered].reverse()) {
-    if (silenced(e)) continue;
-    let line: string | undefined;
-    if (e.type === "message" && !silent(e)) {
-      const who = ownVoice(e, session)
-        ? "me"
-        : e.envelope.sender?.name ?? e.envelope.sender?.address ?? "?";
-      line = `${who}: ${textOf(e)}`;
-    } else if (e.type === "error") line = `error: ${errorTextOf(e)}`;
-    else if (e.type === "control") line = `cancelled: ${CANCELLED}`;
-    else if (unloadOf(e)) line = "unload";
-    else if (e.type === "alarm") line = `alarm: ${textOf(e)}`;
-    if (line === undefined) continue;
-    const flat = line.replace(/\s+/g, " ").trim();
-    return flat.length > QUOTE_CHARS ? `${flat.slice(0, QUOTE_CHARS - 1)}…` : flat;
-  }
-}
-
 /** Run the checkpoint step and mint the summary event. Null ⇒ under threshold: there was
  *  nothing to write. An error draft ⇒ there was, and it could not be written — the call
  *  never completed, or the model answered without a usable checkpoint (cut at the ceiling,
@@ -343,16 +368,15 @@ export async function buildSummary(
   // the instruction is read lazily: only a window that actually compacts pays the read
   const instruction = await input.prompt();
   if (instruction === null) return failed("system/compaction.md is missing");
-  // the window as the think reads it, the instruction naming where the archive ends — or,
+  // the window as the think read it, up to the cut and closing on the instruction — or,
   // for a window the API refused whole or a span that draws no block, the span as a
   // transcript with the previous checkpoint beside it
-  const through = overflowed(input.events)
-    ? undefined
-    : archivedThrough(span.covered, input.session);
-  let messages: Anthropic.MessageParam[];
-  if (through !== undefined) {
-    messages = input.window(`<archived-through>${through}</archived-through>\n\n${instruction}`);
-  } else {
+  let messages = overflowed(input.events) ? [] : input.window({
+    covered: new Set(span.covered.map((e) => e.id)),
+    cut: span.covered.at(-1)!.id,
+    instruction,
+  });
+  if (messages.length === 0) {
     const { text, previous } = transcript(
       span.covered,
       input.session,

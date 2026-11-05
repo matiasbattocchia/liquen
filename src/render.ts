@@ -289,6 +289,14 @@ function renderIndex(pointers: DocEntry[], on: Env["docs"] = "files"): string {
  *  well above this) — the newest-first budget in `renderMessages`. */
 const MEDIA_BUDGET = 12 * 1024 * 1024;
 
+/** A checkpoint's span as its request draws it: the events it covers, the last of them —
+ *  the cut every think marked — and the instruction that closes the request. */
+export interface Archive {
+  covered: ReadonlySet<EventId>;
+  cut: EventId;
+  instruction: string;
+}
+
 export interface RenderInput {
   events: Event[]; // the log window — render derives its turns and steps itself
   docs: DocEntry[];
@@ -302,10 +310,12 @@ export interface RenderInput {
    *  plane — joined into the request's anchor (§5). Deployment-specific: empty on edge (no
    *  persistent exec env). */
   ambient?: string[];
-  /** Text that closes the request where the anchor goes — the checkpoint's instruction
-   *  (§5): the checkpoint reads the window exactly as the next think would, so its
-   *  request is the think's up to the last block before this one. */
-  tail?: string;
+  /** The checkpoint's request (§5): the window drawn through the span it covers, closing
+   *  on its instruction, with no anchor. Absent ⇒ a think's. */
+  archive?: Archive;
+  /** The pinned cut (compact.ts `pinnedCut`): the event whose block every think marks, so
+   *  the checkpoint's request finds its span in the cache. Absent ⇒ none pinned yet. */
+  cut?: EventId;
   /** The bytes behind the attachments this render inlines, by uri — the blocks for the
    *  uris `wantedMedia` names, fetched by xi through the media port (§5). A picture stays
    *  inlined until the checkpoint, beside its kind marker (`<image/>`), whose path is the
@@ -1103,7 +1113,8 @@ function renderMessages(
     now,
     zone,
     ambient,
-    tail,
+    archive,
+    cut: pinned,
     media,
     roster,
     connections,
@@ -1386,7 +1397,13 @@ function renderMessages(
       linesOf(use.parts[0].data.input, said);
     }
   };
-  for (const e of weldOrder(events.filter((e) => scripted(e) === undefined))) {
+  // the cut's block (§5): a checkpoint's request ends on it, and every think marks it
+  const cut = archive?.cut ?? pinned;
+  let cutBlock: ContentBlockParam | undefined;
+  const drawn = events.filter((e) =>
+    scripted(e) === undefined && (archive === undefined || archive.covered.has(e.id))
+  );
+  for (const e of weldOrder(drawn)) {
     if (e.type === "prefix") {
       if (!prefixes.has(e.id)) continue;
       const sections = e.parts[0].data.sections;
@@ -1443,37 +1460,57 @@ function renderMessages(
       }
     }
     // uses of a step still waiting on a result, orphan results, other types: skipped
+    // the cut is a turn's end, which draws its own block, never into an open cluster
+    if (e.id === cut && cur) cutBlock = markable((cur as { content: ContentBlockParam[] }).content);
   }
   closeCluster();
+
+  if (archive) {
+    // the checkpoint's request ends where the span does (§5): the position is the
+    // boundary. Its one mark is the cut, the entry every think kept warm. The API takes a
+    // `mid_conv_system` block only after other content in a user turn, so after the
+    // agent's own words the instruction is a user turn of text
+    mark(cutBlock);
+    const turn = cur as { role: Role; content: ContentBlockParam[] } | null;
+    if (turn?.role === "user" && turn.content.some((b) => b.type !== "mid_conv_system")) {
+      turn.content.push(sys(archive.instruction));
+    } else {
+      emit("user", {
+        type: "text",
+        text: `<system kind="checkpoint">\n${archive.instruction}\n</system>`,
+      });
+    }
+    flush();
+    return out;
+  }
+
+  // the request's own prefix and anchor, each when it moved since the last the window
+  // holds — nu writes them with the step, where they render from then on
+  const live = systemSections(docs, env);
+  if (prefixed && !sameSections(prefixed, live)) placeAnchor(prefixDelta(prefixed, live, said));
+  const text = anchorText(now, zone, ambient);
+  if (text !== anchored) placeAnchor(anchorDelta(anchored, text));
 
   // The cache breakpoints (§5), every one an hour: the request only ever grows, so the
   // last request's tail is what this one reads back, and this one's is what the next
   // reads — often more than five minutes on, after a wake. The previous request ended
-  // where the latest step began: the block before the last assistant message.
+  // where the latest step began: the block before the last assistant message. The tail's
+  // mark rides the anchor when the request closes on one, so the next request reads the
+  // anchor back too; the pinned cut takes the fourth mark.
   const all = cur ? [...out, cur as MessageParam] : out;
   const previous = all.findLastIndex((m) => m.role === "assistant");
   if (previous > 0) mark(markable(all[previous - 1].content as ContentBlockParam[]));
   if (cur) mark(markable((cur as { content: ContentBlockParam[] }).content));
-
-  // the request's own prefix and anchor, each when it moved since the last the window
-  // holds — nu writes them with the step, where they render from then on — or the
-  // caller's tail
-  if (tail !== undefined) place("user", { type: "text", text: tail });
-  else {
-    const live = systemSections(docs, env);
-    if (prefixed && !sameSections(prefixed, live)) placeAnchor(prefixDelta(prefixed, live, said));
-    const text = anchorText(now, zone, ambient);
-    if (text !== anchored) placeAnchor(anchorDelta(anchored, text));
-  }
+  mark(cutBlock);
   flush();
   return out;
 }
 
-/** The last block a cache mark can name: `mid_conv_system` and thinking take none. */
+/** The last block a cache mark can name: thinking takes none, and a `mid_conv_system`
+ *  block takes it on the text inside. */
 function markable(blocks: ContentBlockParam[]): ContentBlockParam | undefined {
-  return blocks.findLast((b) =>
-    b.type !== "mid_conv_system" && b.type !== "thinking" && b.type !== "redacted_thinking"
-  );
+  const b = blocks.findLast((b) => b.type !== "thinking" && b.type !== "redacted_thinking");
+  return b?.type === "mid_conv_system" ? b.content.at(-1) as ContentBlockParam : b;
 }
 
 /** The anchor's text: `now:` to the minute and the live environment lines (§5). */
