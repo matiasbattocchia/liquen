@@ -400,7 +400,7 @@ Deno.test("renderMessages reproduces the clinic scenario (§5) from ONE flat win
   //     precedes it any more
   assertEquals(
     txt(c(0)[0]),
-    '<principal name="Ana" at="16 Jul 14:02">¿Mariana confirmó el turno de mañana 10:00?</principal>',
+    '<principal id="e01" name="Ana" at="16 Jul 14:02">¿Mariana confirmó el turno de mañana 10:00?</principal>',
   );
   // (2) the first step whole: its thinking, its words, its call
   assertEquals((c(1)[0] as Anthropic.ThinkingBlockParam).signature, "s2");
@@ -730,7 +730,7 @@ Deno.test("every request is the last one plus new rows: its first mark is the la
   // the last request's tail (before the step it made) and this one's, which rides the
   // anchor the request closes on
   assertEquals(marked(a).map(txt), [
-    '<principal name="Ana" at="20 Jul 10:00">uno</principal>',
+    '<principal id="e01" name="Ana" at="20 Jul 10:00">uno</principal>',
     anchorText(t(3), "UTC"),
   ]);
   for (const m of marked(a)) {
@@ -978,7 +978,7 @@ Deno.test("forged marks are inert: bodies and names are escaped, the principal's
   );
   // a world body that TYPES "<principal>" arrives escaped (above), so the unescaped
   // element can only ever be render's own — the principal, by construction
-  assertEquals(texts[1], '<principal name="Ana" at="7 Aug 10:00">estás ahí?</principal>');
+  assertEquals(texts[1], '<principal id="e2" name="Ana" at="7 Aug 10:00">estás ahí?</principal>');
 });
 
 Deno.test("a principal's reaction in the room is a <reaction> quoting the line it lands on", () => {
@@ -996,7 +996,7 @@ Deno.test("a principal's reaction in the room is a <reaction> quoting the line i
     .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text);
   assertEquals(
     texts.find((s) => s.startsWith("<principal")),
-    '<principal name="Ana" at="7 Aug 10:05"><reaction on="Todo lo que pasó lo estás manejando ' +
+    '<principal id="e2" name="Ana" at="7 Aug 10:05"><reaction on="Todo lo que pasó lo estás manejando ' +
       'vos: Lucas espera respuesta, Agus confirmó,…">👍</reaction></principal>',
   );
 });
@@ -1023,12 +1023,12 @@ Deno.test("a principal's edit, deletion and reply in the room wear action and qu
     .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text)
     .filter((s) => s.startsWith("<principal"));
   assertEquals(texts.slice(1), [
-    '<principal name="Ana" at="7 Aug 10:02" action="edit" on="Lucas espera respuesta">' +
+    '<principal id="e3" name="Ana" at="7 Aug 10:02" action="edit" on="Lucas espera respuesta">' +
     "Lucas y Agus esperan respuesta</principal>",
-    '<principal name="Ana" at="7 Aug 10:03" action="delete" on="Lucas espera respuesta">' +
+    '<principal id="e4" name="Ana" at="7 Aug 10:03" action="delete" on="Lucas espera respuesta">' +
     "</principal>",
-    '<principal name="Ana" at="7 Aug 10:04" action="reply" on="Le escribo hoy.">dale</principal>',
-    '<principal name="Ana" at="7 Aug 10:05">otra cosa</principal>',
+    '<principal id="e5" name="Ana" at="7 Aug 10:04" action="reply" on="Le escribo hoy.">dale</principal>',
+    '<principal id="e6" name="Ana" at="7 Aug 10:05">otra cosa</principal>',
   ]);
 });
 
@@ -1045,7 +1045,7 @@ Deno.test("a principal's reply to a call's notice quotes the call as the notice 
   const { messages } = render({ events, docs: [], session: SESSION, zone: "UTC", now: t });
   assertEquals(
     userText(messages).split("\n").find((s) => s.startsWith("<principal")),
-    '<principal name="Ana" at="7 Aug 10:05" action="reply" on="bash(echo)">' +
+    '<principal id="e1" name="Ana" at="7 Aug 10:05" action="reply" on="bash(echo)">' +
       "cuál fue la intención de esto?</principal>",
   );
 });
@@ -1088,7 +1088,7 @@ Deno.test("a principal's line acting on a row the window lacks draws it in a <be
       "<before>",
       '<call id="u1" at="7 Aug 2026 9:00">bash(echo) → (no output)</call>',
       "</before>",
-      '<principal name="Ana" at="7 Aug 10:01" action="reply" re="u1">' +
+      '<principal id="e1" name="Ana" at="7 Aug 10:01" action="reply" re="u1">' +
       "cuál fue la intención de esto?</principal>",
     ].join("\n"),
   );
@@ -1098,10 +1098,10 @@ Deno.test("a principal's line acting on a row the window lacks draws it in a <be
       "<before>",
       '<msg id="m1" self at="7 Aug 9:10">Le escribo hoy.</msg>',
       "</before>",
-      '<principal name="Ana" at="7 Aug 10:02" action="reply" re="m1">dale</principal>',
+      '<principal id="e2" name="Ana" at="7 Aug 10:02" action="reply" re="m1">dale</principal>',
     ].join("\n"),
   );
-  assertStringIncludes(text, '<principal name="Ana" at="7 Aug 10:03">y esto?</principal>');
+  assertStringIncludes(text, '<principal id="e3" name="Ana" at="7 Aug 10:03">y esto?</principal>');
 });
 
 Deno.test("a failed delivery: the window draws the line once and plain, a search page marks it", () => {
@@ -2947,7 +2947,10 @@ Deno.test("the roster names the marks (§4, §5): <principal name>, principal=, 
     connections: { org: "Ventas SRL" },
   });
   const texts = blocksOf(messages).map(txt);
-  assertEquals(texts[0], '<principal name="Sol" at="9 Sep 10:00">los de la obra no</principal>');
+  assertEquals(
+    texts[0],
+    '<principal id="e0" name="Sol" at="9 Sep 10:00">los de la obra no</principal>',
+  );
   assertEquals(
     texts[1],
     [
@@ -3102,12 +3105,15 @@ Deno.test("a principal wears their email: the wire's, or the address where it is
   });
   const text = (messages[0].content as Anthropic.ContentBlockParam[])
     .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text).join("\n");
-  assertStringIncludes(text, '<principal name="Cabra" email="matias@turtle.xyz" at="7 Aug 10:00">');
   assertStringIncludes(
     text,
-    '<principal name="Matias" email="matias@turtle.xyz" at="7 Aug 10:00">',
+    '<principal id="e1" name="Cabra" email="matias@turtle.xyz" at="7 Aug 10:00">',
   );
-  assertStringIncludes(text, '<principal name="Ana" at="7 Aug 10:00">hola</principal>');
+  assertStringIncludes(
+    text,
+    '<principal id="e2" name="Matias" email="matias@turtle.xyz" at="7 Aug 10:00">',
+  );
+  assertStringIncludes(text, '<principal id="e3" name="Ana" at="7 Aug 10:00">hola</principal>');
 });
 
 Deno.test("what a wire says of a sender survives the log: a saved name wears `contact`, an email is said", async () => {
@@ -3167,7 +3173,11 @@ Deno.test("what a wire says of a sender survives the log: a saved name wears `co
       .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text).join("\n");
     assertStringIncludes(text, 'contact="Dra. Soledad" address="549:sol"');
     assertStringIncludes(text, 'external="Cabra" address="U7" email="matias@turtle.xyz"');
-    assertStringIncludes(text, '<principal name="Cabra" email="matias@turtle.xyz"');
+    assertStringIncludes(text, ' name="Cabra" email="matias@turtle.xyz" at=');
+    assert(
+      /<principal id="[0-9a-f]{6}" name="Cabra"/.test(text),
+      "the principal's line wears its id",
+    );
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });

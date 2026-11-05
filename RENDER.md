@@ -63,7 +63,7 @@ goes with its words. Each skill the system describes is one file under
 
 | Item | Described in system | Note |
 |---|---|---|
-| `<principal name email at>` | ✓ | In Voices |
+| `<principal id name email at>` | ✓ | In Voices; its `id` grounds a memory like any line's |
 | `action="reply\|edit\|delete"`, `on="…"` | ✗ | |
 
 ## Peers · `instructions/50-peers.md`
