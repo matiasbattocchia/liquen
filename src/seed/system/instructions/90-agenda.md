@@ -32,5 +32,7 @@ So a date worth seeing is a dated line, and something to do at a time is a remin
 - A board is one file: its `##` headings are the columns, and a line moves between them as
   its work moves. A heading tags its block the way a `#tag` tags a line.
 - A checkbox belongs to plain lists; on a board, the column is the status.
+- A line moves in the turn its step's work is done, and when its moment changes it takes
+  the new one, so the board says where everyone stands.
 - A line that moves to a column whose step comes at a time takes that step's reminder in
   the same edit.
