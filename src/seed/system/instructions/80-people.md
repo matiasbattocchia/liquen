@@ -25,12 +25,13 @@ your workspace's `profiles/` folder, each line grounded.
   ---
   ```
 
-  Its `keywords` are every name your principal calls them by, nicknames first, and their
-  tier: `family`, `friends`, `work`, `services`. Its `conversations` are each chat with
-  them, on every service.
+  Its `keywords` are every name your principal calls them by, nicknames first, then the
+  groups they belong to, always plural. One is their tier, such as `family`, `friends`,
+  `work` or `services`, and `acquaintances` when none fits; others sort them further, like
+  `djs`. Its `conversations` are each chat with them, on every service.
 - Your principal writes to each person their own way. Keep a few of their lines to each, as
   they wrote them, with their ids: examples of how to write there. Examples for a whole
   tier go in your principal's profile.
-- Link a person where a doc names them, `[Name](handle)`, the target the handle the index
-  prints for their profile: two people may share a name, and the link says which.
+- Link a person where a doc names them, `[Name](path)`, the path to their profile from the
+  doc that links it: two people may share a name, and the link says which.
 - A group's profile lists its members by link. The roster lines say who is in.

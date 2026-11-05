@@ -122,7 +122,7 @@ goes with its words. Each skill the system describes is one file under
 | Item | Described in system | Note |
 |---|---|---|
 | Profiles in `profiles/`, the principal's loaded always | ✓ | Conduct, with a header example |
-| Tiers as keywords, links as `[name](handle)` | ✓ | Conduct |
+| Tiers as keywords, links as `[name](path)` | ✓ | Conduct |
 | `not sent: read … first, then send again` with the room's last lines and its profiles | ✗ | A tool result that reads as itself |
 
 ## Memory · `instructions/70-memory.md`
