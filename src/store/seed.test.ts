@@ -22,6 +22,7 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
         "50-peers",
         "60-knowledge",
         "70-memory",
+        "90-agenda",
       ]
         .map((s) => `system/instruction/instructions/${s}`),
       "system/skill/skills/transcribe-audio",

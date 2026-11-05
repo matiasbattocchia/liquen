@@ -1731,10 +1731,14 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   (above), and drawn where it was read as the sections that moved. Carries `now: <ts>` to
   the minute, **live environment lines** the exec plane composes (`cwd: …` ·
   `git: <branch> · N uncommitted` when the cwd is a repo), and the **standing lists** — what
-  is still in the air: surfaces that are down, background jobs, scheduled wakes, open
-  approvals (§9 — pending state, not history: the transcript already closed those calls,
-  so the only honest place for them is the block that restates the state), and the
-  **unanswered conversations**. Every list speaks one grammar, `<section> — N <things>:`
+  is still in the air: surfaces that are down, background jobs, **today**, the wakes after
+  it, open approvals (§9 — pending state, not history: the transcript already closed those
+  calls, so the only honest place for them is the block that restates the state), and the
+  **unanswered conversations**. **Today** is the day as a phone's agenda shows it
+  (`agenda.ts`): the calendar's events the log holds for the day, a series on each day its
+  rule takes; each memory line dated `@` today, under its doc and the heading it stands in;
+  and the wakes that fire today. It lists the whole day, past hours included, so it moves
+  when the day's contents do and never with the clock. Every list speaks one grammar, `<section> — N <things>:`
   and one `· <what> — <when> · <handle>` line per item — the item in the agent's own
   words, a verb with a stamp on the org's clock (or whole minutes, for a job, so its age
   moves with `now`), and the handle

@@ -194,6 +194,7 @@ export function docsSuite(s: DocsSubstrate): void {
           "50-peers",
           "60-knowledge",
           "70-memory",
+          "90-agenda",
         ]
           .map((s) => `system/instruction/instructions/${s}`),
         "system/skill/skills/transcribe-audio",

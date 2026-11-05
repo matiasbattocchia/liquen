@@ -76,7 +76,7 @@ import type { AgentRow, Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { ConnectionRow, Connections } from "./store/connections.ts";
 import { SILENT_AFTER_MS } from "./store/connections.ts";
-import type { Docs, Where } from "./store/docs.ts";
+import type { DocContext, DocEntry, Docs, Where } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { digits, sameHandle, speaksThrough } from "./store/roster.ts";
 import { foldName, namesMatch, preferProper } from "./store/names.ts";
@@ -85,7 +85,8 @@ import { roomPart } from "./room.ts";
 import { type ToolShape, wordedAll } from "./tooldoc.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
 import type { ConversationRow } from "./store/connections.ts";
-import { fireAtOf, momentOf, type Timers } from "./store/timers.ts";
+import { fireAtOf, momentOf, type TimerRow, type Timers } from "./store/timers.ts";
+import { calendarEntries, clock, dayOf, docEntries, type Entry, todayOn } from "./agenda.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import type { Sweeper } from "./store/sweep.ts";
 import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./store/media.ts";
@@ -114,6 +115,7 @@ import {
   bookEl,
   CALL_CLIP,
   callLine,
+  clockOf,
   cutStands,
   drawnIn,
   GAP_READ,
@@ -1309,7 +1311,7 @@ async function think(
   const ambient = [
     ...(ports.ambient ? await ports.ambient() : []),
     ...downOn(surfaces, config.timezone),
-    ...(await armedOn(config, ports)),
+    ...(await dayOn(config, ports, cascade, docs)),
     ...waitingOn(
       await ports.log.gates({ agentId: config.agentId, sessionId: config.sessionId }),
       config,
@@ -1574,20 +1576,64 @@ export function downOn(surfaces: ConnectionRow[], zone?: string, now = Date.now(
   ];
 }
 
-/** Scheduled wakes: this session's only (§4) — an id the anchor shows is one it can cancel.
- *  A cron carries its expression so the model knows the wake comes back, and a handle says
- *  the org armed that one (§10): the note is an instruction, not a thing this session
- *  chose, and cancelling it is a decision about the org's standing work. */
-async function armedOn(config: AgentConfig, ports: XiPorts): Promise<string[]> {
-  const rows = await ports.log.timers(config.agentId, config.sessionId);
-  if (rows.length === 0) return [];
+/** A wake's handles: a cron carries its expression so the model knows the wake comes back,
+ *  and a name says the org armed that one (§10): the note is an instruction, not a thing
+ *  this session chose, and cancelling it is a decision about the org's standing work. */
+function wakeTail(t: TimerRow): string {
+  return `${t.cron ? `, repeats \`${t.cron}\`` : ""} · id ${shortId(t.id)}${
+    t.name ? ` · the org's \`${t.name}\`` : ""
+  }`;
+}
+
+/** The day and what lies past it (§5): `today` holds the calendar's events the log has for
+ *  the day, the dated lines of the agent's memories (`agenda.ts`) and the wakes that fire
+ *  today; `scheduled` the wakes after it. This session's wakes only (§4): an id the anchor
+ *  shows is one it can cancel. A memory's lines are the agent's own, so system docs and
+ *  the shared instructions, whose examples carry dates, are not read. */
+async function dayOn(
+  config: AgentConfig,
+  ports: XiPorts,
+  cascade: DocContext,
+  docs: DocEntry[],
+  now = new Date().toISOString(),
+): Promise<string[]> {
+  const today = dayOf(now, config.timezone);
+  const wakes = await ports.log.timers(config.agentId, config.sessionId);
+  if (!today) return [];
+  const isToday = (ts: string) => {
+    const d = dayOf(ts, config.timezone);
+    return d !== undefined && d.year === today.year && d.month === today.month &&
+      d.day === today.day;
+  };
+  const rows = await (ports.history ?? ports.log).read({
+    types: ["message"],
+    broadcasts: true,
+    filter: (e) =>
+      (e as MessageEvent).parts?.some((p) => p.type === "data" && p.kind === "calendar"),
+  }) as MessageEvent[];
+  const memories = await Promise.all(
+    docs.filter((d) => d.header.kind === "memory" && d.header.scope !== "system")
+      .map(async (d) => ({
+        name: d.header.name,
+        body: d.body ?? await ports.docs.read(cascade, d.header) ?? "",
+      })),
+  );
+  const later = wakes.filter((t) => !isToday(t.fireAt));
+  const entries: Entry[] = [
+    ...calendarEntries(rows, today, config.timezone),
+    ...memories.flatMap((m) => docEntries(m.name, m.body, today)),
+    ...wakes.filter((t) => isToday(t.fireAt)).map((t) => {
+      const c = clockOf(t.fireAt, config.timezone)!;
+      const at = c.hour * 60 + c.minute;
+      return { at, slot: clock(at), text: t.note, tail: `wake${wakeTail(t)}` };
+    }),
+  ];
   return [
-    `scheduled — ${rows.length} wake${rows.length === 1 ? "" : "s"}:`,
-    ...rows.map((t) =>
-      `· ${t.note} — fires ${hhmm(t.fireAt, config.timezone)}${
-        t.cron ? `, repeats \`${t.cron}\`` : ""
-      } · id ${shortId(t.id)}${t.name ? ` · the org's \`${t.name}\`` : ""}`
-    ),
+    ...todayOn(entries),
+    ...(later.length === 0 ? [] : [
+      `scheduled — ${later.length} wake${later.length === 1 ? "" : "s"}:`,
+      ...later.map((t) => `· ${t.note} — fires ${hhmm(t.fireAt, config.timezone)}${wakeTail(t)}`),
+    ]),
   ];
 }
 

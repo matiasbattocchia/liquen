@@ -22,6 +22,7 @@ import {
 } from "./xi.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { LOCK_TTL_MS } from "./store/lock.ts";
+import { MONTHS } from "./store/timers.ts";
 import type { AgentRow } from "./store/agents.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { localFiles } from "./store/media.ts";
@@ -4242,6 +4243,82 @@ Deno.test("an armed wake lives in the ANCHOR too — beside the jobs and the ope
     // a wake the ORG armed says so, so the note reads as an instruction (§10)
     assertStringIncludes(anchor, "the org's `recordatorios`");
     assertStringIncludes(anchor, "cwd: /work"); // the other state facts still stand
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the anchor's `today`: the calendar, the memories' dated lines and the day's wakes (§5)", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
+  const transport: ModelTransport = (params) => {
+    last = params;
+    return Promise.resolve(ok([]));
+  };
+  const config = { ...CONFIG, timezone: "UTC" };
+  const docs = await docsAt(`${dir}/docs`);
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10);
+  const shown = `${now.getUTCDate()} ${MONTHS[now.getUTCMonth()]}`;
+  try {
+    await Deno.mkdir(`${dir}/docs/agents/a1/memories`, { recursive: true });
+    await Deno.writeTextFile(
+      `${dir}/docs/agents/a1/memories/grabaciones.md`,
+      `---\nkind: memory\nload: lazy\n---\n# Grabaciones\n## Por grabar\n` +
+        `- [ ] @${shown} 23:58 Leo V graba su set #grabacion (2 Nov, 8be1d0)\n` +
+        `- @${date} cumple de Lu\n`,
+    );
+    await log.arm({
+      agentId: "a1",
+      sessionId: "mind",
+      fireAt: `${date}T23:59:00.000Z`,
+      note: "mirar la agenda",
+      conversation: "mind@a1",
+    });
+    await log.arm({
+      agentId: "a1",
+      sessionId: "mind",
+      fireAt: "2030-03-04T09:30:00.000Z",
+      note: "lo de marzo",
+      conversation: "mind@a1",
+    });
+    await log.upsertConnections([{ service: "google", address: "me@x.com", agentId: "a1" }]);
+    await log.publish({
+      ts: now.toISOString(),
+      type: "message",
+      envelope: {
+        service: "google",
+        connection_address: "me@x.com",
+        conversation: { address: "me@x.com", kind: "broadcast", name: "Personal" },
+        external_id: "calendar:me@x.com:g1",
+      },
+      parts: [{
+        type: "data",
+        kind: "calendar",
+        data: {
+          gid: "g1",
+          title: "Dentista",
+          start: `${date}T23:30:00Z`,
+          end: `${date}T23:45:00Z`,
+        },
+      }],
+    } as Draft<MessageEvent>);
+    await log.publish(principalMsg("hola"));
+    await xi(config, { log, docs, transport });
+    const anchor = JSON.stringify(last?.messages.at(-1)?.content);
+    assertStringIncludes(anchor, "today — 4:");
+    assertStringIncludes(anchor, "· cumple de Lu — memories/grabaciones › Por grabar");
+    assertStringIncludes(anchor, "· 23:30-23:45 Dentista — calendar Personal");
+    assertStringIncludes(
+      anchor,
+      "· 23:58 [ ] Leo V graba su set #grabacion — memories/grabaciones › Por grabar",
+    );
+    assertStringIncludes(anchor, "· 23:59 mirar la agenda — wake · id ");
+    // a wake past today stays under `scheduled`, and today's is not listed twice
+    assertStringIncludes(anchor, "scheduled — 1 wake:");
+    assertStringIncludes(anchor, "· lo de marzo — fires 4 Mar 9:30");
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
