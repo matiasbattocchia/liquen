@@ -152,7 +152,7 @@ export async function openSqliteDocs(dir: string): Promise<DocTable> {
   });
 
   return {
-    on: "table",
+    on: "database",
     list(ctx: DocContext): Promise<DocEntry[]> {
       const found = db.prepare(
         `SELECT scope, name, text FROM docs

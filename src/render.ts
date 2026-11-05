@@ -112,7 +112,7 @@ export interface Env {
   processors?: string[];
   /** What a doc's handle opens with: `aread` from the shell on files, the `read` tool on
    *  the table (§9). Absent: files. */
-  docs?: "files" | "table";
+  docs?: "filesystem" | "database";
   /** The programs the org's folder puts on PATH, by directory. */
   bins?: BinDir[];
 }
@@ -267,7 +267,7 @@ function section(d: DocEntry): string {
  *  inlined doc wears, then how full a memory is, its description and its keywords, each
  *  when it has one. The opening line says what the handle opens with, which is the
  *  substrate's. */
-function renderIndex(pointers: DocEntry[], on: Env["docs"] = "files"): string {
+function renderIndex(pointers: DocEntry[], on: Env["docs"] = "filesystem"): string {
   const lines = pointers.map((d) => {
     const { description, keywords } = d.header;
     const tail = [
@@ -277,7 +277,7 @@ function renderIndex(pointers: DocEntry[], on: Env["docs"] = "files"): string {
     ].filter(Boolean).join(" · ");
     return `- [${d.header.handle}]${tail ? ` ${tail}` : ""}`;
   });
-  const opener = on === "table"
+  const opener = on === "database"
     ? "The handle is the doc's own; `read` one to read it:"
     : "The path is the doc's own; `aread` one to read it:";
   return `${opener}\n\n${lines.join("\n")}`;

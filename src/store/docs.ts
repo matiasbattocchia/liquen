@@ -106,7 +106,7 @@ export interface Docs {
   read(ctx: DocContext, ref: DocRef): Promise<string | null>;
   /** What the handles are: absolute paths the shell's `aread` opens, or
    *  the table's keys its `read` call opens. Absent (a test's stub): files. */
-  on?: "files" | "table";
+  on?: "filesystem" | "database";
 }
 
 /** The binaries' contracts (`bin/afs.ts`), as the agent calls them on the table. Each
@@ -137,7 +137,7 @@ export interface DocTable extends Docs {
 /** Open a filesystem-backed Docs read port rooted at the org data root. */
 export function openFileDocs(root: string): Docs {
   return {
-    on: "files",
+    on: "filesystem",
     async list(ctx: DocContext): Promise<DocEntry[]> {
       const out: DocEntry[] = [];
       for (const [scope, dir] of scopeDirs(root, ctx)) {

@@ -51,7 +51,7 @@ export async function withStore(
 export const sqlite: Substrate = {
   async fresh(): Promise<Store> {
     const dir = await Deno.makeTempDir();
-    const store = storeAt({ engine: "sqlite", dir, docs: "files" });
+    const store = storeAt({ engine: "sqlite", dir, docs: "filesystem" });
     return {
       open: store.log,
       vault: store.vault,
@@ -67,7 +67,7 @@ export function postgres(url: string): { fresh(): Promise<Store & { schema: stri
     fresh() {
       const schema = `liquen_t_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
       // the docs are the schema's own table: no data root is needed, none is given
-      const store = storeAt({ engine: "postgres", url, schema, dir: "", docs: "table" });
+      const store = storeAt({ engine: "postgres", url, schema, dir: "", docs: "database" });
       return Promise.resolve({
         schema,
         open: store.log,
@@ -129,7 +129,7 @@ export const sqliteDocs: DocsSubstrate = {
              ORDER BY scope, owner, name`,
           ).all() as { key: string; text: string }[],
         ),
-      store: () => storeAt({ engine: "sqlite", dir, docs: "table" }).docs(),
+      store: () => storeAt({ engine: "sqlite", dir, docs: "database" }).docs(),
       async close() {
         db.close();
         await docs.close();
@@ -169,7 +169,7 @@ export function postgresDocs(url: string): DocsSubstrate {
              ORDER BY scope, owner, name`,
           )) as unknown as { key: string; text: string }[],
         store: () =>
-          storeAt({ engine: "postgres", url, schema: store.schema, dir: "", docs: "table" })
+          storeAt({ engine: "postgres", url, schema: store.schema, dir: "", docs: "database" })
             .docs(),
         async close() {
           await sql.end();

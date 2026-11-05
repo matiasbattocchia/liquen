@@ -6,32 +6,32 @@
 import { assertEquals } from "@std/assert";
 import { databaseOf, openStore, storeAt } from "./mod.ts";
 
-Deno.test("databaseOf: null is SQLite under the data root; a URL is Postgres, its schema lifted off the query", () => {
-  assertEquals(databaseOf("/org/data", null), {
+Deno.test("databaseOf: sqlite is SQLite under the data root; a URL is Postgres, its schema lifted off the query", () => {
+  assertEquals(databaseOf("/org/data", "sqlite"), {
     engine: "sqlite",
     dir: "/org/data",
-    docs: "files",
+    docs: "filesystem",
   });
-  assertEquals(databaseOf("/org/data", null, "table"), {
+  assertEquals(databaseOf("/org/data", "sqlite", "database"), {
     engine: "sqlite",
     dir: "/org/data",
-    docs: "table",
+    docs: "database",
   });
   assertEquals(databaseOf("/org/data", "postgres://liquen@db:5432/liquen?schema=acme"), {
     engine: "postgres",
     url: "postgres://liquen@db:5432/liquen",
     schema: "acme",
     dir: "/org/data",
-    docs: "files",
+    docs: "filesystem",
   });
   assertEquals(
-    databaseOf("/org/data", "postgres://liquen@db:5432/liquen?sslmode=require", "table"),
+    databaseOf("/org/data", "postgres://liquen@db:5432/liquen?sslmode=require", "database"),
     {
       engine: "postgres",
       url: "postgres://liquen@db:5432/liquen?sslmode=require",
       schema: "public",
       dir: "/org/data",
-      docs: "table",
+      docs: "database",
     },
   );
 });
@@ -39,8 +39,8 @@ Deno.test("databaseOf: null is SQLite under the data root; a URL is Postgres, it
 Deno.test("storeAt: the SQLite store's docs are the files under its data root, seeded there", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    const docs = await storeAt({ engine: "sqlite", dir, docs: "files" }).docs();
-    assertEquals(docs.on, "files");
+    const docs = await storeAt({ engine: "sqlite", dir, docs: "filesystem" }).docs();
+    assertEquals(docs.on, "filesystem");
     assertEquals(docs.as, undefined);
     assertEquals(
       await docs.bed.lay("agent", "a1", "memories/x", "---\nkind: memory\n---\nx"),
@@ -69,7 +69,7 @@ Deno.test("openStore: an org with no database knob opens log.db under data/log, 
       await vault.put({ key: "token:x", value: { token: "t" } });
       assertEquals((await Deno.stat(`${root}/data/log/log.db`)).isFile, true);
       // the same store through its explicit address answers what the vault wrote
-      const again = await storeAt({ engine: "sqlite", dir: `${root}/data`, docs: "files" })
+      const again = await storeAt({ engine: "sqlite", dir: `${root}/data`, docs: "filesystem" })
         .vault();
       assertEquals((await again.get("token:x"))?.value, { token: "t" });
       await again.close();

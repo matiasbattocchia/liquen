@@ -22,7 +22,7 @@
  *     unknown key or section is a boot error — a typo must not run silently.
  *   · Placement is by audience. `system`: machinery tuning — every deployment works on the
  *     defaults. `deployment`: where the org's parts live — the log and the vault, the docs,
- *     the agents' shells — where shells off this machine need the docs in the table.
+ *     the agents' shells — where shells off this machine need the docs in the database.
  *     `organization`: this deployment's identity — the clock, the backlog, and
  *     under `organization.agents` the defaults every agent inherits. `agents.<name>`: the
  *     roster — each entry overrides `organization.agents` key by key and may declare the
@@ -194,8 +194,8 @@ export interface OrgConfig {
     prices: Price[]; // the org's own price rows, over the package's list (`prices.ts`)
   };
   deployment: {
-    database: string | null; // null ⇒ SQLite in data/log; a Postgres URL ⇒ that database
-    docs: "files" | "table"; // where the docs live: files under data/, or the store's docs table
+    database: string; // "sqlite" ⇒ SQLite in data/log; a Postgres URL ⇒ that database
+    docs: "filesystem" | "database"; // where the docs live: files under data/, or the database's docs table
     sandbox: string | null; // null ⇒ shells on this machine; "bwrap" ⇒ in bubbles; a URL ⇒ that gateway's
     mounts: string[]; // more of this machine a bubble shows, read-only unless `:rw`
     sandboxSleepMinutes: number; // a gateway sandbox's life after its last bash call
@@ -287,17 +287,17 @@ const SYSTEM: Entry[] = [
 const DEPLOYMENT: Entry[] = [
   {
     key: "database",
-    value: null,
-    doc: "where the log and the vault live: null ⇒ SQLite in data/log; a Postgres URL " +
+    value: "sqlite",
+    doc: 'where the log and the vault live: "sqlite" ⇒ SQLite in data/log; a Postgres URL ' +
       "(postgres://user@host:5432/db, ?schema= for one schema of it) ⇒ that database, " +
       "its password read from PGPASSWORD",
   },
   {
     key: "docs",
-    value: "files",
-    doc: "where the docs live: files under data/ (an agent reads and writes them from its " +
-      "shell), or table — the docs table of the database above, SQLite or Postgres, which " +
-      "an agent reaches through its read · write · edit tools",
+    value: "filesystem",
+    doc: "where the docs live: filesystem ⇒ files under data/, which an agent reads and " +
+      "writes from its shell; database ⇒ the docs table of the database above, SQLite or " +
+      "Postgres, which an agent reaches through its read · write · edit tools",
   },
   {
     key: "sandbox",
@@ -307,7 +307,7 @@ const DEPLOYMENT: Entry[] = [
       "Linux) that sees its own folder, the shared floor and the system, and reaches the " +
       "network as this machine does; the URL of a Cloudflare sandbox gateway " +
       "(sandbox/cloudflare in the package) ⇒ one sandbox per agent there, its bearer token " +
-      "read from SANDBOX_API_KEY; needs docs: table, since the sandbox cannot reach files " +
+      "read from SANDBOX_API_KEY; needs docs: database, since the sandbox cannot reach files " +
       "on this machine",
   },
   {
@@ -385,7 +385,7 @@ const AGENT: Entry[] = [
       "or a world to write to — a reply to its own principal is its plain answer, never a " +
       'call — "conversation" where it has peers and may open rooms with them, or an ' +
       'account on a wire whose rooms it may change, and "contact" where an account keeps ' +
-      "an address book the agent may write. With docs: table, read · write · edit are " +
+      "an address book the agent may write. With docs: database, read · write · edit are " +
       "offered whatever this says: they are the agent's one way to its docs",
   },
   {
@@ -468,7 +468,7 @@ const EDGE: Entry[] = [
 const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
   deployment: "where the org's parts live — the log and the vault, the docs, the agents' " +
-    "shells; shells off this machine need the docs in the table",
+    "shells; shells off this machine need the docs in the database",
   organization: "this deployment's identity — the clock, the backlog, and every agent's defaults",
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
   edge: "the org's one door — the address the world dials, the one port the org binds, " +
@@ -1171,15 +1171,15 @@ export function checkPublicUrl(v: unknown): string | null {
   return null;
 }
 
-/** What `deployment.docs` may hold: `files`, or `table`, the docs table of the store
- *  `deployment.database` names. A complaint, or null when the value is fine. */
+/** What `deployment.docs` may hold: `filesystem`, or `database`, the docs table of the
+ *  store `deployment.database` names. A complaint, or null when the value is fine. */
 export function checkDocs(v: unknown): string | null {
-  return v === "files" || v === "table" ? null : 'must be "files" or "table"';
+  return v === "filesystem" || v === "database" ? null : 'must be "filesystem" or "database"';
 }
 
 /** What `deployment.sandbox` may hold: null, `"bwrap"`, or the https URL of a sandbox gateway —
  *  plain http only toward this machine, where `wrangler dev` serves one — when the docs are
- *  in the table. A complaint, or null when the value is fine. */
+ *  in the database. A complaint, or null when the value is fine. */
 export function checkSandbox(v: unknown, docs: unknown): string | null {
   if (v === null || v === "bwrap") return null;
   const shape = 'must be null, "bwrap", or a gateway\'s https URL';
@@ -1198,9 +1198,9 @@ export function checkSandbox(v: unknown, docs: unknown): string | null {
   if (url.username || url.password) {
     return "must not carry a credential — SANDBOX_API_KEY in .env holds it";
   }
-  return docs === "table"
+  return docs === "database"
     ? null
-    : 'needs deployment.docs: "table" — a sandbox cannot reach files here';
+    : 'needs deployment.docs: "database" — a sandbox cannot reach files here';
 }
 
 /** What `deployment.mounts` may hold: absolute paths, or paths under `~/`, each perhaps ending
@@ -1219,21 +1219,20 @@ export function checkMounts(v: unknown): string | null {
   return bad === undefined ? null : `${shape}: ${JSON.stringify(bad)} is not one`;
 }
 
-/** What `deployment.database` may hold: null, or a Postgres URL naming the user, host and
- *  database — its password is a secret, so it rides `PGPASSWORD`, and the file stays a
+/** What `deployment.database` may hold: `sqlite`, or a Postgres URL naming the user, host
+ *  and database — its password is a secret, so it rides `PGPASSWORD`, and the file stays a
  *  declaration git can hold. A complaint, or null when the value is fine. */
 export function checkDatabase(v: unknown): string | null {
-  if (v === null) return null;
-  if (typeof v !== "string") return "must be null or a postgres:// URL";
+  if (v === "sqlite") return null;
+  const shape = 'must be "sqlite" or a postgres:// URL';
+  if (typeof v !== "string") return shape;
   let url: URL;
   try {
     url = new URL(v);
   } catch {
-    return "must be null or a postgres:// URL";
+    return shape;
   }
-  if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") {
-    return "must be null or a postgres:// URL";
-  }
+  if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") return shape;
   if (url.password) return "must not carry a password — PGPASSWORD in .env holds it";
   if (url.pathname.length < 2) return "must name a database (postgres://user@host:5432/db)";
   return null;

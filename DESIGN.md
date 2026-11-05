@@ -2291,7 +2291,8 @@ A row is a doc as a file is: its `text` is the whole document, and `kind`
 projected by the reader — one parser, both substrates, and a row with no frontmatter is
 likewise not in the index. The handle is `scope/name`; the owner is whoever is asking, so
 an agent names its own doc the way it names a system one. Where the docs live is the
-catalog's `deployment.docs`: files under the data root, or the table of the database
+catalog's `deployment.docs`: `filesystem`, files under the data root, or `database`, the
+table of the database
 `deployment.database` names — SQLite's in `log.db`, beside the log and the vault, or the
 Postgres schema's.
 
@@ -2966,7 +2967,7 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   connector, the doors — reaches the log, the vault and the docs through `openStore(root)`,
   which reads the catalog's `deployment.database` and `deployment.docs` and answers the store they
   name; a process never learns which engine it got, and `liquen status` prints the same
-  lines from either. Null is SQLite under `data/log`; a Postgres URL (its password in
+  lines from either. `sqlite` is SQLite under `data/log`; a Postgres URL (its password in
   `PGPASSWORD`, `?schema=` for one schema of the database) is the adapter below. The docs
   are files under the data root, or the table's rows, and the store's `docs()` carries the
   agent's reach into the table where that is where they are.
@@ -3395,10 +3396,10 @@ mu). What the system learns at runtime — grants, discovered handles, verdicts 
 the store's tables, never in the file. Its sections are split by AUDIENCE — `system`
 (machinery tuning, every deployment works on the defaults: bashWaitMs · debounceMs ·
 prices), `deployment` (where the org's parts live: database —
-null is SQLite in `data/log`, a Postgres URL is a schema of that database, its password in
-`PGPASSWORD` · docs — files, or the table of that database, either engine · sandbox — this
-machine bare or in bubbles,
-or a gateway, which needs the docs in the table · mounts · sandboxSleepMinutes),
+sqlite is SQLite in `data/log`, a Postgres URL is a schema of that database, its password in
+`PGPASSWORD` · docs — filesystem, or database, the table of that database, either engine ·
+sandbox — this machine bare or in bubbles,
+or a gateway, which needs the docs in the database · mounts · sandboxSleepMinutes),
 `organization`
 (this deployment's identity: timezone · locale ·
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus

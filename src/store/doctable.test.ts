@@ -17,14 +17,14 @@ Deno.test("openStore: docs in the table are a table of log.db, beside the log an
   try {
     await Deno.writeTextFile(
       `${root}/config.jsonc`,
-      JSON.stringify({ deployment: { docs: "table" } }),
+      JSON.stringify({ deployment: { docs: "database" } }),
     );
     const store = await openStore(root);
     const log = await store.log();
     const vault = await store.vault();
     const docs = await store.docs();
     try {
-      assertEquals(docs.on, "table");
+      assertEquals(docs.on, "database");
       assertEquals(
         await docs.as!({ agent: "a1" }).write("agent/memories/x", "---\nkind: memory\n---\nx"),
         "wrote 22 bytes to agent/memories/x",

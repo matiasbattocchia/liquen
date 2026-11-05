@@ -3,12 +3,12 @@
  *
  * The proxy terminates TLS on behalf of every host a tool dials, so it needs a leaf cert
  * for each host, signed by a root the tool trusts. That root is the liquen CA: shipped with
- * the package, laid under the data root at boot, and handed to the child ONLY as
- * `SSL_CERT_FILE` — which REPLACES the
- * system trust store (verified: gws then rejects Google's real cert as UnknownIssuer). So
- * the CA is not "one more issuer the tool trusts"; inside user space it is the ONLY one, and
- * a tool physically cannot reach any host the proxy doesn't front. The CA private key never
- * leaves the broker side (mode 600, never issued into an env).
+ * the package, laid under the data root at boot, and handed to the child as one more issuer
+ * beside the system's. `SSL_CERT_FILE` replaces a tool's trust store, so the shell gets a
+ * bundle of the system roots and this CA (`writeTrustBundle` in `sandbox.ts`); node and deno
+ * add `caPath` to their own roots. A tool reaches every host as the machine does, and the
+ * proxy answers for the ones it fronts. The CA private key never leaves the broker side
+ * (mode 600, never issued into an env).
  *
  * Leaves are minted lazily per host and cached — a handful over a process's life (the Google
  * REST hosts). openssl does the X.509 work: no pure-JS cert builder, no third-party dep.

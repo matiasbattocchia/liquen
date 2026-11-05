@@ -54,7 +54,7 @@ export async function openPgDocs(url: string, opts: { schema?: string } = {}): P
     }) as Promise<T>;
 
   return {
-    on: "table",
+    on: "database",
     async list(ctx: DocContext): Promise<DocEntry[]> {
       const found = await rows<{ scope: DocScope; name: string; text: string }>(
         sql,

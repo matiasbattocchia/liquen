@@ -100,7 +100,7 @@ Deno.test("bodies inline in kind→cascade order; lazy docs become a pull-index"
 
 // On the table the handle is the row's key, and the call that opens it is the `read` tool
 Deno.test("on the table, the index says what opens a handle: `read`, not the shell's `aread`", () => {
-  const [, index] = renderSystem(clinicDocs(), { docs: "table" });
+  const [, index] = renderSystem(clinicDocs(), { docs: "database" });
   assertEquals(
     index.text,
     "\n\n---\n\n# On-demand docs\n\n" +

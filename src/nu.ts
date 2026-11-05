@@ -103,7 +103,7 @@ export interface TurnInput {
   docs: DocEntry[]; // the cascade xi listed
   /** What the docs' handles open with: the shell's `aread` on files, the `read` tool on
    *  the table (§9). Absent: files. */
-  docsOn?: "files" | "table";
+  docsOn?: "filesystem" | "database";
   /** The programs the org's folder puts on PATH — the prefix's `# Programs` (§5). Absent:
    *  no shell. */
   bins?: BinDir[];

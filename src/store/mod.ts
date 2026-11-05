@@ -4,10 +4,10 @@
  * Every process of an org — main, the scheduler, each connector, the setup doors — reaches
  * the log, the vault and the docs through `openStore(root)`: the catalog's `deployment.database`
  * names the engine, `deployment.docs` where the docs live, and the rest of the process never
- * learns which it got. Null is SQLite in `data/log`, the embedded engine every deployment
- * starts on; a Postgres URL is a schema of that database, the same ports over a server
- * (`src/store/pg/`). The docs are files under the data root unless the catalog puts them
- * in the store's docs table, on either engine — a switch of its own, so an org whose log
+ * learns which it got. `sqlite` is SQLite in `data/log`, the embedded engine every
+ * deployment starts on; a Postgres URL is a schema of that database, the same ports over a
+ * server (`src/store/pg/`). The docs are files under the data root unless the catalog puts
+ * them in the database's docs table, on either engine — a switch of its own, so an org whose log
  * moved keeps its docs where they are.
  *
  * The URL carries no password: the driver reads `PGPASSWORD`, libpq's own name, and the
@@ -45,16 +45,22 @@ export interface Store {
  *  rows live, and where the docs are. `dir` is the org's data root: the SQLite files are
  *  under it, and so are the docs when they are files. */
 export type Database =
-  | { engine: "sqlite"; dir: string; docs: "files" | "table" }
-  | { engine: "postgres"; url: string; schema: string; dir: string; docs: "files" | "table" };
+  | { engine: "sqlite"; dir: string; docs: "filesystem" | "database" }
+  | {
+    engine: "postgres";
+    url: string;
+    schema: string;
+    dir: string;
+    docs: "filesystem" | "database";
+  };
 
 /** The address `database` names, with the files under `dir`. */
 export function databaseOf(
   dir: string,
-  database: string | null,
-  docs: "files" | "table" = "files",
+  database: string,
+  docs: "filesystem" | "database" = "filesystem",
 ): Database {
-  if (database === null) return { engine: "sqlite", dir, docs };
+  if (database === "sqlite") return { engine: "sqlite", dir, docs };
   const url = new URL(database);
   const schema = url.searchParams.get("schema") ?? "public";
   url.searchParams.delete("schema");
@@ -76,14 +82,14 @@ export function storeAt(at: Database): Store {
     return {
       log: (opts) => openLog(`${at.dir}/log`, opts),
       vault: (opts) => openCredentials(at.dir, opts),
-      docs: async () => at.docs === "files" ? files() : table(await openSqliteDocs(at.dir)),
+      docs: async () => at.docs === "filesystem" ? files() : table(await openSqliteDocs(at.dir)),
     };
   }
   return {
     log: (opts) => openPgLog(at.url, { schema: at.schema, ...opts }),
     vault: (opts) => openPgCredentials(at.url, { schema: at.schema, ...opts }),
     docs: async () =>
-      at.docs === "files" ? files() : table(await openPgDocs(at.url, { schema: at.schema })),
+      at.docs === "filesystem" ? files() : table(await openPgDocs(at.url, { schema: at.schema })),
   };
 }
 

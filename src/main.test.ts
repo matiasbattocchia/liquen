@@ -323,7 +323,7 @@ Deno.test("docs in SQLite's table: boot seeds them there, and the agent writes a
   const root = await Deno.makeTempDir();
   await Deno.writeTextFile(
     `${root}/config.jsonc`,
-    JSON.stringify({ deployment: { docs: "table" }, agents: { ana: {} } }),
+    JSON.stringify({ deployment: { docs: "database" }, agents: { ana: {} } }),
   );
   const dir = `${root}/data`;
   const note = "---\nkind: memory\ndescription: the note\n---\nremember";

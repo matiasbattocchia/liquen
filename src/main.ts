@@ -151,8 +151,8 @@ export async function start(
   // brings no catalog and runs on the local engine under its data root
   const store = storeAt(databaseOf(
     dir,
-    config.catalog?.deployment.database ?? null,
-    config.catalog?.deployment.docs ?? "files",
+    config.catalog?.deployment.database ?? "sqlite",
+    config.catalog?.deployment.docs ?? "filesystem",
   ));
   const log = await store.log();
   const docs = await store.docs(); // the doc cascade, files or the table (§8, §9)

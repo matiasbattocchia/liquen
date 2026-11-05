@@ -4658,6 +4658,6 @@ export function specsOf(
   // the offer is config's to shape (§9): `agent.tools` names what the model sees. Where the
   // docs are the table's, read · write · edit are the agent's one way to them, its own
   // instructions included: offered whatever the list says, each call still the gate's
-  const reach = (t: ToolShape) => t.spec.name in DOC_TOOLS && ports.docs.on === "table";
+  const reach = (t: ToolShape) => t.spec.name in DOC_TOOLS && ports.docs.on === "database";
   return config.tools ? all.filter((t) => config.tools!.includes(t.spec.name) || reach(t)) : all;
 }

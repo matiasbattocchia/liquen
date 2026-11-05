@@ -248,7 +248,7 @@ export function docsSuite(s: DocsSubstrate): void {
       // and the store hands the same bed out where the catalog puts the docs in the table
       const opened = await store();
       try {
-        assertEquals(opened.on, "table");
+        assertEquals(opened.on, "database");
         assertEquals(typeof opened.as, "function");
         assertEquals(await opened.bed.laid("system", "", "skills"), true);
         // a folder is a whole segment: `skill` is not `skills`

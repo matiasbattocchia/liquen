@@ -520,7 +520,7 @@ Deno.test("organization.agents.mind: the org's default, an entry's override, and
   }
 });
 
-Deno.test("deployment.database: null or a Postgres URL without its password — the secret rides PGPASSWORD", async () => {
+Deno.test('deployment.database: "sqlite" or a Postgres URL without its password — the secret rides PGPASSWORD', async () => {
   await withDir(async (root) => {
     const write = (database: unknown) =>
       Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ deployment: { database } }));
@@ -529,8 +529,10 @@ Deno.test("deployment.database: null or a Postgres URL without its password — 
       (await readConfig(root)).deployment.database,
       "postgres://liquen@db.internal:5432/liquen?schema=acme",
     );
+    await write("sqlite");
+    assertEquals((await readConfig(root)).deployment.database, "sqlite");
     await write(null);
-    assertEquals((await readConfig(root)).deployment.database, null);
+    await assertRejects(() => readConfig(root), Error, '"sqlite" or a postgres:// URL');
     await write("postgres://liquen:hunter2@db.internal:5432/liquen");
     await assertRejects(() => readConfig(root), Error, "PGPASSWORD");
     await write("mysql://liquen@db.internal/liquen");
@@ -540,24 +542,24 @@ Deno.test("deployment.database: null or a Postgres URL without its password — 
   });
 });
 
-Deno.test("deployment.docs: files, or table — the docs table of the store, either engine", async () => {
+Deno.test("deployment.docs: filesystem, or database — the docs table of the store, either engine", async () => {
   await withDir(async (root) => {
     const write = (deployment: unknown) =>
       Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ deployment }));
     await write({});
-    assertEquals((await readConfig(root)).deployment.docs, "files");
-    await write({ docs: "table", database: "postgres://liquen@db.internal:5432/liquen" });
-    assertEquals((await readConfig(root)).deployment.docs, "table");
+    assertEquals((await readConfig(root)).deployment.docs, "filesystem");
+    await write({ docs: "database", database: "postgres://liquen@db.internal:5432/liquen" });
+    assertEquals((await readConfig(root)).deployment.docs, "database");
+    await write({ docs: "database" });
+    assertEquals((await readConfig(root)).deployment.docs, "database");
     await write({ docs: "table" });
-    assertEquals((await readConfig(root)).deployment.docs, "table");
-    await write({ docs: "rows" });
-    await assertRejects(() => readConfig(root), Error, '"files" or "table"');
+    await assertRejects(() => readConfig(root), Error, '"filesystem" or "database"');
   });
 });
 
-Deno.test("deployment.sandbox: null, or a gateway's https URL when the docs are in the table", async () => {
+Deno.test("deployment.sandbox: null, or a gateway's https URL when the docs are in the database", async () => {
   await withDir(async (root) => {
-    const write = (sandbox: unknown, docs = "table") =>
+    const write = (sandbox: unknown, docs = "database") =>
       Deno.writeTextFile(
         `${root}/config.jsonc`,
         JSON.stringify({
@@ -577,8 +579,8 @@ Deno.test("deployment.sandbox: null, or a gateway's https URL when the docs are 
     await assertRejects(() => readConfig(root), Error, "https URL");
     await write("https://key@liquen-sandbox.acme.workers.dev");
     await assertRejects(() => readConfig(root), Error, "SANDBOX_API_KEY");
-    await write("https://liquen-sandbox.acme.workers.dev", "files");
-    await assertRejects(() => readConfig(root), Error, 'needs deployment.docs: "table"');
+    await write("https://liquen-sandbox.acme.workers.dev", "filesystem");
+    await assertRejects(() => readConfig(root), Error, 'needs deployment.docs: "database"');
   });
 });
 

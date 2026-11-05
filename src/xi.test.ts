@@ -1212,15 +1212,15 @@ Deno.test("specsOf: where the docs are the table's, read · write · edit stand 
     write: shape("write"),
     edit: shape("edit"),
   };
-  const names = (on: "files" | "table") =>
+  const names = (on: "filesystem" | "database") =>
     specsOf(
       { exec, docs: { on } } as unknown as XiPorts,
       { ...CONFIG, tools: ["search", "bash"] },
     ).map((t) => t.spec.name);
   // the scaffold's list names none of them, and the agent still reaches its own docs
-  assertEquals(names("table"), ["search", "bash", "read", "write", "edit"]);
+  assertEquals(names("database"), ["search", "bash", "read", "write", "edit"]);
   // on files they are no docs tools of the harness's: the list decides, as for any exec tool
-  assertEquals(names("files"), ["search", "bash"]);
+  assertEquals(names("filesystem"), ["search", "bash"]);
 });
 
 Deno.test("unknownTool: a program on PATH called as a tool is pointed through bash, with its usage", async () => {
