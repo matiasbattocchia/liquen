@@ -45,6 +45,7 @@ import {
   SILENCE,
   silent,
   textOf,
+  unloadOf,
 } from "./render.ts";
 import { describeCall, lineOf } from "./describe.ts";
 import { answerLine } from "./verdict.ts";
@@ -538,6 +539,9 @@ function viaOf(e: Event): { service?: string } | undefined {
 
 /** A fired wake, as a row: when, and the note the agent left itself when it scheduled it. */
 function alarmRow(e: AlarmEvent, stamp: (ts: string) => string): string {
+  // the harness's own wake, the way a checkpoint is the harness's own write
+  const span = unloadOf(e);
+  if (span) return `${stamp(e.ts)}${DIM}≡ unload since ${shortId(span.since)}${RESET}`;
   return `${stamp(e.ts)}${YELLOW}⏰ ${e.parts[0]?.text ?? ""}${RESET}`;
 }
 

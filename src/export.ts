@@ -15,7 +15,7 @@ import type { Event, Json, SessionRef, ToolResultEvent, ToolUseEvent } from "./t
 import type { UsageRow } from "./store/log.ts";
 import type { ExecRecord } from "./xi.ts";
 import { describeCall, lineOf } from "./describe.ts";
-import { errorTextOf, hhmm, ownVoice, shortId, textOf } from "./render.ts";
+import { errorTextOf, hhmm, ownVoice, shortId, textOf, unloadOf } from "./render.ts";
 import { sessionAddress } from "./session.ts";
 import {
   count,
@@ -163,6 +163,11 @@ export function transcript(
     }
     if (e.type === "control") {
       out.push("", `**${hhmm(e.ts, zone)} ${e.envelope.sender?.name ?? ""} ${textOf(e)}**`);
+      continue;
+    }
+    const span = unloadOf(e);
+    if (span) {
+      out.push("", `## ≡ ${hhmm(e.ts, zone)} unload since ${shortId(span.since)}`);
       continue;
     }
     if (e.type === "alarm") {

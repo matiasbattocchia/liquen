@@ -2313,6 +2313,37 @@ Deno.test("a fired wake renders as the harness handing back the agent's own note
   );
 });
 
+Deno.test("an unload's notice names where its span starts, by the line's handle", () => {
+  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
+  const notice: Event = {
+    id: "0190a0b0-0000-7000-8000-0000000000e2",
+    ts: t(1),
+    type: "alarm",
+    envelope: {
+      service: "local",
+      connection_address: "default",
+      conversation: { address: "mind@a1" },
+    },
+    extra: {
+      unload: {
+        since: "0190a0b0-0000-7000-8000-00000003f9a2",
+        through: "0190a0b0-0000-7000-8000-0000000000e1",
+      },
+    },
+    parts: [{ type: "text", kind: "alarm", text: "" }],
+  } as Event;
+  const { messages } = render({
+    events: [mindMsg("e01", t(0), "hola", false), notice],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t(2),
+  });
+  const texts = blocksOf(messages).map(txt);
+  assert(texts.some((s) => s.includes('<system kind="unload" since="03f9a2"></system>')));
+  assert(!texts.some((s) => s.includes('kind="alarm"')));
+});
+
 Deno.test("a ruling stands in the session's room, closed or trailing, whoever ruled; the ask draws nothing", () => {
   const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
   const room = (conversation = "mind@a1") => ({

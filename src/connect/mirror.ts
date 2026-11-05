@@ -64,6 +64,7 @@ import {
   shortId,
   silenced,
   silent,
+  unloadOf,
 } from "../render.ts";
 import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
 import { roomWords } from "../room.ts";
@@ -572,6 +573,8 @@ async function ccParts(
     const said = isLate(e) ? failedCallOf(e) : failureOf(e);
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${lastOf(said)}` }]);
   }
+  // an unload is the harness's word to the agent alone: its turn writes docs and ends silent
+  if (unloadOf(e)) return null;
   if (e.type === "alarm") {
     // a wake the agent scheduled, its own note handed back: what the turn after it acts on
     const note = (e as AlarmEvent).parts[0]?.text ?? "";

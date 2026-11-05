@@ -130,6 +130,7 @@ goes with its words. Each skill the system describes is one file under
 |---|---|---|
 | A line's `id`, as the ground of a memory | ✓ | Conduct |
 | `<checkpoint>`, as short-term memory | ✓ | Conduct |
+| `<system kind="unload" since="…">` | ✓ | Asks for conduct: write the span down, answer nobody |
 
 ## Agenda · `instructions/90-agenda.md`
 

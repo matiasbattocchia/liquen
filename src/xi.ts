@@ -149,14 +149,16 @@ import {
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { checkpoint, type ModelTransport, nu, type TurnConfig } from "./nu.ts";
-import { compactionSpan } from "./compact.ts";
+import { compactionSpan, overflowed } from "./compact.ts";
+import { foldsUnread, unloadNotice, unloadOwed, unloadSpan } from "./unload.ts";
 
 /* ── the poke, the class filter, and the owed-derivation ──────────────── */
 
 /** The decision: what the log owes right now (§2). `ignore` ⇒ nothing owed — quiescence,
  *  the next move is a human's, or we just failed. `compact` ⇒ nothing owed either, and
- *  the window is over budget: the idle gap is when a checkpoint runs (§5). */
-export type Decision = "think" | "act" | "ignore" | "compact";
+ *  the window is over budget: the idle gap is when a checkpoint runs (§5). `unload` ⇒ the
+ *  gap is spent raising the notice that opens an unload turn (unload.ts). */
+export type Decision = "think" | "act" | "ignore" | "compact" | "unload";
 
 /** Policy, per CALL — the name, the arguments, and where the call LANDS (§9): a dispatching
  *  tool carries a target, and that is what a scoped rule matches on. */
@@ -219,6 +221,10 @@ export interface Wake {
    *  compacting it, and what the checkpoint leaves uncovered. Unset ⇒ the catalog's. */
   compactAt?: number;
   keepRecent?: number;
+  /** The unload (unload.ts): what the span since the last one may weigh, and the org-clock
+   *  "HH:MM" of the daily one; null ⇒ none. Unset ⇒ the catalog's. */
+  unloadAt?: number;
+  unloadDaily?: string | null;
 }
 
 /** Decide — once, from one window — what is owed. Position-aware, so a late invocation that
@@ -244,18 +250,42 @@ export function decide(
   // The turn that just ended ends the same way whether it closed, failed or was cut — and
   // the one that failed for its size (the API's ceiling, the only hard one) is exactly the
   // window that has to shrink before the next think can run.
-  const idle = (): Decision => (needsCheckpoint(events, session, wake) ? "compact" : "ignore");
-  if (justFailed(events)) return idle(); // idle-after-error
-  if (cutStands(events, session)) return idle(); // the principal cut it: idle until news
+  const idle = (patient: boolean): Decision => gap(events, session, wake, now, patient);
+  if (justFailed(events)) return idle(false); // idle-after-error
+  if (cutStands(events, session)) return idle(false); // the principal cut it: idle until news
   if (unclosedChain(events, session)) return "think";
   const v = attention(events, session, wake, now);
-  return v === "ignore" ? idle() : v;
+  return v === "ignore" ? idle(true) : v;
 }
 
-/** The window is over its budget and a checkpoint can be written from it now: the same
- *  question the checkpoint turn asks, so the verdict and the work never disagree (§5). */
-function needsCheckpoint(events: Event[], session: Session, wake: Wake): boolean {
-  return compactionSpan(events, session, wake.compactAt, wake.keepRecent) !== null;
+/** What the idle gap is spent on (§5): an unload when one is owed, then a checkpoint when
+ *  the window is over budget, else nothing. The span is the question the checkpoint turn
+ *  asks, so the verdict and the work never disagree. An unload's turn closes over the whole
+ *  window, so it waits until no news does. A `patient` gap is attention's quiet one, whose
+ *  news a later look answers: there a checkpoint that would fold a line no unload read
+ *  waits for that look and the unload after it. A dead turn's gap is not: nothing answers
+ *  its news until new input comes, so it compacts as it stands, and so does a window the
+ *  API refused, which no think can read until it shrinks. */
+function gap(
+  events: Event[],
+  session: Session,
+  wake: Wake,
+  now: number,
+  patient: boolean,
+): Decision {
+  const span = compactionSpan(events, session, wake.compactAt, wake.keepRecent);
+  if (overflowed(events)) return span ? "compact" : "ignore";
+  const quiet = newsOf(events, session).length === 0;
+  if (quiet && unloadOwed(events, session, wake, now, span?.covered ?? null)) return "unload";
+  if (!span) return "ignore";
+  return quiet || !patient || !foldsUnread(events, session, span.covered) ? "compact" : "ignore";
+}
+
+/** The unload's work (unload.ts): no model call, only the notice, whose wake is the turn
+ *  that writes the span down. */
+function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
+  const span = unloadSpan(events, session);
+  return span ? [unloadNotice(session, span)] : [];
 }
 
 /* ── attention (§2): three wake classes over the unanswered news ────────── */
@@ -1235,6 +1265,8 @@ export async function xi(
       ? await act(events, got === "stolen", session, config, gate, ports, signal)
       : signal.aborted
       ? []
+      : v === "unload"
+      ? raiseUnload(events, session)
       : v === "think"
       ? [
         ...await standingDenies(events, session, ports),

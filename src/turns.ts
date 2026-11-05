@@ -19,7 +19,7 @@ import type { ReadQuery, UsageRow } from "./store/log.ts";
 import { changedInputs, type Inputs } from "./inputs.ts";
 import { type Cost, costOfAll, dollars, type Price } from "./prices.ts";
 import { sessionAddress } from "./session.ts";
-import { ownComplex, ownVoice, scripted, shortId, textOf } from "./render.ts";
+import { ownComplex, ownVoice, scripted, shortId, textOf, unloadOf } from "./render.ts";
 import { userInfo } from "node:os";
 
 /** Token counts, summed over usage rows. */
@@ -41,6 +41,7 @@ export interface Opener {
     | "call"
     | "cancel"
     | "checkpoint"
+    | "unload"
     | "unknown";
   id?: EventId;
   ts?: string;
@@ -123,6 +124,7 @@ export function openerOf(e: Event, ref: SessionRef): Opener | undefined {
       };
     }
     case "alarm": {
+      if (unloadOf(e)) return { kind: "unload", ...at };
       const timer = (e.extra?.timer ?? {}) as { name?: string };
       const text = textOf(e);
       return timer.name
@@ -467,6 +469,8 @@ export function openedBy(o: Opener): string {
       return "cancel";
     case "checkpoint":
       return "checkpoint";
+    case "unload":
+      return "unload";
     case "update":
       return `update on ${o.text || "a call"}`;
     default:

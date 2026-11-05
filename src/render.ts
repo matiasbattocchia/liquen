@@ -2241,7 +2241,7 @@ function checkpointEl(e: SummaryEvent, window: Event[]): string {
  *  text, since every world body is escaped on the way in. `kind` is the type of the event
  *  it renders, so the four read apart without the sentence having to announce itself. */
 function systemEl(
-  kind: "error" | "control" | "alarm" | "tool_result",
+  kind: "error" | "control" | "alarm" | "unload" | "tool_result",
   text: string,
   flags: string[] = [],
 ): string {
@@ -2446,7 +2446,20 @@ export function errorTextOf(e: HarnessErrorEvent): string {
  *  ventriloquized as the principal. No room to name: an alarm fires in the session that
  *  armed it, which is the session reading it. */
 function alarmLine(e: AlarmEvent): string {
+  const span = unloadOf(e);
+  if (span) return systemEl("unload", "", [`since="${shortId(span.since)}"`]);
   return systemEl("alarm", e.parts[0]?.text ?? "");
+}
+
+/** The span an unload notice covers (unload.ts): an alarm the harness raises for itself,
+ *  naming the first line it asks to be written down and the last event it reads through.
+ *  Undefined for any other row. */
+export function unloadOf(e: Event): { since: EventId; through: EventId } | undefined {
+  if (e.type !== "alarm") return undefined;
+  const u = e.extra?.unload as { since?: unknown; through?: unknown } | undefined;
+  return typeof u?.since === "string" && typeof u.through === "string"
+    ? { since: u.since, through: u.through }
+    : undefined;
 }
 
 /** A ruling on an ask (§9), in the session's room where it happened, kept like any line
