@@ -537,8 +537,8 @@ const same = (parts: Part[]): CC => () => ({ parts });
  *  `[agent asks] …` for a gate waiting on the principal, `[via <surface>] …` for a
  *  principal's own words replayed as output — `[<username> via <surface>]` on a surface
  *  that is another principal's — a `/y`, a `/n`, a `/cancel` among them — and `[system] …`
- *  for what the harness says there: a failure, a wake, a cut turn, a room joining or
- *  leaving the mind. Null ⇒ nothing to say
+ *  for what the harness says there: a failure, a wake, an unload, a cut turn, a room joining
+ *  or leaving the mind. Null ⇒ nothing to say
  *  there: a checkpoint (the presence line said the mind was compacting), a result that
  *  went fine, an approved call's included (the card asked for it, the `/y` gave it), a
  *  call refused (its `/n` said so) or cut (its `/cancel` said so), a settlement (the line that gave it said so; its row
@@ -573,8 +573,11 @@ async function ccParts(
     const said = isLate(e) ? failedCallOf(e) : failureOf(e);
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${lastOf(said)}` }]);
   }
-  // an unload is the harness's word to the agent alone: its turn writes docs and ends silent
-  if (unloadOf(e)) return null;
+  // an unload opens a turn that writes docs and ends silent: its line says what the calls
+  // after it are for
+  if (unloadOf(e)) {
+    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` 🧠 ${w.unload}` }]);
+  }
   if (e.type === "alarm") {
     // a reminder of the agent's own lines, handed back: what the turn after it acts on
     const note = (e as AlarmEvent).parts[0]?.text ?? "";

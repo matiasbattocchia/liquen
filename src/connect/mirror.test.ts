@@ -881,7 +881,7 @@ Deno.test("mirror fan-out: a /cancel crosses as the principal's line, and that i
   });
 });
 
-Deno.test("mirror fan-out: a wake and a failure cross as `[system]`; a checkpoint and an unload do not", async () => {
+Deno.test("mirror fan-out: a wake, an unload and a failure cross as `[system]`; a checkpoint does not", async () => {
   await withMirror(
     async ({ publish, inConv, waitFor }) => {
       const harness = (
@@ -906,7 +906,7 @@ Deno.test("mirror fan-out: a wake and a failure cross as `[system]`; a checkpoin
       await harness("summary", [{ type: "text", kind: "text", text: "…" }], {
         covers: ["a", "b"],
       });
-      // an unload is the harness's word to the agent alone
+      // an unload says what the turn after it is for
       await harness("alarm", [{ type: "text", kind: "alarm", text: "" }], {}, {
         unload: { since: "a", through: "b" },
       });
@@ -945,8 +945,9 @@ Deno.test("mirror fan-out: a wake and a failure cross as `[system]`; a checkpoin
           is_error: true,
         },
       }], { ref_id: "u5", turn_id: "t3" });
-      await waitFor(async () => (await inConv("549")).length === 4);
+      await waitFor(async () => (await inConv("549")).length === 5);
       assertEquals((await inConv("549")).map(textOf), [
+        "`[sistema]` 🧠 anotando lo que aprendió",
         "`[sistema]` ⏰ recordarle a Mecha el mail",
         "`[sistema]` ✗ Command exited with code 1",
         "`[sistema]` ✗ send(to: Vivian) — the bridge is down",
