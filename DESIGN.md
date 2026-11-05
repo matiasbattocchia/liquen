@@ -3712,6 +3712,25 @@ on Postgres).
   yield-policy inputs (confidence/presence/latency/sensitivity; `suggest` = draft-for-one-tap);
   operator-console UX (two-pane chat + pinned context; Teach/Whisper/Why/Promote);
   cross-contact info-flow (scrubbed up-promotion, memory-laundering guard).
+- **An Android phone**, the principal's own. It runs Linux three ways: Termux, a userland
+  with no root, where Deno runs inside a `proot-distro` Debian; Android's Linux Terminal, a
+  Debian VM on Android 15 and later; or ADB from another machine, which drives the phone
+  rather than running on it. By value:
+  - **A surface**: SMS sent and received (Termux:API, or an SMS gateway app), the call log
+    and who is calling, and the notification listener, which turns what any app posts (a
+    bank alert, an Instagram DM, a delivery) into an event though the app has no API. A
+    connector like the WhatsApp bridge.
+  - **Senses as calls**: location, a camera shot, the clipboard, the battery, sensors,
+    speech, a vibration for attention, a 2FA code arriving by SMS.
+  - **Hands for apps with no API**: ADB and the UI tree read a screen as text and tap and
+    type into it. Fragile, and acting as the principal inside an app goes through the gate
+    like any call.
+  - **An exec plane**, the weakest: Android kernels mostly refuse the unprivileged
+    namespaces `bwrap` needs, `proot` traces every call, and Doze and the phantom process
+    killer end background work without a wake lock and changed developer settings.
+  
+  The phone holds the principal's whole life, so what runs there offers a narrow set of
+  gated calls (send this SMS, read the notifications since a moment), never an open shell.
 - Rejected & why (for future selves): **A2A** as gateway protocol (peer-protocol ceremony
   vs driver shape — open-bsp already ships A2A types); **MCP channels** for ingestion
   (local-subprocess topology, can't publish to a log).
