@@ -525,11 +525,14 @@ Deno.test({
       } as Draft<MessageEvent>);
       return file.uri;
     };
+    // run as the agent's shim runs it: its files, and its own door alone
     const aread = async (...args: string[]) => {
       const out = await new Deno.Command(Deno.execPath(), {
         args: [
           "run",
-          "-A",
+          "--allow-read",
+          "--allow-write",
+          `--allow-net=unix:${dir}/agents/ana/door.sock`,
           import.meta.resolve("./bin/afs.ts"),
           "--door",
           `${dir}/agents/ana/door.sock`,

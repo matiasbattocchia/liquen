@@ -934,10 +934,13 @@ async function layShims(dir: string, agentId: string): Promise<string> {
     await Deno.chmod(path, 0o755);
   };
   for (const [name, verb] of [["aread", "read"], ["awrite", "write"], ["aedit", "edit"]]) {
-    const named = verb === "read" ? ` --door '${door}'` : "";
+    // aread reaches its door and no other socket
+    const [net, named] = verb === "read"
+      ? [` --allow-net='unix:${door}'`, ` --door '${door}'`]
+      : ["", ""];
     await shim(
       name,
-      `exec env DENO_DIR='${cache}' deno run --cached-only --allow-read --allow-write '${afs}'${named} ${verb} "$@"`,
+      `exec env DENO_DIR='${cache}' deno run --cached-only --allow-read --allow-write${net} '${afs}'${named} ${verb} "$@"`,
     );
   }
   await shim(

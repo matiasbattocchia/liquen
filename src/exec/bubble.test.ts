@@ -1,6 +1,11 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { type ExecGround, installExecGround } from "./bash.ts";
 import { type BubbleOptions, mountOf, openBubble, partialToolHomes } from "./bubble.ts";
+import { installDoors } from "../door.ts";
+import { openLog } from "../store/log.ts";
+import { fileStorage } from "../store/storage.ts";
+import { saveMedia } from "../store/media.ts";
+import type { Draft, MessageEvent } from "../types.ts";
 
 const live = () => new AbortController().signal;
 
@@ -88,6 +93,8 @@ Deno.test({
       await Deno.mkdir(`${dir}/agents/a2`, { recursive: true });
       await Deno.writeTextFile(`${dir}/agents/a2/note.md`, "a peer's");
       await Deno.writeTextFile(`${dir}/log/log.db`, "the substrate");
+      await Deno.mkdir(`${dir}/storage/media`, { recursive: true });
+      await Deno.writeTextFile(`${dir}/storage/media/x.txt`, "anyone's file");
       assertEquals(await run("pwd"), home);
       assertEquals(await run("echo $HOME"), home);
       assertEquals(await run("echo mine > note.md && cat note.md"), "mine");
@@ -95,8 +102,52 @@ Deno.test({
       assertEquals(await run(`touch ${dir}/system/x 2>/dev/null || echo refused`), "refused");
       assertEquals(await run(`test -e ${dir}/agents/a2 || echo absent`), "absent");
       assertEquals(await run(`test -e ${dir}/log || echo absent`), "absent");
+      // the kept files are read through the door, never mounted
+      assertEquals(await run(`test -e ${dir}/storage || echo absent`), "absent");
       // the harness and its peers are not in the shell's process table
       assertEquals(await run(`test -e /proc/${Deno.pid} || echo absent`), "absent");
+    }),
+});
+
+Deno.test({
+  name:
+    "bubble: a kept file is read through the agent's door from inside, and landed for a program",
+  ignore: !hasBwrap,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: () =>
+    withBubble(async ({ run, dir }) => {
+      const log = await openLog(`${dir}/log`);
+      const storage = fileStorage(dir);
+      const doors = await installDoors(dir, [{
+        agentId: "a1",
+        sessionId: "mind",
+        port: () => Promise.resolve(log),
+        storage,
+      }]);
+      try {
+        const file = await saveMedia(storage, new TextEncoder().encode("hola\n"), {
+          mime_type: "text/plain",
+        });
+        await log.publish({
+          ts: new Date().toISOString(),
+          type: "message",
+          envelope: {
+            service: "local",
+            connection_address: "default",
+            conversation: { address: "wa:x" },
+          },
+          parts: [{ type: "file", kind: "document", file }],
+        } as Draft<MessageEvent>);
+        assertEquals(await run(`aread ${file.uri}`), "hola");
+        assertEquals(
+          await run(`aread ${file.uri} --to in/x.txt && cat in/x.txt`),
+          `${file.uri} → in/x.txt (5 bytes)\nhola`,
+        );
+      } finally {
+        await doors.close();
+        await log.close();
+      }
     }),
 });
 

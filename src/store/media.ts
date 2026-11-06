@@ -418,7 +418,7 @@ export async function filePartOf(
     : resolve(pathOf(ref));
   if (scope && !scope.roots.some((root) => abs === root || abs.startsWith(`${root}/`))) {
     throw new Error(
-      `${ref}: outside your files — attach from your folder, the org's, or the media store`,
+      `${ref}: outside your files — attach from your folder or the org's, or a storage:// file`,
     );
   }
   const size = (await Deno.stat(abs)).size;

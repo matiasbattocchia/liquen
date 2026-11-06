@@ -144,7 +144,7 @@ export async function openLocalSandbox(
     return localFiles({
       home,
       cwd: shell.cwd,
-      roots: [home, `${dir}/shared`, `${dir}/system`, `${dir}/conversations`],
+      roots: [home, `${dir}/shared`, `${dir}/system`],
     }, storage);
   };
   return {

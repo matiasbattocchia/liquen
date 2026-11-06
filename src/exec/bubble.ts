@@ -10,8 +10,11 @@
  *   the system underneath   read-only: /usr, /etc, the runtime, its module cache, the package
  *   agents/<id>             the agent's own folder, writable — its HOME
  *   shared/                 the shared floor, writable
- *   system/ · conversations/  read-only
- *   everything else         absent: log/, the peers' folders, the org's .env, the user's home
+ *   system/                 read-only
+ *   everything else         absent: log/, storage/, the peers' folders, the org's .env,
+ *                           the user's home
+ * The org's kept files are read through the agent's door (`aread storage://…`), which
+ * answers only for an object an event the agent can read references: no bubble mounts them.
  * A session that stands outside the agent's ground (the directory `liquen cli` attached
  * from) gets a bubble whose view adds that directory, writable, with the classification laid
  * over it again — the data root emptied and refilled, the org's .env unreadable — so standing
@@ -206,7 +209,6 @@ export async function openBubble(
     [home, "rw"],
     [`${dir}/shared`, "rw"],
     [`${dir}/system`, "ro"],
-    [`${dir}/conversations`, "ro"],
   ];
   const cache = await denoDir();
   await Deno.mkdir(records, { recursive: true });

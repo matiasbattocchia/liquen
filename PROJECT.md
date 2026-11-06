@@ -6328,6 +6328,11 @@ The storage batch of `CHANGES.md`, a step at a time.
   sandbox reaches no door, so `aread storage://…` there says so.
 - **A forwarded note is heard once.** The transcriber asks `refs` for another message
   carrying the same object and takes its transcript, in place of the sidecar.
+- **No mounts.** A bubble binds no `conversations/` and sees no `storage/`, and the Files
+  roots drop it: a received file is reached as `storage://`, through the door. Checked in a
+  real bubble: `aread storage://…` and `--to` work from inside. The `aread` shim may reach
+  its own door's socket alone (`--allow-net=unix:<door>`), which the first door test, run
+  with `-A`, did not show was missing.
 
 ### What is open (2026-10-20)
 

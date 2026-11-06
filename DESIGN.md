@@ -1611,7 +1611,7 @@ URL + token never cross the frontier (§9). Outbound uris are kept, local or pub
 `files: string[]` — paths statted broker-side, links kept as-is (no secret in a public
 URL, the frontier rule is untouched). A path is resolved through its links and must land
 inside the agent's own ground — its folder (relative paths are from there), `org/`,
-`system/`, the media store — before a byte is read: the same boundary the agent's uid
+`system/` — before a byte is read, or name a kept object it may read: the same boundary the agent's uid
 has, kept by the broker, since the broker reads as itself (`FileScope`, xi's `files`
 port; tool-result attachments pass the same check).
 
@@ -3339,9 +3339,11 @@ outside, where the number is the one the harness knows. The bare shell stays the
 the boot says so on Linux, once per run.
 
 - **The view is the data classification**, enforced by mounts: the system read-only, the
-  agent's folder writable and its `HOME`, `shared/` writable, `system/` and
-  `conversations/` read-only, everything else absent (`log/`, the peers, the org's `.env`,
-  the user's home). A session that stands elsewhere (`liquen cli` attached from a repo)
+  agent's folder writable and its `HOME`, `shared/` writable, `system/` read-only,
+  everything else absent (`log/`, `storage/`, the peers, the org's `.env`, the user's
+  home). No bubble or container mounts the store: `aread storage://…` reads a kept object
+  through the agent's door, and `--to` lands it for a program that needs the bytes (ffmpeg,
+  a transcriber). A session that stands elsewhere (`liquen cli` attached from a repo)
   gets a bubble whose view adds that directory, writable, with the classification laid
   over it again.
 - **The processes are the bubble's own**: its own pid, IPC and UTS namespaces, so the
