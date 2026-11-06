@@ -6,4 +6,5 @@ kept in an object store"); what is left of it:
 ## 1. A trial on R2
 
 An org runs on R2 for a while, `deployment.storage` naming the bucket. The S3 suite passes
-against the `liquen` bucket.
+against the `liquen` bucket, and `new` keeps its files there since 6 Nov; what it kept
+before stays on disk, unreachable, by choice.
