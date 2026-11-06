@@ -54,13 +54,6 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 Decided 6 Nov 2026.
 
-## 9. A member's sign-in can leave mail out
-
-`CONNECTORS.md`, beside `listen`, says how one account stays out of an ingest the service
-runs: its sign-in link carries `?scopes=` without the mail scope (`gmail.readonly`,
-`Mail.ReadWrite`), so its mailbox is neither polled nor readable on demand, while the org's
-mailbox is.
-
 ## 10. The REPL says when the world is not connected
 
 A REPL that raised main alone (`attach.ts:100`) says so on entry: no connectors, edge or

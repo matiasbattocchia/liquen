@@ -24,6 +24,22 @@ The "in" rows are the ones `connections.<name>.listen` picks — `calendar` and 
 the log, the agent still reaches it through its tool on the grant, and the sends still go
 out, since a send needs only the grant.
 
+`listen` is the org's, for every account. One member's mailbox stays out while the org's
+is read when that member signs in without the mail scope: the scopes the sign-in asks for
+are the catalog's `connections.<name>.scopes`, and the door's `--scopes "…"`, or `?scopes=`
+on a `/start` link, replaces them for that one sign-in. With no `gmail.readonly` (or
+`gmail.modify`) on Google, or no `Mail.Read`/`Mail.ReadWrite` on Microsoft, the mailbox is
+neither polled nor readable through the tool:
+
+```
+liquen connect google account ana --scopes "openid email https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/gmail.send"
+```
+
+Google's consent is incremental: a scope the member granted before stays in the grant, so a
+mailbox once read is left out by revoking the app in the account's third-party access
+first. On Microsoft a send drafts before it sends, and the draft needs `Mail.ReadWrite`:
+an account signed in without it sends no mail.
+
 ---
 
 ## 1. The shape a connector fills

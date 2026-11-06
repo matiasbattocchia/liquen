@@ -6270,6 +6270,10 @@ tenth or less, and a read starts the hour again.
   org: `-D`, an attached run, a refused second start and main alone each wrote stamped
   lines. **Open**: `liquen init --help` makes an org named `--help` rather than printing
   the usage.
+- **A member's sign-in can leave mail out.** `CONNECTORS.md` says how, beside `listen`:
+  `--scopes` or `?scopes=` without the mail read scope, a revoke first on Google, whose
+  consent keeps what was granted before, and no mail sent on Microsoft without
+  `Mail.ReadWrite`.
 
 ### What is open (2026-10-20)
 
