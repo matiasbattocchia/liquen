@@ -590,6 +590,40 @@ Deno.test("attention: the world is checked on the interval, counted from the LAS
   assertEquals(decide([world("slack:C1", 0)], SESSION, WAKE, NOON), "think");
 });
 
+Deno.test("attention: marks never make the digest due — a reaction, a deletion, a room's change", () => {
+  const mark = (minAgo: number, payload: Record<string, unknown>, parts: unknown[]) =>
+    ev(
+      "message",
+      { conv: "wa:gym", ts: at(minAgo), payload, parts } as Partial<Event> & {
+        conv?: string;
+      },
+    );
+  const thumb = mark(5, { action: "add", ref_external_id: "w1" }, [
+    { type: "data", kind: "reaction", data: { name: "👍", unicode: "👍" } },
+  ]);
+  const gone = mark(4, { action: "delete", ref_external_id: "w2" }, []);
+  const joined = mark(3, {}, [{
+    type: "data",
+    kind: "room",
+    data: { joined: [{ address: "730@lid" }], reason: "invite" },
+  }]);
+  assertEquals(decide([looked(30), thumb, gone, joined], SESSION, WAKE, NOON), "ignore");
+  // however many pile up
+  const pile = Array.from(
+    { length: 40 },
+    (_, i) =>
+      mark(i, { action: "add", ref_external_id: `r${i}` }, [
+        { type: "data", kind: "reaction", data: { name: "😂", unicode: "😂" } },
+      ]),
+  );
+  assertEquals(decide([looked(1), ...pile], SESSION, WAKE, NOON), "ignore");
+  // words make it due, and the marks are read with them
+  assertEquals(
+    decide([looked(30), thumb, joined, world("wa:gym", 2)], SESSION, WAKE, NOON),
+    "think",
+  );
+});
+
 Deno.test("attention: a NAMED session is reactive — no digest cadence, no sleep window (§4)", () => {
   const s: Session = { id: "build", agentId: "a1", conversation: "build@a1" };
   const self = { agent: { id: "a1", session_id: "build" } };
@@ -1357,6 +1391,19 @@ Deno.test("unansweredOn: a room whose last word is a peer's is listed, newest ro
     "unanswered — 1 conversation:",
     "· Ana — whatsapp direct, 3 since 16 Sep 14:01",
   ]);
+});
+
+Deno.test("unansweredOn: a room's change of members is owed no answer", () => {
+  const joined = line("444", T(6), {
+    kind: "group",
+    sender: "730@lid",
+    parts: [{
+      type: "data",
+      kind: "room",
+      data: { joined: [{ address: "730@lid" }], reason: "invite" },
+    }] as Event["parts"],
+  });
+  assertEquals(unansweredOn([joined], SESSION, ACCOUNTS, "UTC"), []);
 });
 
 Deno.test("unansweredOn: the fact is structural — a closed turn changes nothing, our word there does", () => {
