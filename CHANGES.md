@@ -1,51 +1,19 @@
 # Next batch: storage
 
-Decided 2 and 3 Nov 2026. Conversation files become an object store the log guards.
+Decided 2, 3 and 6 Nov 2026. The object store the log guards is in (PROJECT.md, "Media is
+kept in an object store"); what is left of it:
 
-## 1. Storage
+## 1. The policy on `storage.objects`
 
-`data/conversations/` becomes `data/storage/`: the one folder that moves to R2, S3 or another
-object store, as `config.jsonc` names. It holds blobs, never docs.
+On Postgres the check is the database's: a policy on `storage.objects` lets the agent read
+an object when an event it can read references it, an `EXISTS` over `refs` joined to its
+view. On SQLite and files the door's own check stands.
 
-- **No docs in storage.** Discovery never walks it. A doc declares itself by its header, and
-  a received file can open with one (`conversations/5491133585694/media/81f9b45f1f6d1f8e.md`
-  does), so a contact could otherwise send in a doc.
-- **Three schemes, and no host path in the log:**
-  - `storage://media/<hash>.<ext>`: kept by the harness, resolved to the configured backend;
-  - `file://`: the agent's workspace, such as a file about to go out;
-  - `https://`: an outside link.
+## 2. A trial on R2
 
-  Render prints the URI and `aread` takes it, the rule docs already follow. `aread <uri>`
-  prints the text; `aread <uri> --to <path>` lands the bytes in the workspace, for a program
-  that needs a file.
-- **Content-addressed.** The hash is SHA-256 cut to 32 hex (128 bits), one namespace for the
-  org: a file forwarded to three chats is kept once.
-- **The extension is the bytes'.** When the wire says `application/octet-stream`,
-  `saveMedia` sniffs the bytes (`sniffMime`). The WhatsApp bridge's `CreateFormFile` labels
-  every upload octet-stream, which is why the org holds 4,276 `.bin` files that are ogg,
-  webp and mpeg. The bridge sets the part's `Content-Type` too (`open-bsp-whatsmeow`,
-  outside this repo).
-- **The log guards it.** An agent reads an object when an event it can read references it.
-  Publishing writes each URI an event carries into `refs(uri, event_id)`, and the check is an
-  `EXISTS` over `refs` joined to the agent's view: the policy on `storage.objects` on
-  Postgres, the door's own check on SQLite and files.
-- **A reference grants nothing.** Every `storage://` URI an event carries must already be
-  readable by its writer (`WITH CHECK`, and the publish path on SQLite). Bytes the agent
-  uploads are its own.
-- **References keep an object.** It goes when no event references it; an upload whose
-  message never landed has none.
-- **No mounts.** Bubbles and containers mount no storage: `aread` resolves `storage://`
-  through the agent's door. A program that needs the bytes (ffmpeg, a transcriber) gets them
-  through `--to`, the same door.
-- **The transcript caches go.** A transcript is an event already. The `<hash>.txt` beside an
-  audio only spared a forwarded audio a second pass, and `refs` answers that: an event that
-  references the same URI and has its transcript.
-- **The bridge keeps its order.** It uploads before the message, and the path names no
-  conversation.
-- **The org's files move.** `conversations/*/media/` goes into `storage/media/` under the new
-  hashes, each `.bin` sniffed, and each `file://` URI in the log is rewritten to its
-  `storage://media/` one. The log then holds one scheme for harness-kept bytes, and no old
-  path needs resolving.
-- **A trial on R2.** An org runs on R2 for a while once the store is in. Moving it there
-  carries what is on disk into the bucket, the step a docs switch from `filesystem` to
-  `database` does not take.
+An org runs on R2 for a while, `deployment.storage` naming the bucket.
+
+## 3. Shims per agent
+
+The shims sit in `system/bin/<agent>/` so that `aread` names its agent's door. Decide whether
+they stay, or go back to one `system/bin/` with the door found another way.

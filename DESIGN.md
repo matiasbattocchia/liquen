@@ -3726,10 +3726,10 @@ skips the model, anything else wakes anyway, so a poll that finds nothing costs 
 search's text** (a stored folded column, then FTS5 trigram beside `pg_trgm`, once a search
 takes over a second; 71,000 messages scan in a fifth of one) · **a doc loaded by
 path** (a `path` condition beside `conversations`, loading while the agent's working
-directory lies under it) · **docs carried across a switch** (moving `deployment.docs` from
-`filesystem` to `database` copies nothing; a one-time carry-over) · **the Cloudflare
-sandbox's phase 2** (the proxy as the gateway's outbound handler, so fronted credentials
-and the egress audit reach a sandbox there; PROJECT.md, 2026-09-26) · **the edge host**
+directory lies under it) · **the Cloudflare sandbox's phase 2** (the proxy as the
+gateway's outbound handler, so fronted credentials and the egress audit reach a sandbox
+there; PROJECT.md, 2026-09-26), and with it the agent's door (a sandbox there reaches none,
+so `aread storage://…` fails in it) · **the edge host**
 (a `pg_net` trigger delivering each row, a `pg_cron` job running the clock, the doors over
 HTTP) · **`install.sh` on macOS**, and a CI job that runs it · **checks on a live account**
 (Teams: whether `getAllMessages` delivers the self-chat, whether `$expand=members` lists
