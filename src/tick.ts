@@ -20,16 +20,16 @@ import { LOCAL_CONNECTION, MIND, sessionAddress } from "./session.ts";
 import { GATE_HOURS } from "./config.ts";
 import { dayOf, docName, remindersDue, wallOf, wallStamp } from "./agenda.ts";
 
-/** What the clock reads reminders off: the agents it sweeps, each on its own clock, and the
- *  docs that hold their lines. */
+/** What the clock reads reminders off: the agents it sweeps, each on its own clock, the
+ *  docs that hold their lines, and the backlog an agent inherits at boot. The backlog is
+ *  also how late a reminder may still fire: a clock that was down that long fires what came
+ *  due meanwhile, and a line written just past its reminder fires at once, so one number
+ *  says how far back a waking agent looks, for lines and reminders alike. */
 export interface Clock {
   agents(): { agentId: string; timezone?: string }[];
   docs: Pick<Docs, "list" | "read">;
+  backlogHours: number;
 }
-
-/** How late a reminder may still fire, in minutes: a clock that was down this long fires
- *  what came due meanwhile, and a line written just past its reminder fires at once. */
-export const REMIND_GRACE_MINUTES = 24 * 60;
 
 /** What one beat did: how many each pass settled, and which passes failed. A pass that
  *  threw counts nothing and names itself here; the others still ran. */
@@ -77,18 +77,19 @@ export async function tick(
 }
 
 /** Due reminders → alarms (§10): the lines of every doc an agent reads, whatever its scope,
- *  whose reminder came due in the grace before now, read on the agent's clock; a shared
+ *  whose reminder came due in the backlog before now, read on the agent's clock; a shared
  *  line reminds each agent that reads it. One alarm per doc and minute,
  *  carrying each line it reminds of, lands in the agent's mind session; its fan-out is the
  *  wake, so a reminder reaches the agent by exactly the path everything else does. The
  *  alarm's `external_id` is its doc and minute, so it is stored once whoever sweeps: a
- *  second clock, a later beat inside the grace, a line edited after it fired. */
+ *  second clock, a later beat inside the backlog, a line edited after it fired. */
 export async function remindDue(
   log: Pick<Log, "read" | "publish">,
   clock: Clock,
   now: number = Date.now(),
 ): Promise<number> {
   const nowIso = new Date(now).toISOString();
+  const grace = clock.backlogHours * 60;
   let fired = 0;
   for (const { agentId, timezone } of clock.agents()) {
     const to = wallOf(nowIso, timezone), today = dayOf(nowIso, timezone);
@@ -98,7 +99,7 @@ export async function remindDue(
       const name = docName(d.header);
       const body = d.body ?? await clock.docs.read(ctx, d.header) ?? "";
       const byMinute = new Map<number, string[]>();
-      for (const due of remindersDue(name, body, to - REMIND_GRACE_MINUTES, to, today)) {
+      for (const due of remindersDue(name, body, to - grace, to, today)) {
         byMinute.set(due.fire, [...byMinute.get(due.fire) ?? [], due.text]);
       }
       for (const [fire, lines] of byMinute) {

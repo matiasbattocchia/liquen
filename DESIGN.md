@@ -548,12 +548,13 @@ to 12:00`), so a deployment's standing poll is a line in a doc it lays, not a ca
 
 **Every doc the agent reads reminds it**, whatever its scope: a line in the shared scope
 reminds each agent that reads it. Each beat, the clock reads every agent's cascade on the
-agent's own clock and fires the reminders that came due in the grace before now
-(`REMIND_GRACE_MINUTES`), each line once, at the latest of its due ones: a clock that was
-down fires what came due meanwhile, and a repeat that missed a week fires once, not once
-per step. One alarm per doc and minute carries every line it reminds of, into the agent's
-mind session. Its `external_id` is the agent, the doc and the minute, so the store keeps
-it once whoever sweeps: a second clock, a later beat inside the grace, a line edited after
+agent's own clock and fires the reminders that came due in its backlog before now
+(`backlogHours`), each line once, at the latest of its due ones: a clock that was down
+fires what came due meanwhile, and a repeat that missed a week fires once, not once per
+step. One number says how far back a waking agent looks, for lines and reminders alike.
+One alarm per doc and minute carries every line it reminds of, into the agent's mind
+session. Its `external_id` is the agent, the doc and the minute, so the store keeps it
+once whoever sweeps: a second clock, a later beat inside the backlog, a line edited after
 it fired. The minute is read as a wall clock reads it, so a line at 9:00 fires at 9:00 on
 either side of a change of offset. The past stays in the log and the future in the docs:
 nothing beside them holds a fact about either.

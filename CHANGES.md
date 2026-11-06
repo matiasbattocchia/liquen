@@ -54,12 +54,6 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 Decided 6 Nov 2026.
 
-## 1. A reminder's grace is the backlog
-
-A reminder missed while the host slept fires within the agent's `backlogHours`, the backlog
-it inherits at boot (24 by default), in place of `REMIND_GRACE_MINUTES` (`tick.ts:32`). One
-number says how far back a waking agent looks, for lines and for reminders alike.
-
 ## 2. Removing an account says where to finish
 
 `liquen connect --remove` names, per service, where the platform side is revoked, in place

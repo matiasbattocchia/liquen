@@ -92,6 +92,7 @@ import { type BashInput, bashShape } from "./exec/bash.ts";
 import { partialToolHomes } from "./exec/bubble.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
 import {
+  DEFAULT_BACKLOG_HOURS,
   DEFAULT_BASH_WAIT_MS,
   DEFAULT_DEBOUNCE_MS,
   findRoot,
@@ -704,6 +705,8 @@ export async function start(
   const clock: Clock = {
     agents: () => agents.map((a) => ({ agentId: a.config.agentId, timezone: a.config.timezone })),
     docs,
+    backlogHours: config.backlogHours ?? catalog?.organization.backlogHours ??
+      DEFAULT_BACKLOG_HOURS,
   };
   let beating: Promise<unknown> | undefined;
   const ticker = setInterval(() => {

@@ -6240,6 +6240,11 @@ tenth or less, and a read starts the hour again.
   after the call before, by their reads restarts or doc edits, not traced one by one. A
   `load: always` board rewrites every block after it on each edit.
 
+### Small fixes (2026-11-06) — LANDED
+
+- **A reminder's grace is the backlog.** The clock fires what came due within
+  `backlogHours`, in place of a fixed day (`Clock.backlogHours`, `tick.ts`).
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

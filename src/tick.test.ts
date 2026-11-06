@@ -42,6 +42,7 @@ const card = (ref: string, ts: string, agent = "a1"): Draft<PermissionRequestEve
 function clockOver(
   docs: Record<string, string>,
   timezone = "America/Argentina/Buenos_Aires",
+  backlogHours = 24,
 ): Clock {
   const entries = (): DocEntry[] =>
     Object.keys(docs).map((key) => {
@@ -56,12 +57,14 @@ function clockOver(
       list: () => Promise.resolve(entries()),
       read: (_ctx, ref) => Promise.resolve(docs[`${ref.scope}:${ref.name}`] ?? null),
     },
+    backlogHours,
   };
 }
 
 const NOBODY: Clock = {
   agents: () => [],
   docs: { list: () => Promise.resolve([]), read: () => Promise.resolve(null) },
+  backlogHours: 24,
 };
 
 const textOf = (e: Event) => e.parts?.[0].type === "text" ? e.parts[0].text : undefined;
@@ -139,6 +142,22 @@ Deno.test("a clock that was down fires a repeat once, at the latest step it miss
     // the quiet span passes with nothing, and 19:30 is the next
     assertEquals((await tick(log, clockOver(docs), Date.parse("2026-11-06T22:29:00Z"))).fired, 0);
     assertEquals((await tick(log, clockOver(docs), Date.parse("2026-11-06T22:30:00Z"))).fired, 1);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a reminder fires within the backlog and not past it", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(`${dir}/log`);
+  try {
+    const docs = { "agent:x": "- @6 Nov 2026 9:00 remind Llamar a Ana." };
+    const zone = "America/Argentina/Buenos_Aires";
+    // 6 Nov 14:00 on the agent's clock: five hours past 9:00
+    const now = Date.parse("2026-11-06T17:00:00Z");
+    assertEquals((await tick(log, clockOver(docs, zone, 4), now)).fired, 0);
+    assertEquals((await tick(log, clockOver(docs, zone, 6), now)).fired, 1);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -357,6 +376,7 @@ Deno.test("a failing pass is reported in the beat, and the passes after it still
     const broken: Clock = {
       agents: () => [{ agentId: "a1" }],
       docs: { ...docs, list: () => Promise.reject(new Error("docs gone")) },
+      backlogHours: 24,
     };
     const beat = await tick(log, broken, now);
     assertEquals(beat.fired, 0);
