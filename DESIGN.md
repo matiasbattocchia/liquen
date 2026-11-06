@@ -2311,7 +2311,8 @@ an agent names its own doc the way it names a system one. Where the docs live is
 catalog's `deployment.docs`: `filesystem`, files under the data root, or `database`, the
 table of the database
 `deployment.database` names — SQLite's in `log.db`, beside the log and the vault, or the
-Postgres schema's.
+Postgres schema's. On the filesystem `shared/` is every agent's to write; in the database
+an agent writes its own scope alone, and `shared` and `system` are the operator's.
 
 Who may write a row is the substrate's rule — RLS on Postgres's table, the calls' own
 resolution on SQLite's, unix ownership on files (§9) — never a column of the row. On the
@@ -3658,6 +3659,28 @@ very busy channels — v0 wakes on everything) · departments (sub-orgs) · sand
 formalization (currently: silence = no send emitted) · timezones in digest · atomic RPC
 functions (flock gives cross-process append atomicity on files; formalize transactional RPCs
 on Postgres).
+
+**The scribe** (a daily pass that backfills: it reads through `search` the conversations
+the mind never drew, `seen="never"`, and makes the cold start from the log, the principal's
+profile and the people closest to them; and the nightly unload, writing down what a day
+taught) · **a reminder's own check** (a command a reminder runs first, exit 0 wakes, 1
+skips the model, anything else wakes anyway, so a poll that finds nothing costs no call) ·
+**a local group's lines batched** (each line wakes every member today) · **an index for
+search's text** (a stored folded column, then FTS5 trigram beside `pg_trgm`, once a search
+takes over a second; 71,000 messages scan in a fifth of one) · **a doc loaded by
+path** (a `path` condition beside `conversations`, loading while the agent's working
+directory lies under it) · **docs carried across a switch** (moving `deployment.docs` from
+`filesystem` to `database` copies nothing; a one-time carry-over) · **the Cloudflare
+sandbox's phase 2** (the proxy as the gateway's outbound handler, so fronted credentials
+and the egress audit reach a sandbox there; PROJECT.md, 2026-09-26) · **the edge host**
+(a `pg_net` trigger delivering each row, a `pg_cron` job running the clock, the doors over
+HTTP) · **`install.sh` on macOS**, and a CI job that runs it · **checks on a live account**
+(Teams: whether `getAllMessages` delivers the self-chat, whether `$expand=members` lists
+the account alone, whether the org hears its own removal from a group; Slack: which leave
+and archive events reach the bot) · **compaction's refinements** (the principal's
+corrections kept verbatim, a stale checkpoint's age, each denial kept with its draft and
+reason) · **model routing** · **wire facts that land late** (Teams' kind lookup retried,
+an `external_id` for conversations).
 
 ## 11. Reference landscape (what we took from each)
 

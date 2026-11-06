@@ -3704,8 +3704,8 @@ async function execute(
     return { ...roomView(room, kind), ...(room.members.length === 0 ? { closed: true } : {}) };
   }
   if (name === "search") {
-    // the bounds are read the way `schedule.at` is (§10): a bare stamp means the org's wall
-    // clock, the one every rendered line showed the model. A line's id passes as it is
+    // a bare stamp in the bounds means the org's wall clock, the one every rendered line
+    // showed the model. A line's id passes as it is
     const zone = config.timezone ?? DEFAULT_TIMEZONE;
     const bound = (v: Json | undefined) => {
       if (v === undefined) return undefined;

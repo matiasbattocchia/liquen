@@ -1,196 +1,133 @@
 # What is open
 
-Grounded against main at `847667f` (2026-11-05). Each item says what holds today and how it
-shows. Tick what matters.
-
-## Before turtle's next release
-
-- [ ] **Turtle's polls arm with a command that is gone.** `sync.ts` runs
-  `@liquen/liquen/schedule --cron`, and the package no longer exports `schedule`: what is
-  due lives in a doc's dated lines now. Turtle pins `^0.1.71`, which still has it.
-  *Example:* after the bump, `sync acme` throws "arming the sonar wake failed", and no hare,
-  lunar or report poll is armed until they move to a line like
-  `every 90 minutes from 19:30 to 12:00`.
-- [ ] **Turtle's config uses the old deployment words.** `"database": null` and
-  `"docs": "files"` are boot errors on the next release; the new words are `"sqlite"` and
-  `"filesystem"`.
-  *Example:* turtle takes the release, and `liquen start` refuses with
-  `deployment.database must be "sqlite" or a postgres:// URL`.
-- [ ] **A stale tool name boots in silence.** Any string passes as a tool name, so an org
-  that still lists `schedule` gets no such tool and no word about it.
-  *Example:* `"tools": ["bash", "schedule"]` boots fine, and the agent has no tool by that
-  name, with nothing saying why.
+The items still under discussion, grounded against main at `51764a0` (2026-11-06). Each says
+what holds, shows it, and ends on the options and the one recommended. What is decided lives
+in `CHANGES.md`, what is parked in `DESIGN.md` §10.
 
 ## Agents and surfaces
 
-- [ ] **An agent's edit of its own line arrives as a new line.** A mirror points at the
-  original only for a person's line; a raw surface gets `edit` with no reference.
-  *Example:* the agent tells Ana "call at 5", then edits it to "call at 6". Her WhatsApp
-  mirror shows a second line, "[agent] call at 6", and the first still says 5.
-- [ ] **A lapsed approval shows only in the terminal.** The card stays on the phone, and a
-  late answer is told it was already answered.
-  *Example:* the agent asks Ana on Monday at 9:00 to approve an email. On Tuesday at 9:00 it
-  lapses. At noon she answers `/y` to the card still on her phone and reads "that approval
-  was already answered".
-- [ ] **A steering room is never given back.** Slack and Teams adopt a room for any running
-  agent that owns no account, and keep it when its person connects one later.
-  *Example:* `#sonar` becomes the sonar agent's steering room. Pablo then connects his own
-  Slack for sonar, and anyone in `#sonar` can still steer it.
-- [ ] **A connector that dies at boot shows nowhere.** "Down" is read off a heartbeat, and
-  the first beat waits 30 seconds.
+- [ ] **A steering room outlives the agent's own account.** A steering room is a Slack
+  channel or Teams group chat named like an agent: whoever writes there steers the agent's
+  mind, `/y` settles its cards, and every line of the mind is copied out to it. The org bot
+  adopts it only for an agent that owns no account, and checks that once, at adoption.
+  *Example:* `sonar` runs with no account, and #sonar becomes its steering room. Later Pablo
+  runs `liquen connect slack bot --agent sonar` and declares `principals: ["pablo"]`, meaning
+  to steer sonar only by DM. Anyone in #sonar can still steer it and `/y` its cards, and
+  Pablo's DMs to sonar are copied into #sonar for the whole channel to read.
+  **Options:** (a) the view's rooms branch asks, every time, that the agent own no account,
+  as adoption does once: nothing written, and removing the account brings the room back;
+  (b) connecting an account releases the agent's rooms and says so; (c) leave it.
+  **Recommended:** (a).
+- [ ] **A connector that dies at boot never reads as down.** The supervisor sees every
+  exit and restarts with backoff, but writes only to stderr. "Down" is a `heard_at` older
+  than 120 seconds, so a connector that beat once and then crash-loops does show down; one
+  that never beat has no `heard_at` at all.
   *Example:* a new Slack connector crashes 10 seconds after every start. The agent never
   sees "connector down", and its sends just wait.
-- [ ] **Unsent messages are no list in the anchor.** The agent hears of one only when it
-  stalls (15 minutes), fails, or lands after all.
-  *Example:* the agent writes to Sam while the WhatsApp bridge is down. For 15 minutes
-  nothing in its view says the message has not left.
-- [ ] **Every line of a local group wakes every member.**
-  *Example:* in a local group of five agents and two people, each line costs five model
-  turns.
+  **Options:** (a) beat at boot: backfires, since a process that restarts within the window
+  keeps itself fresh; (b) the supervisor stamps the exit and its code on the service's rows,
+  which gives the reason but has the supervisor open the store; (c) a row with no
+  `heard_at` whose `connected_at` is over 120 seconds old reads "connector down, never
+  heard", a few lines on the read side. **Recommended:** (c), and (b) later if the reason
+  turns out to matter.
 
-## Wakes and the run log
+## The run log
 
-- [ ] **A reminder that finds nothing still costs a model call.** A check that skips the
-  model is designed and not built.
-  *Example:* "every 15 minutes check the hare poll" wakes the model all night, even when
-  nothing changed.
-- [ ] **A reminder missed while the host slept fires once, unmarked.** Each line fires at
-  its latest due minute within a day's grace; the alarm does not say it is late, nor how
-  many it skipped, and anything older than a day never fires.
-  *Example:* the laptop sleeps from 7:00 to 11:00. "every day 08:00 pills" fires at 11:00
-  as if on time, and an hourly line fires once, for 11:00. After two days asleep, the first
-  day's reminders are gone.
-- [ ] **A digest wake looks like a summons.** The wake carries no reason into the prompt.
-  *Example:* a 30-minute digest of three Slack lines opens the turn exactly as Ana writing
-  "are you there?" would.
-- [ ] **A send that failed for good wakes nobody.** It is told as a quiet result in the
-  session that sent it, read on that session's next turn.
-  *Example:* a send to an archived Slack channel fails, and the note waits until something
-  else opens a turn there.
-- [ ] **A daemon the REPL raised writes nothing to `liquen.log`.** The REPL drops its
-  stderr; the store keeps the turns.
-  *Example:* you open the REPL with no org running. `liquen.log` stays empty while
-  `liquen log turns` lists every turn.
-- [ ] **`log turns` reads back a bounded window.** Plain `log turns` and a one-turn export
-  read 20,000 rows; `--since`, `--turn` and `requests` read 100,000.
+- [ ] **`liquen.log` has one writer, and nothing trims it.** It is the detached
+  supervisor's terminal kept on disk: its own lines, and every child's output stamped
+  `HH:MM:SS [name]` (the roster, the edge, connector failures, the proxy's audit, a line per
+  turn). A foreground `liquen start` prints and writes nothing. A daemon the REPL or CLI
+  raises runs with its output discarded, a crash at boot included. The truncation commits
+  are about tool output and job spools; the file only grows.
+  *Example:* `new`'s file holds 9 MB after 42 hours, 45,381 of its 61,865 lines a Teams
+  subscription poll failing with its stack trace. Opened from the REPL with no org running,
+  the same org writes nothing there while `liquen log turns` lists every turn.
+  **Options:** who writes: (a) the REPL's daemon appends to the same file through the
+  helper `start -D` uses; (b) as (a), and main stamps its own lines when it runs alone, so
+  the file reads one format. Trimming: (c) roll it at `start -D`, no help to a long run;
+  (d) the supervisor copies it to `liquen.log.1` past a cap (10 MB, a named constant) and
+  truncates in place, the append redirect writing on; (e) logrotate, outside the product.
+  **Recommended:** (b) and (d). The Teams failure is worth a look of its own.
+- [ ] **`log turns` reads back a bounded window, for no recorded reason.** Plain
+  `log turns` and a one-turn export walk back 20,000 rows; `--since`, `--turn` and
+  `requests` 100,000. The likely reasons: each page reassembles every turn gathered so far,
+  so the cost grows quadratically, and every row sits in memory with its payload. The full
+  export already reads without bound.
   *Example:* after a flood of 30,000 photo rows, `log turns` shows nothing older than the
   last 20,000.
-- [ ] **`data/run/liquen.log` only grows.**
-  *Example:* an org that runs for months fills its disk with one log file.
+  **Options:** (a) raise the caps; (b) an `--all`; (c) walk an id cursor, keep only the turn
+  being assembled, emit each finished one, stop at the limit, the `--since` or the turn
+  asked for; (d) a query for turn boundaries alone. **Recommended:** (c): it makes the bound
+  needless rather than larger.
 
-## Docs and memory
+## Search
 
-- [ ] **On the database, only the agent's own scope takes a write.** A shared conditional
-  doc there is the operator's to write; on the filesystem, `shared/` is everyone's.
-  *Example:* the agent decides "in the family group, always answer in Spanish" belongs in a
-  shared doc. Its `write shared/familia.md` is refused.
-- [ ] **Unload runs only when a checkpoint is due.** No size or daily trigger.
-  *Example:* Gonza sends his new address on Monday, and the window reaches `compactAt` on
-  Thursday. His profile lacks the address all week.
-- [ ] **No scribe session.** Search marks lines never drawn, and nothing reads them on a
-  daily wake.
-  *Example:* of 300 WhatsApp chats the mind has drawn the 20 that spoke since it started.
-  The other 280 people have no profile until they write.
-- [ ] **A profile has no manners section.** `80-people.md` asks for a few of the
-  principal's own lines to the person instead.
-  *Example:* a profile can hold "che, ¿venís?" as a sample line, and has no place for
-  "never voice notes to him".
-- [ ] **A doc loads by conversation only, never by path.**
-  *Example:* a coding agent cannot have a doc load because it works inside `~/proj/api`.
-- [ ] **A comment names a tool that is gone.** `src/xi.ts:3682` says search bounds read
-  "the way `schedule.at` is".
-  *Example:* a reader looks for `schedule.at` and finds nothing.
+- [ ] **Search returns a call's answer, never what came of it later.** `calls: true`
+  returns the agent's own calls, failed answers marked `—`. A late word is left out: a send
+  that failed to arrive still reads "sent", an asked call reads `pending_approval` whatever
+  the principal said. Failed sends show in message search as `status="failed"`, and no
+  filter selects them. `error` events (a provider down, a checkpoint that failed) are
+  searchable nowhere.
+  *Example:* the agent searches its calls of yesterday and reads
+  `send to Ana "call at 6" → sent`, though the send failed for good an hour later.
+  **Options:** (a) a call's line carries its latest late word (`· later: not delivered:
+  not_in_channel`); (b) a `failed: true` filter for calls; (c) `errors: true` over `error`
+  events. **Recommended:** (a), with (b) if wanted; `error` events wait for a trace tool,
+  since the agent can rarely act on them.
 
 ## Scripts calling tools
 
-- [ ] **A script's call runs to the end once it starts.** Hanging up or cancelling does not
-  stop it, and a crash between a send and its use row leaves the send unrecorded as a call.
-  Which of two fixes to take is undecided.
-  *Example:* you Ctrl-C a script mid-call and the send still goes out. If the process dies
-  right after, the message exists with no record of the call that made it.
-- [ ] **No `trace` tool reads what an error's turn read.**
-  *Example:* the agent cannot ask "what did my turn at 14:02 read?".
+- [ ] **A script's call runs to the end once it starts.** The door answers with a signal
+  nothing aborts, and writes the call's row after the answer. A send's work is one row in
+  the log, so a call lasts milliseconds: Ctrl-C finishes at most the call already sent, and
+  a crash must land between two local writes. The message still goes and shows in search;
+  only its call row is missing. Nothing retries a door call, so nothing sends twice.
+  *Example:* you Ctrl-C a script in a loop of ten sends during the fourth. The fourth
+  still goes, the last six do not.
+  **Options:** (a) the door writes the call row first, and main answers at boot any it
+  finds unanswered; (b) a lock per call, worth it only once xi runs off main; (c) park
+  until scripts see real use. **Recommended:** (c).
 
-## Window, prefix and search
+## The model's window
 
-- [ ] **New templates reach the model as notices until the next checkpoint.** Tool docs are
-  sent live, so a changed one misses the cache.
-  *Example:* after an upgrade, a new `90-agenda` rule arrives as a notice, and an edit to
-  `send.md` costs a cache miss on the next request.
-- [ ] **Whether the API keeps every anchor and thinking block through a long day is still
-  measured.**
-  *Example:* a day-long session may log `thinking_dropped` lines on stderr; how often is the
-  open question.
-- [ ] **No index serves text search.** Every search scans.
-  *Example:* searching "factura" reads every row in scope.
+- [ ] **Thinking drops come from upgrades, not from a long day.** A replayed thinking block
+  is tied to every byte before it; when one renders differently, the API drops the block,
+  and stderr logs a line. On `new` from 4 to 6 November, 57 drops over 70 mind turns sat
+  at five positions. Each streak began at the first turn after a restart onto new code, and
+  each ended at the next unload or checkpoint; none started mid-run.
+  *Example:* main restarts on a commit that changes how an old line renders. The next turns
+  answer without their earlier reasoning until the checkpoint folds that line.
+  **Options:** (a) close it and record the finding in `DESIGN.md`; (b) a drop count on the
+  turn's line; (c) a `liquen log` view of drops; (d) a checkpoint on upgrade.
+  **Recommended:** (a), the stderr line kept as the canary; (d) if upgrades grow frequent.
 
 ## Config and accounts
 
-- [ ] **Listening is one switch per connection.** No mailbox per member, no threads-only.
-  *Example:* turning mail on brings in both info@ and Ana's whole inbox, not only the
-  threads the agent took part in.
-- [ ] **Removing an account leaves the platform side.** The Slack install, the Google grant
-  and the WhatsApp device are yours to revoke.
-  *Example:* after `connect --remove` for Slack, the app stays installed in the workspace.
-- [ ] **Some old rows need a reconnect, by design.** Mirror rows written with
-  `self_conversation`, `dms` or `extra.agent`, grants from before `--paths`, and tool docs
-  an org edited, which stay as they are.
-  *Example:* an org that edited `send.md` never learns of its `contacts` parameter.
+- [ ] **Listening switches a whole service on, every account under it.** `listen` sits on
+  `connections.google` or `connections.microsoft`, and each ingest it names runs for every
+  grant there: the org's mailbox and each member's alike. The Gmail poll reads the whole
+  inbox and sent folder of every grant that consented to read mail, and the default scopes
+  include it.
+  *Example:* the org signs in `info@acme.com`, and Ana signs in `ana@acme.com` only so her
+  agent sees her calendar. Every message of both mailboxes lands in the log; Ana's stays
+  visible only to her agent, but all of it is stored. There is no way to say "mail for
+  info@, calendar alone for Ana", nor "only the threads the agent took part in".
+  **Options:** (a) document the route that exists: Ana's sign-in link carries `?scopes=`
+  without `gmail.readonly`, so her mailbox is never polled, nor readable on demand; (b) a
+  `listen` per grant, set at sign-in; (c) a filter to the agent's threads, costly.
+  **Recommended:** (a) now, (b) when a member asks.
 
 ## Infrastructure
 
-- [ ] **The Cloudflare sandbox's phase 2 is unbuilt.** No outbound handler: no fronted
-  credentials and no egress audit there. Its fifth step, closing the sandbox's internet,
-  runs against the rule that every mode reaches the world directly, and needs a call.
-  *Example:* a `curl` in a Cloudflare sandbox goes straight out, leaves no audit row, and
-  carries no fronted token.
-- [ ] **The proxy's CA key ships with the package.** It wants minting per install.
-  *Example:* anyone holding the package's `ca.key` can sign certificates every install's
-  agents trust.
-- [ ] **A blind tunnel's audit line names no agent.**
-  *Example:* the line `CONNECT pypi.org:443` does not say who dialed.
-- [ ] **A bubble reaches loopback, the LAN and abstract sockets.** By choice: it shares the
-  machine's network.
-  *Example:* a bubbled script reaches `localhost:5432` and the office printer.
-- [ ] **Shells get the org's `TZ`, and neither Dockerfile installs tzdata.**
-  *Example:* with the org on Buenos Aires time, `date` in the container prints UTC.
-- [ ] **The SQLite poll runs whether anything changed or not.** It is not gated on
-  `PRAGMA data_version`.
-  *Example:* an idle org at 3 a.m. still runs several queries a second.
-- [ ] **`install.sh` has never run on macOS, and no CI runs it.**
-  *Example:* the first Mac user is the one who finds its break.
-- [ ] **Gemini inlines no audio and caches nothing explicitly.**
-  *Example:* on Gemini a voice note reaches the model as an `<audio/>` marker, and each step
-  resends the whole window, with 18 to 36% of it cached now and then.
-- [ ] **The edge host is deferred.** A `pg_net` trigger delivering each row, a `pg_cron`
-  job running the clock, doors over HTTP.
-  *Example:* an org on Supabase still needs its own long-running process; nothing in the
-  database runs a turn.
-
-## On a live account
-
-- [ ] **Teams: the self-chat and group removal are untested.** Whether `getAllMessages`
-  delivers the self-chat, whether `$expand=members` lists the account alone, whether the org
-  hears its own removal from a group.
-  *Example:* if the self-chat is skipped, Ana's notes to herself in Teams never reach the
-  agent.
-- [ ] **Slack: which leave and archive events reach the bot.** The code handles all five;
-  only the join side was seen live.
-  *Example:* if Slack does not tell the bot `#sonar` was archived, the room stays held, and a
-  new `#sonar` is never adopted.
-
-## Outside this repo
-
-- [ ] **Contact cards from the bridge are not unescaped.** `parseVcard` in
-  `open-bsp-whatsmeow` copies `FN` and `TEL` raw.
-  *Example:* a card for "Pérez, Juan" with no display name reaches the agent as
-  `Pérez\, Juan`.
-
-## Parked
-
-- [ ] **Switching docs from filesystem to database carries nothing across.**
-  *Example:* an org switches, and its agents' memories under `agents/<name>/` stay behind
-  on disk while the agents start empty.
-- [ ] **Media in an object store**, and **sandbox workspace backups**: the ground is being
-  laid by the storage work.
-  *Example:* a gateway sandbox that restarts loses the files its agent made there.
+- [ ] **The proxy names no agent on a blind tunnel, nor on an org-wide grant.** Every shell
+  dials one proxy port. For a host a grant fronts, the proxy opens TLS, swaps the
+  placeholder token for the real one, and learns the agent from the placeholder. Any other
+  host it only pipes, and logs `CONNECT host` with no one behind it. A grant the whole org
+  shares carries no agent either.
+  *Example:* `[proxy] - CONNECT pypi.org:443 → 200` does not say who installed what. On
+  `new`, all 98 rows of the egress table name no agent, the 21 swapped ones included, since
+  `token:parallel` is the org's.
+  **Options:** (a) the agent rides in the proxy URL, `http://<agent>:<nonce>@127.0.0.1:port`,
+  which curl, pip, git, npm, Go and node send on every request and tunnel; (b) a port per
+  agent; (c) leave it. **Recommended:** (a): the agent comes from the connection, not the
+  token.
