@@ -48,6 +48,30 @@ export function keptIn(parts: unknown): string[] {
   return [...new Set(uris)];
 }
 
+/** How long an object no event references is kept: an upload lands before its message
+ *  (the bridge's order, a remote attachment before its tool result), and one whose
+ *  message never landed is let go after this. */
+export const UNREFERENCED_KEEP_MS = 24 * 3_600_000;
+
+/** References keep an object (§8): let go of every one under `prefix` that no event
+ *  references and that was kept longer ago than `UNREFERENCED_KEEP_MS`. Answers how many
+ *  went. */
+export async function collect(
+  storage: Storage,
+  referenced: (uri: string) => Promise<boolean>,
+  prefix = "media/",
+  now = Date.now(),
+): Promise<number> {
+  let gone = 0;
+  for await (const { key, at } of storage.keys(prefix)) {
+    if (now - at.getTime() < UNREFERENCED_KEEP_MS) continue;
+    if (await referenced(uriOf(key))) continue;
+    await storage.delete(key);
+    gone++;
+  }
+  return gone;
+}
+
 /** A key is a relative path of plain segments: nothing in it can reach outside the store. */
 export function plainKey(key: string): boolean {
   return /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(key) &&

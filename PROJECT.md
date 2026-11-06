@@ -6333,6 +6333,8 @@ The storage batch of `CHANGES.md`, a step at a time.
   real bubble: `aread storage://…` and `--to` work from inside. The `aread` shim may reach
   its own door's socket alone (`--allow-net=unix:<door>`), which the first door test, run
   with `-A`, did not show was missing.
+- **References keep an object.** `collect` lets go of an object no event references once
+  it is older than `UNREFERENCED_KEEP_MS` (a day); main runs it hourly (`COLLECT_MS`).
 
 ### What is open (2026-10-20)
 

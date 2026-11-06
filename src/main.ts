@@ -87,6 +87,7 @@ import { createTranscriber } from "./processors.ts";
 import { type DoorAgent, installDoors, type Status, type Tune } from "./door.ts";
 import { readTurns, turnLine } from "./turns.ts";
 import { loadMediaBlock, memoizedLoader } from "./store/media.ts";
+import { collect } from "./store/storage.ts";
 import type { About, Delta, Event } from "./types.ts";
 import { checkToolDocs } from "./tooldoc.ts";
 import { type BashInput, bashShape } from "./exec/bash.ts";
@@ -107,6 +108,9 @@ import {
 /** How many rows of a session's room the turn's line reads back at a time: a turn is a
  *  few rows per step, and the walk pages further when one runs longer. */
 const TURN_PAGE = 500;
+
+/** How often the store is swept of what no event references (`collect`). */
+const COLLECT_MS = 3_600_000;
 
 export interface MainConfig {
   dir: string; // the org's data root (§9): log/ · system/ · org/ · agents/
@@ -729,6 +733,17 @@ export async function start(
       .finally(() => beating = undefined);
     agents.forEach((a) => invoke(a)());
   }, TICK_MS);
+  // references keep an object (§8): the store is swept of what no event references, at a
+  // pace of its own, since a sweep lists the whole store
+  let collecting: Promise<unknown> | undefined;
+  const collector = setInterval(() => {
+    collecting ??= collect(storage, async (uri) => (await log.read({ uri, limit: 1 })).length > 0)
+      .then(
+        (n) => n && console.error(`[storage] ${n} object(s) no event references, let go`),
+        (err) => console.error("[storage] the sweep failed:", err),
+      )
+      .finally(() => collecting = undefined);
+  }, COLLECT_MS);
 
   return {
     log,
@@ -736,6 +751,7 @@ export async function start(
     async stop({ jobs = "end" } = {}) {
       stopped = true;
       clearInterval(ticker);
+      clearInterval(collector);
       for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
       settling.clear();
       for (const w of keepers) w.stop();
