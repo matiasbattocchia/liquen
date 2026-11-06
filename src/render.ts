@@ -2482,7 +2482,7 @@ export function errorTextOf(e: HarnessErrorEvent): string {
  *  asked for. `<system>` because the harness is the one speaking — the note is quoted, not
  *  ventriloquized as the principal. No room to name: an alarm fires in the session that
  *  armed it, which is the session reading it. */
-export function alarmLine(e: AlarmEvent): string {
+function alarmLine(e: AlarmEvent): string {
   const span = unloadOf(e);
   if (span) return systemEl("unload", "", [`since="${shortId(span.since)}"`]);
   return systemEl("alarm", e.parts[0]?.text ?? "");

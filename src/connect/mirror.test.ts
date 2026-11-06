@@ -906,7 +906,7 @@ Deno.test("mirror fan-out: a wake, an unload and a failure cross as `[system]`; 
       await harness("summary", [{ type: "text", kind: "text", text: "…" }], {
         covers: ["a", "b"],
       });
-      // an unload crosses as the notice the model reads
+      // an unload says what the turn after it is for
       await harness("alarm", [{ type: "text", kind: "alarm", text: "" }], {}, {
         unload: { since: "a", through: "b" },
       });
@@ -947,7 +947,7 @@ Deno.test("mirror fan-out: a wake, an unload and a failure cross as `[system]`; 
       }], { ref_id: "u5", turn_id: "t3" });
       await waitFor(async () => (await inConv("549")).length === 5);
       assertEquals((await inConv("549")).map(textOf), [
-        '`[sistema]` 📝 <system kind="unload" since="a"></system>',
+        "`[escribiendo memorias...]`",
         "`[sistema]` ⏰ recordarle a Mecha el mail",
         "`[sistema]` ✗ Command exited with code 1",
         "`[sistema]` ✗ send(to: Vivian) — the bridge is down",

@@ -21,6 +21,8 @@ const TONGUES = {
     tool: "agent tool",
     asks: "agent asks",
     system: "system",
+    // an unload's label (§5): the turn that writes down a span before a checkpoint folds it
+    unload: "writing memories...",
     approve: "approve",
     hint:
       "reply /y to approve · /n <reason> to refuse · or react 👍 / 👎 · 🤖 approves the whole conversation",
@@ -76,6 +78,7 @@ const TONGUES = {
     tool: "agente usa",
     asks: "agente pregunta",
     system: "sistema",
+    unload: "escribiendo memorias...",
     approve: "aprobar",
     hint:
       "responder /y para aprobar · /n <motivo> para rechazar · o reaccionar 👍 / 👎 · 🤖 aprueba toda la conversación",
