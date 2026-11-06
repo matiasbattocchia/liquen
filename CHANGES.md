@@ -119,19 +119,18 @@ A REPL that raised main alone (`attach.ts:100`) says so on entry: no connectors,
 tunnel run, a send waits in the log, and `liquen start -D` brings the org up. Main raised
 alone stays as it is, a desk that ends 30 seconds after its last client.
 
-## 11. A steering room's lines name their writer
+## 11. An agent's line in a steering room is an agent's
 
-A steering room stays a surface of the mind: whoever writes there steers, its lines fan in
-and the mind's fan out, as now. Fan-in keeps the writer's roster id on the copy
-(`extra.via`): the agent the surface row is stamped with, or the member the email on their
-profile names. Render marks the line by it, as `authorKeyOf` marks a world line: one of the
-agent's principals `principal`, another roster agent `agent`, anyone else nothing.
+A steering room stays a surface of the mind: its lines fan in and the mind's fan out, as
+now. Fan-in keeps the writer's roster id on the copy (`extra.via`), the agent the surface
+row is stamped with. A line another roster agent wrote renders as `<agent name="…">`; every
+other line is a person's, and steers as `<principal name="…">`.
 
 ```
-<principal name="Pablo" principal>pausá el informe</principal>
-<principal name="scout" agent>listo el scraping</principal>
+<principal name="Pablo">pausá el informe</principal>
+<agent name="scout">listo el scraping</agent>
 <principal name="Lucía">¿cuándo sale?</principal>
 ```
 
-The system instructions say what each mark means, and `RENDER.md` lists them. A room the
-org bot adopted stays a steering room when its agent later gets an account of its own.
+The system instructions say what `<agent>` is, and `RENDER.md` lists it. A room the org bot
+adopted stays a steering room when its agent later gets an account of its own.
