@@ -5,5 +5,5 @@ kept in an object store"); what is left of it:
 
 ## 1. A trial on R2
 
-An org runs on R2 for a while, `deployment.storage` naming the bucket. First the S3 suite
-against a bucket made with wrangler or the Cloudflare account (`LIQUEN_TEST_S3`).
+An org runs on R2 for a while, `deployment.storage` naming the bucket. The S3 suite passes
+against the `liquen` bucket.

@@ -6341,6 +6341,8 @@ The storage batch of `CHANGES.md`, a step at a time.
   its keys `STORAGE_ACCESS_KEY_ID` and `STORAGE_SECRET_ACCESS_KEY`. Checked against MinIO
   (`bitnamilegacy/minio`; Docker Hub and Quay no longer serve MinIO's own image): a round
   trip, a listing, collection, and a forged secret refused. `LIQUEN_TEST_S3` runs it.
+  The same suite passes on R2, against a bucket of the Cloudflare account
+  (`https://<account>.r2.cloudflarestorage.com/<bucket>`, region `auto`).
 - **The policy on `storage.objects`.** On Postgres, `object_readable(uri)` is the agent's
   history law over `refs`, run as the store's owner so the agent role gets the answer and
   never the rows. Where the database keeps Supabase's bucket index, the log lays a policy
