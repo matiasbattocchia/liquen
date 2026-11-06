@@ -995,10 +995,14 @@ it, and conversation identity (§3) says which platforms can host them:
   bot is out of the channel. Teams does the same with a group chat by its topic, and with
   a channel from the org account's own listing of its teams. Both moves are said in the
   agent's mind as room lines, which every
-  surface of the mind hears. No binding can name one person, so each line is signed by
+  surface of the mind hears. The room stays the agent's once recorded, an account the agent
+  later gets of its own included. No binding can name one person, so each line is signed by
   the sender the wire names, and a line naming none crosses as nothing. The roster's
   `principals` does not reach it: `[]` still says no member steers through a DM, and the
-  room's writers steer all the same. Who may enter the room is the rule of the system
+  room's writers steer all the same, save one: a roster member the classifier stamped on
+  the line who is not among the agent's principals is another agent among us. Its copy
+  keeps who (`extra.via.agent`), renders as `<agent name="…">`, and its `/y` settles no
+  card. Who may enter the room is the rule of the system
   that hosts it, a deployment rule like the alter-ego's below — it cannot be checked
   here, only kept.
 

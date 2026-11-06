@@ -54,22 +54,6 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 Decided 6 Nov 2026.
 
-## 11. An agent's line in a steering room is an agent's
-
-A steering room stays a surface of the mind: its lines fan in and the mind's fan out, as
-now. Fan-in keeps the writer's roster id on the copy (`extra.via`), the agent the surface
-row is stamped with. A line another roster agent wrote renders as `<agent name="…">`; every
-other line is a person's, and steers as `<principal name="…">`.
-
-```
-<principal name="Pablo">pausá el informe</principal>
-<agent name="scout">listo el scraping</agent>
-<principal name="Lucía">¿cuándo sale?</principal>
-```
-
-The system instructions say what `<agent>` is, and `RENDER.md` lists it. A room the org bot
-adopted stays a steering room when its agent later gets an account of its own.
-
 ## 12. The proxy knows the agent from the connection
 
 Each agent's shells reach the proxy at `http://<agent>:<nonce>@127.0.0.1:<port>`, in

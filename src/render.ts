@@ -2632,7 +2632,9 @@ export function actedOn(e: MessageEvent): EventId | undefined {
  *  another names it in `on`: the quote (`onAttr`) of a row the window holds, or ` re="…"`
  *  for one drawn just ahead in a `<before>`, empty when nothing names it. An edit, a
  *  deletion or a reply wears `action` and `on` on the element (an edit's words are the new
- *  ones, a deletion says nothing), a reaction is a `<reaction on>` inside it. */
+ *  ones, a deletion says nothing), a reaction is a `<reaction on>` inside it. A line
+ *  another roster member wrote on a surface of the mind, who does not steer this agent,
+ *  is theirs: an `<agent>` element of the same shape. */
 function principalEl(
   e: MessageEvent,
   roster: Roster,
@@ -2650,6 +2652,14 @@ function principalEl(
   const acts = action === "edit" || action === "delete" || (action === "reply" && on)
     ? ` action="${action}"${on}`
     : "";
+  // another roster member wrote it on a surface of the mind, and they are not among who
+  // steers: an agent's line, drawn as one, by the roster's word for them (§4)
+  const peer = (e.extra?.via as { agent?: string } | undefined)?.agent;
+  if (peer !== undefined && !roster.principals.includes(peer)) {
+    return `<agent id="${shortId(e.id)}" name="${escAttr(roster.names[peer] ?? peer)}" at="${
+      hhmm(e.ts, zone)
+    }"${acts}>${body}</agent>`;
+  }
   // `name` is the roster's word for them (§4): the sender's address is a username — the
   // door's, or the one the mirror wrote from the binding — and the roster names it. With
   // one principal it is a courtesy, with several it is the identity — the element's

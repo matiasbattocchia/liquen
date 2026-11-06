@@ -113,6 +113,9 @@ export interface MirrorDeps {
   /** The roster's word for a member (§4) — what a principal's copy is signed with, and
    *  what the replayed-input tag names. Absent ⇒ the username. */
   nameOf?: (agentId: string) => Promise<string>;
+  /** Who steers an agent (§4): a roster member writing on its surface who is not among
+   *  them is a peer, whose line settles no card. Absent ⇒ the binding's own principal. */
+  principalsOf?: (agentId: string) => Promise<string[]>;
   /** The org's language (config `locale`) — the harness's own words on a surface: the tags,
    *  the reply hint, the presence line. The model's voice needs no translating: the prefix
    *  states the locale and it answers in it. Unset, or a tongue we don't speak ⇒ English. */
@@ -230,6 +233,11 @@ async function fanIn(
   // is how a `/y` quoting one of several cards names the card itself.
   const mind = sessionAddress(binding.agentId, MIND);
   const origin = await quotedOrigin(deps, e, mind);
+  // a roster member other than the mind's own wrote it (the classifier's stamp): the copy
+  // keeps who, so the mind reads another agent's line as that agent's (`extra.via.agent`)
+  const writer = e.agent?.id !== undefined && e.agent.id !== binding.agentId
+    ? e.agent.id
+    : undefined;
   // whose, and where from, whatever the row becomes in the mind
   const from = {
     // the principal's stamp (§3): whose mind + entered through the harness — a surface is
@@ -249,6 +257,7 @@ async function fanIn(
         connection: e.envelope.connection_address,
         conversation: e.envelope.conversation.address,
         ...(e.envelope.external_id ? { external_id: e.envelope.external_id } : {}),
+        ...(writer !== undefined ? { agent: writer } : {}),
       },
       // what the wire said of the sender beyond the envelope (`sender.ts`): the copy is the
       // same person speaking, and the mind's readers find it where the line's would
@@ -259,8 +268,11 @@ async function fanIn(
   // a line or a reaction that answers a card is the principal settling it (§9): the mind
   // gets the settlement, carrying the line, and no message — read by the same rule the door
   // reads a terminal's `/y` by (`verdict.ts`). What settles nothing is the harness's to say.
-  const card = origin ? await cardAt(deps, mind, origin) : undefined;
-  const said = verdictSaid(e, card);
+  // Only who steers rules on an ask: a peer's `/y` is a line like any other
+  const steers = writer === undefined || writer === binding.principal ||
+    (await deps.principalsOf?.(binding.agentId) ?? []).includes(writer);
+  const card = origin && steers ? await cardAt(deps, mind, origin) : undefined;
+  const said = steers ? verdictSaid(e, card) : undefined;
   if (said) {
     const a = answer(said, await deps.gates({ agentId: binding.agentId, sessionId: MIND }), card);
     const settled = isRefusal(a) ? a : await settle(

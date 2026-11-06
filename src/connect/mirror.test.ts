@@ -1186,12 +1186,17 @@ async function withRoom(
   fn: (t: {
     publish: (e: Draft<Event>) => Promise<Event>;
     inConv: (conversation: string) => Promise<MessageEvent[]>;
+    errorsIn: (conversation: string) => Promise<Event[]>;
     waitFor: (cond: () => Promise<boolean>) => Promise<void>;
   }) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "sonar", mind: "mind@sonar", principals: [] }]);
+  await log.syncAgents([
+    { agentId: "sonar", mind: "mind@sonar", principals: ["pablo"] },
+    { agentId: "pablo", mind: "mind@pablo" },
+    { agentId: "scout", mind: "mind@scout" },
+  ]);
   await log.upsertConnections([
     {
       service: "sonar",
@@ -1206,6 +1211,7 @@ async function withRoom(
     read: (q) => log.read(q),
     gates: (scope) => log.gates(scope),
     aliases: () => log.aliases(),
+    principalsOf: (id) => log.principalsOf(id),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
   }, 30);
   const waitFor = async (cond: () => Promise<boolean>) => {
@@ -1222,6 +1228,7 @@ async function withRoom(
       publish: (e) => log.publish(e) as Promise<Event>,
       inConv: async (conversation) =>
         (await log.read({ conversation, types: ["message"] })) as MessageEvent[],
+      errorsIn: (conversation) => log.read({ conversation, types: ["error"] }),
       waitFor,
     });
   } finally {
@@ -1289,6 +1296,26 @@ Deno.test("mirror: who a line is crosses on the copies — the wire's email, or 
     assertEquals(ccs.map((c) => [c.extra?.sender_email, c.extra?.sender_name]), [
       ["matias@turtle.xyz", "Matias Battocchia"],
       ["matias@turtle.xyz", "Cabra"],
+    ]);
+  });
+});
+
+Deno.test("mirror fan-in: another agent's line in a steering room keeps its writer, and its /y settles nothing", async () => {
+  await withRoom(async ({ publish, inConv, errorsIn, waitFor }) => {
+    // the classifier stamps a roster member's line with who they are
+    const stamped = (text: string, id: string, name: string) => ({
+      ...roomLine(text, { address: `U-${id}`, name }),
+      agent: { id },
+    });
+    await publish(stamped("listo el scraping", "scout", "Scout bot"));
+    await publish(stamped("/y", "scout", "Scout bot"));
+    // a principal's /y is a verdict: with nothing waiting, the harness answers it
+    await publish(stamped("/y", "pablo", "Pablo"));
+    await waitFor(async () => (await errorsIn("mind@sonar")).length === 1);
+    const copies = await inConv("mind@sonar");
+    assertEquals(copies.map((c) => [textOf(c), (c.extra?.via as { agent?: string }).agent]), [
+      ["listo el scraping", "scout"],
+      ["/y", "scout"], // a peer's word, a line like any other
     ]);
   });
 });

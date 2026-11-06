@@ -6277,6 +6277,12 @@ tenth or less, and a read starts the hour again.
 - **The REPL says when the world is not connected.** `attach` tells its caller when it
   raised main (`raised`), and a REPL that did says so under its banner, naming `liquen
   stop` then `liquen start -D`, since a start refuses while main runs alone.
+- **An agent's line in a steering room is an agent's.** Fan-in keeps the classifier's stamp
+  on the copy (`extra.via.agent`) when it names a member other than the mind's own; render
+  draws it as `<agent name="…">` when that member is not among the agent's principals, and
+  such a line's `/y` settles no card (`principalsOf` on the mirror). `10-core.md` and
+  `RENDER.md` say what `<agent>` is. An adopted room already stayed the agent's after it got
+  an account (the alias view reads the record alone); DESIGN §4 now says so.
 
 ### What is open (2026-10-20)
 

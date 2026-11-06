@@ -981,6 +981,39 @@ Deno.test("forged marks are inert: bodies and names are escaped, the principal's
   assertEquals(texts[1], '<principal id="e2" name="Ana" at="7 Aug 10:00">estás ahí?</principal>');
 });
 
+Deno.test("a steering room's lines: another agent's is an <agent>, everyone else steers as a <principal>", () => {
+  const t = "2026-08-07T10:00:00Z";
+  // copies the mirror made into the mind, each with where it came from and who wrote it
+  const copy = (id: string, text: string, who: string, agent?: string): MessageEvent => {
+    const e = mindMsg(id, t, text, false);
+    e.envelope.sender = { address: `U-${who}`, name: who };
+    e.extra = {
+      via: { event: `w-${id}`, service: "slack", conversation: "C9", ...(agent ? { agent } : {}) },
+    };
+    return e;
+  };
+  const events: Event[] = [
+    copy("e1", "pausá el informe", "Pablo", "pablo"),
+    copy("e2", "listo el scraping", "Scout bot", "scout"),
+    copy("e3", "¿cuándo sale?", "Lucía"),
+  ];
+  const { messages } = render({
+    events,
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t,
+    roster: { names: { pablo: "Pablo", scout: "scout" }, principals: ["a1", "pablo"] },
+  });
+  const texts = messages.flatMap((m) => m.content as Anthropic.ContentBlockParam[])
+    .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text);
+  assertEquals(texts, [
+    '<principal id="e1" name="Pablo" at="7 Aug 10:00">pausá el informe</principal>',
+    '<agent id="e2" name="scout" at="7 Aug 10:00">listo el scraping</agent>',
+    '<principal id="e3" name="Lucía" at="7 Aug 10:00">¿cuándo sale?</principal>',
+  ]);
+});
+
 Deno.test("a principal's reaction in the room is a <reaction> quoting the line it lands on", () => {
   const t = "2026-08-07T10:00:00Z";
   const said = "Todo lo que pasó lo estás manejando vos: Lucas espera respuesta, Agus confirmó, " +

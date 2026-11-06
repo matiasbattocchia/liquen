@@ -668,6 +668,7 @@ export async function start(
     gates: (scope) => log.gates(scope),
     aliases: () => log.aliases(),
     nameOf: async (id) => (await log.agents()).find((a) => a.agentId === id)?.name ?? id,
+    principalsOf: (id) => log.principalsOf(id),
     locale: catalog?.organization.locale,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onError: (e, err) => console.error(`mirror FAILED on ${e.envelope.conversation.address}:`, err),

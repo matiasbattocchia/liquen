@@ -206,7 +206,7 @@ export function connectionsSuite(s: Substrate): void {
           address: "t2",
           agentId: "sonar",
           extra: { mirrors: { rooms: { sonar: "sonar" } } },
-        }, // owned: a room is an org account's
+        }, // owned: a room is an org account's, and the agent's account leaves its rooms be
         { service: "sonar", address: "t3", extra: { mirrors: { rooms: { nobody: "x" } } } }, // names no roster entry
         { service: "slack", address: "T1:B1", extra: { mirrors: { rooms: { sonar: "C7" } } } },
       ]);
