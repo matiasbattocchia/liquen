@@ -52,6 +52,7 @@ import {
   SPOOL_CAP,
   SPOOL_KEEP_MS,
 } from "./jobs.ts";
+import { halve } from "../hole.ts";
 
 const kb = (n: number) => n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} kB`;
 
@@ -645,19 +646,11 @@ async function readLog(
     return { bytes: new Uint8Array(), size: 0, shifted: false, skipped: false };
   }
   try {
-    const stat = await file.stat();
-    const size = stat.size;
-    let shifted = false;
+    const size = (await file.stat()).size;
     let skipped = false;
-    if ((stat.blocks ?? 0) * 512 > SPOOL_CAP) {
-      // a hole punched up to the newer half's first line: the offsets stay, and what the
-      // job appends meanwhile lies past `size`, out of the hole's reach
-      const start = size - SPOOL_CAP / 2;
-      const head = await readAt(file, start, Math.min(size, start + 64 * 1024));
-      const cut = start + head.indexOf(10) + 1;
-      shifted = await punch(path, cut);
-      if (shifted && from < cut) [from, skipped] = [cut, true];
-    }
+    const cut = await halve(path, SPOOL_CAP);
+    const shifted = cut !== undefined;
+    if (shifted && from < cut) [from, skipped] = [cut, true];
     if (size - from > LOOK_BYTES) {
       from = size - LOOK_BYTES;
       skipped = true;
@@ -667,13 +660,6 @@ async function readLog(
   } finally {
     file.close();
   }
-}
-
-/** The file's first `bytes` given back to the disk; they read as zeros after. */
-async function punch(path: string, bytes: number): Promise<boolean> {
-  const args = ["--punch-hole", "--offset", "0", "--length", String(bytes), path];
-  const { success } = await new Deno.Command("fallocate", { args, stderr: "null" }).output();
-  return success;
 }
 
 /** Is the process still running? (harmless probe.) */

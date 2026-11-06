@@ -39,16 +39,17 @@
  *
  * Every line a child writes arrives stamped — `HH:MM:SS [name] …` — so attribution is
  * the harness's property, not a convention each service must remember: panics and
- * stack traces land tagged too. The stdout/stderr split rides through (stdout is data,
- * stderr is diagnostics). After the boot lines, silence means every process is up. On a
- * terminal each tag has a color of its own, so one process's lines read as a column in the
+ * stack traces land tagged too. Each goes to the run log (`runlog.ts`), and attached it
+ * prints too, the stdout/stderr split riding through (stdout is data, stderr is
+ * diagnostics). After the boot lines, silence means every process is up. On a terminal
+ * each tag has a color of its own, so one process's lines read as a column in the
  * interleave, and a line reporting a failure is red, so it stands out of every column;
  * piped, or under NO_COLOR, the bytes are plain.
  *
- * `-D` runs the same supervisor detached: in a session of its own, its every byte appended
- * to `data/run/liquen.log`, and the prompt back once the run holds its lock. A refusal
- * before that — a second start, a catalog boot rejects — is printed from the log with the
- * code it exited with, so a detached start that failed never reads like one that worked.
+ * `-D` runs the same supervisor detached: in a session of its own, writing the run log as
+ * an attached run does, and the prompt back once the run holds its lock. A refusal before
+ * that — a second start, a catalog boot rejects — is printed from the log with the code it
+ * exited with, so a detached start that failed never reads like one that worked.
  */
 
 import { TextLineStream } from "@std/streams";
@@ -59,12 +60,13 @@ import { moved, type Moves, runSocket } from "./reload.ts";
 import { RUNNING, SHIPPED } from "./connect/connect.ts";
 import { helpFlag } from "./connect/help.ts";
 import { serveSocket } from "./connect/serve.ts";
+import { openRunLog, RUN_LOG, type RunLog, sayConsole } from "./runlog.ts";
 
 export const USAGE = `usage: liquen start [-D | --detach] [--dir <org>]
 
   Run the org: main and one process per declared connection, each restarted when it dies.
 
-  -D, --detach   run in the background, its lines appended to data/run/liquen.log;
+  -D, --detach   run in the background, its lines in data/run/liquen.log only;
                  \`liquen stop\` ends it
   --dir <org>    the org, when run from elsewhere`;
 
@@ -108,27 +110,6 @@ export function pause(ms: number, halt: AbortSignal): Promise<void> {
   });
 }
 
-const enc = new TextEncoder();
-const clock = () => new Date().toLocaleTimeString("en-GB");
-
-/** ANSI foregrounds for the children's tags, handed out in the order the names first speak:
- *  cyan, green, magenta, blue, yellow, then the bright ones. */
-const PALETTE = [36, 32, 35, 34, 33, 96, 92, 95, 94, 93];
-const tints = new Map<string, number>();
-
-/** A name's tag as a terminal shows it: the supervisor's own bold, each child its color. */
-export function tag(name: string): string {
-  if (name === SUPERVISOR) return `\x1b[1m[${name}]\x1b[22m`;
-  let tint = tints.get(name);
-  if (tint === undefined) tints.set(name, tint = PALETTE[tints.size % PALETTE.length]);
-  return `\x1b[${tint}m[${name}]\x1b[39m`;
-}
-
-const painted = {
-  out: !Deno.noColor && Deno.stdout.isTerminal(),
-  err: !Deno.noColor && Deno.stderr.isTerminal(),
-};
-
 /** A line that reports a failure, by what failures print: the harness's own `FAILED` and
  *  `failed`, an error's `SomeError:` head, a stack frame, a Go panic, and the error levels
  *  of the Go loggers a tunnel writes with (`ERR`, `FTL`). */
@@ -140,26 +121,18 @@ export function failing(line: string, under: boolean): boolean {
   return FAILURE.test(line) || (under && /^\s/.test(line));
 }
 
-/** One attributed line — the whole observability surface. */
-function stamp(name: string, line: string, err = true, failure = false): void {
-  const text = painted[err ? "err" : "out"]
-    ? `\x1b[2m${clock()}\x1b[22m ${tag(name)} ${failure ? `\x1b[31m${line}\x1b[39m` : line}\n`
-    : `${clock()} [${name}] ${line}\n`;
-  (err ? Deno.stderr : Deno.stdout).writeSync(enc.encode(text));
-}
-
-/** `-D`: this module again, as a child in a session of its own with the shell's redirect
- *  appending its every byte — its own last words included — to the log. Answers once the
- *  child holds the supervisor's lock, or with the child's code when it exits first. The
- *  lock is read, not probed: a probe takes the lock for an instant, and the child's claim
- *  landing in that instant would refuse. */
+/** `-D`: this module again, as a child in a session of its own, writing the run log as an
+ *  attached run does, its own last words included. Answers once the child holds the
+ *  supervisor's lock, or with the child's code when it exits first. The lock is read, not
+ *  probed: a probe takes the lock for an instant, and the child's claim landing in that
+ *  instant would refuse. */
 async function detach(root: string): Promise<void> {
-  const log = `${root}/data/run/liquen.log`;
+  const log = `${root}/data/${RUN_LOG}`;
   const pidFile = `${root}/data/run/${SUPERVISOR}.pid`;
   await Deno.mkdir(`${root}/data/run`, { recursive: true });
   const from = await Deno.stat(log).then((s) => s.size, () => 0);
-  const child = new Deno.Command("sh", {
-    args: ["-c", 'exec "$@" >>"$0" 2>&1', log, Deno.execPath(), "run", "-A", import.meta.url],
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", import.meta.url],
     cwd: root,
     stdin: "null",
     stdout: "null",
@@ -189,10 +162,17 @@ async function detach(root: string): Promise<void> {
   );
 }
 
-async function pump(stream: ReadableStream<Uint8Array>, name: string, err: boolean): Promise<void> {
+async function pump(
+  run: RunLog,
+  stream: ReadableStream<Uint8Array>,
+  name: string,
+  err: boolean,
+): Promise<void> {
   const lines = stream.pipeThrough(new TextDecoderStream()).pipeThrough(new TextLineStream());
   let under = false;
-  for await (const line of lines) stamp(name, line, err, under = failing(line, under));
+  for await (const line of lines) {
+    run.say(name, line, { err, failure: under = failing(line, under) });
+  }
 }
 
 /** One process of the org's run: its tag, and the command that is it. */
@@ -292,14 +272,18 @@ if (import.meta.main) {
     const stray = org.args.find((a) => a !== "-D" && a !== "--detach");
     if (stray !== undefined) throw new Error(`unknown argument ${stray}\n${USAGE}`);
     const root = findRoot(org);
+    const dir = `${root}/data`;
+    // the run's every line, its own and its children's, goes to the run log from here on,
+    // a refusal included; a detached start says its piece at the terminal and hands over
+    let run: RunLog | undefined;
+    if (!background) sayConsole(run = openRunLog(dir, true), SUPERVISOR);
     const cfg = await readConfig(root);
     const procs = roster(root, cfg);
     // ONE OF EACH ROLE (stop.ts). The locks are taken after the catalog is read, so a
     // manifest this run cannot serve refuses on its own terms and not on a lock it went
     // on to drop
-    const dir = `${root}/data`;
     await Deno.mkdir(dir, { recursive: true });
-    if (background) {
+    if (background || run === undefined) {
       // the probe is safe here, with no child yet to claim; the child checks again for real
       const pid = await holder(dir, SUPERVISOR);
       if (pid !== null) {
@@ -322,6 +306,7 @@ if (import.meta.main) {
           `\`liquen stop\` first`,
       );
     }
+    const lines: RunLog = run;
     /** A process the run keeps: its `Kept` facts, the switch that retires it, and its
      *  keep-alive loop, `down` once that loop has ended (retired, or refused). */
     interface Held extends Kept {
@@ -356,7 +341,10 @@ if (import.meta.main) {
           stderr: "piped",
         }).spawn();
         live.set(name, child);
-        const pumps = [pump(child.stdout, name, false), pump(child.stderr, name, true)];
+        const pumps = [
+          pump(lines, child.stdout, name, false),
+          pump(lines, child.stderr, name, true),
+        ];
         const status = await child.status;
         await Promise.all(pumps); // the streams end at exit; drain the tail before reporting
         live.delete(name);
@@ -365,24 +353,22 @@ if (import.meta.main) {
         // a refusal is a decision about the world, not a stumble in it: the child already
         // said what it wants, and saying it again on a timer teaches nobody anything
         if (!comesBack(status)) {
-          stamp(
+          lines.say(
             SUPERVISOR,
             `${name} refused after ${Math.round(uptime / 1000)}s — down until \`liquen reload\``,
-            true,
-            true,
+            { failure: true },
           );
           return true;
         }
         failures = uptime >= HEALTHY_MS ? 1 : failures + 1;
         const wait = backoffMs(failures);
-        stamp(
+        lines.say(
           SUPERVISOR,
           // the signal is the whole diagnosis when a child dies quietly: a killed process
           // reports code 0, so the code alone reads like a clean exit
           `${name} exited (${status.signal ?? `code ${status.code}`}) after ` +
             `${Math.round(uptime / 1000)}s — restarting in ${wait / 1000}s`,
-          true,
-          true,
+          { failure: true },
         );
         await pause(wait, off);
       }
@@ -430,7 +416,7 @@ if (import.meta.main) {
     const stop = () => {
       if (halting) return;
       halting = true;
-      stamp(SUPERVISOR, `stopping ${live.size} process(es)`);
+      lines.say(SUPERVISOR, `stopping ${live.size} process(es)`);
       for (const name of kept.keys()) void retire(name, true);
     };
 
@@ -465,11 +451,13 @@ if (import.meta.main) {
             restart: moves.restart.map((p) => p.name),
             start: moves.start.map((p) => p.name),
           };
-          stamp(SUPERVISOR, `config.jsonc taken up — ${moved(made)}`);
+          lines.say(SUPERVISOR, `config.jsonc taken up — ${moved(made)}`);
           return made;
         } catch (err) {
           const why = err instanceof Error ? err.message : String(err);
-          stamp(SUPERVISOR, `config.jsonc not taken up — ${why}; running on as it was`, true, true);
+          lines.say(SUPERVISOR, `config.jsonc not taken up — ${why}; running on as it was`, {
+            failure: true,
+          });
           throw err;
         } finally {
           reloading = false;
@@ -499,7 +487,7 @@ if (import.meta.main) {
     Deno.addSignalListener("SIGTERM", stop);
     Deno.addSignalListener("SIGINT", stop);
 
-    stamp(SUPERVISOR, `${procs.map((p) => p.name).join(" · ")} — root ${root}`);
+    lines.say(SUPERVISOR, `${procs.map((p) => p.name).join(" · ")} — root ${root}`);
     for (const proc of procs) launch(proc, cfg);
     await finished;
     await asked.shutdown();

@@ -80,6 +80,7 @@ import { teamsRooms } from "./connect/microsoft/rooms.ts";
 import { createGrantBroker } from "./proxy/grants.ts";
 import { entry } from "./entry.ts";
 import { claim, MAIN } from "./stop.ts";
+import { openRunLog, sayConsole } from "./runlog.ts";
 import { createMirror } from "./connect/mirror.ts";
 import { createPresence } from "./connect/presence.ts";
 import { createTranscriber } from "./processors.ts";
@@ -887,6 +888,9 @@ if (import.meta.main) {
     const org = orgFlag();
     const root = findRoot(org);
     const dir = `${root}/data`;
+    // raised alone, main has no supervisor pumping its lines: it writes the run log itself
+    const alone = org.args.includes("--ephemeral");
+    if (alone) sayConsole(openRunLog(dir, false), MAIN);
     const catalog = await readConfig(root);
     // ONE MIND PER ORG (stop.ts): a second main over one log is two tails, two fan-outs and
     // two mirrors of every line the agent speaks — the duplicate a REPL's ephemeral daemon
@@ -908,7 +912,7 @@ if (import.meta.main) {
         void main.stop({ jobs: stops[sig] }).finally(() => Deno.exit(0));
       });
     }
-    if (org.args.includes("--ephemeral")) {
+    if (alone) {
       let occupied = Date.now(); // boot counts as occupied: the raiser gets the linger to arrive
       const reaper = setInterval(() => {
         if (main.attachments() > 0) occupied = Date.now();

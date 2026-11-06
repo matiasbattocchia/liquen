@@ -54,15 +54,6 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 Decided 6 Nov 2026.
 
-## 8. One run log, bounded
-
-Whatever runs the org writes `data/run/liquen.log`, through one function: the supervisor
-attached or detached, and main raised alone by the REPL or the CLI. Each line is stamped
-`HH:MM:SS [name]`; attached, the same lines print to the terminal too. The append redirect
-in `detach` goes. The file is bounded as a background job's output is: past a cap, a hole is
-punched up to the newer half's first line (`readLog` in `exec/bash.ts`, `fallocate
---punch-hole`), so the offsets stay and a `tail -f` reads on. The cap is a named constant.
-
 ## 9. A member's sign-in can leave mail out
 
 `CONNECTORS.md`, beside `listen`, says how one account stays out of an ingest the service

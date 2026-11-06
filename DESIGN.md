@@ -3548,8 +3548,8 @@ loudly, the same law as an unknown config key.
 - **No dependency order, no readiness probes, no IPC.** The log is the bus; every process
   tails it, so start order is irrelevant. A child finds the org the way every process does
   (cwd walks up to `config.jsonc`) and env rides through untouched (secrets only).
-- **Death is loud on stderr and nowhere else.** Exits restart with doubling backoff (1s → 60s
-  cap, forgiven after a healthy minute); the supervisor never opens the log. The outer layer
+- **Death is loud in the run log and nowhere else.** Exits restart with doubling backoff (1s
+  → 60s cap, forgiven after a healthy minute); the supervisor never opens the event log. The outer layer
   supervises `liquen start` itself: docker restart policy in the container (run with `--init` so
   reparented grandchildren are reaped), the terminal locally. SIGTERM fans out to the
   children, waits `system.stopTimeoutMs`, then SIGKILLs.
@@ -3559,7 +3559,15 @@ loudly, the same law as an unknown config key.
   never self-name; a line carries at most a MODULE tag (`[ingest]`, `[dispatch]`, `[oauth]`,
   `[exec]`, `[proxy]`), so a supervised line reads `[whatsapp] [dispatch] …` and a standalone
   run's terminal is its own tag. After the boot lines, silence means every process is up;
-  process health is stderr, org health is the log (`deno task status`, log.db).
+  process health is the run log, org health is the event log (`deno task status`, log.db).
+- **One run log, whatever runs the org.** `data/run/liquen.log` takes every stamped line
+  through one function (`say`, src/runlog.ts): the supervisor's own and its children's,
+  attached or detached (`-D`), and main's when an interface raised it alone. Attached, the
+  same lines print to the terminal, colored there. A process with nobody pumping its
+  output sends its `console` there too, so a refusal at boot is read in the file. The
+  file is bounded as a job's output is (`halve`, src/hole.ts): past `RUN_LOG_CAP` on disk,
+  a hole is punched up to the newer half's first line, so the offsets stay and a `tail -f`
+  reads on.
 - **One port, and the connectors listen where they live.** The org binds one port,
   `edge.port`, and nothing else: every connector serves its ingest on a Unix socket under
   the org's own folder, `data/run/<service>.sock`, and a sign-in door on

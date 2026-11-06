@@ -6263,6 +6263,13 @@ tenth or less, and a read starts the hour again.
   turn once the rows before it are read, letting its rows go; `readTurns` and `seekTurn`
   stop it at a count, `--since` or the turn named. `PAGES`, the views' `pages: 50` and
   export's `ROWS` are gone: a turn's transcript reads its span whole (`spanRows`).
+- **One run log, bounded.** `say` (`runlog.ts`) writes `data/run/liquen.log` for the
+  supervisor, attached or detached, and for main raised alone (`--ephemeral`), which routes
+  its `console` there; the detach's shell redirect is gone. The bound is `halve`
+  (`hole.ts`), shared with the job spool, at `RUN_LOG_CAP` (16 MiB). Checked on a scratch
+  org: `-D`, an attached run, a refused second start and main alone each wrote stamped
+  lines. **Open**: `liquen init --help` makes an org named `--help` rather than printing
+  the usage.
 
 ### What is open (2026-10-20)
 
