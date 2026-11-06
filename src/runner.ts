@@ -15,8 +15,9 @@ import { type Policy, scoped } from "./policy.ts";
 import type { DocCalls, DocContext, Docs } from "./store/docs.ts";
 import { docTools } from "./exec/docs.ts";
 import type { MediaLoader } from "./store/media.ts";
-import type { ModelTransport } from "./transport/mod.ts";
+import { ANTHROPIC, type ModelTransport, providerOf, type Warmth } from "./transport/mod.ts";
 import type { Sandbox } from "./sandbox.ts";
+import { MIND } from "./session.ts";
 import type { AgentRow } from "./store/agents.ts";
 import type { About, Delta, Effort } from "./types.ts";
 
@@ -36,6 +37,8 @@ export interface Host {
   history?: (agentId: string) => Policy;
   /** The agent's stock transport, metered in its name (§2 telemetry). */
   transport: (agentId: string) => ModelTransport;
+  /** A keeper for each mind's cache (§5). Absent: a quiet mind's cache lapses. */
+  warmth?: () => Warmth;
   /** The exec plane (§9). Absent: no shell, no ambient lines, no file scope — an edge host. */
   sandbox?: Sandbox;
   contact?: XiPorts["contact"];
@@ -57,6 +60,18 @@ export interface Runner {
   config: AgentConfig;
   log: Log;
   ports: XiPorts;
+  /** The mind's keeper, whichever transport it thinks through. */
+  warmth?: Warmth;
+}
+
+/** What a session thinks through: `transport`, through the session's keeper, which holds
+ *  the cache warm where the provider keeps it an hour and reads it far below a write. */
+export function thinkingThrough(
+  r: Pick<Runner, "warmth">,
+  provider: string | null | undefined,
+  transport: ModelTransport,
+): ModelTransport {
+  return r.warmth ? r.warmth.through(transport, providerOf(provider) === ANTHROPIC) : transport;
 }
 
 /** What rides in code beside the row (§9): a compiled gate, a retry pace — a function and
@@ -96,14 +111,17 @@ export function runnerFor(
   // the session's docs tools, where the docs are the table's
   const reach = host.reach?.({ agent: agentId });
   const exec = box || reach ? { exec: { ...box?.exec, ...(reach ? docTools(reach) : {}) } } : {};
+  // the mind's next turn is always coming; a named session's work ends, and its cache with it
+  const warmth = sessionId === MIND ? host.warmth?.() : undefined;
   return {
     config: { ...configOf(row, sessionId), ...(box ? { home: box.home } : {}), ...seams },
     log: slog,
+    ...(warmth ? { warmth } : {}),
     ports: {
       log: slog,
       ...(host.history ? { history: scoped(host.log, host.history(agentId)) } : {}),
       docs: host.docs,
-      transport: host.transport(agentId),
+      transport: thinkingThrough({ warmth }, row.provider, host.transport(agentId)),
       ...exec,
       ...(box ? { files: box.files, ambient: box.ambient } : {}),
       ...(box?.bins ? { bins: box.bins } : {}),

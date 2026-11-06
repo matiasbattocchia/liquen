@@ -883,10 +883,11 @@ export interface Usage {
   cache_write_tokens?: number;
 }
 
-/** What a model call was for: the turn itself, or the checkpoint that displaces one (§5).
- *  Spend is one row per call, so the kind is what makes "what has maintenance cost" a
- *  query; a delta carries the same word so a surface knows which text it is watching. */
-export type CallKind = "think" | "checkpoint";
+/** What a model call was for: the turn itself, the checkpoint that displaces one (§5), or
+ *  the keep-alive that holds a quiet mind's cache (§5). Spend is one row per call, so
+ *  the kind is what makes "what has maintenance cost" a query; a delta carries the same
+ *  word so a surface knows which text it is watching. */
+export type CallKind = "think" | "checkpoint" | "keepalive";
 
 /** What a turn is ABOUT, named the way the wire names it rather than the way a session
  *  does: the conversations whose words the turn has not answered. `since` is when that

@@ -6219,6 +6219,27 @@ each value names where the part lives, and a sandbox off this machine needs the 
 database. The old `null`, `files` and `table` are boot errors. `new` and `vibes` changed in
 step. **Open**: turtle's `config.jsonc` moves to the new words when it takes this release.
 
+### A quiet mind keeps its cache, and a cache write is priced at the hour (2026-11-06) — LANDED
+
+Over three days on `new`, the matias agent rewrote its prefix whole eleven times after a
+gap of more than an hour, about 38k tokens each. A rewrite costs 2× input and a read a
+tenth or less, and a read starts the hour again.
+
+- **A keeper per mind** (`warmth` in `transport/mod.ts`, one per mind's runner, stopped
+  with the org; a named session has none): 55 minutes after a turn's call starts, it
+  replays that call at `max_tokens: 0`, through the sleep hours too, up to `WARM_PINGS`
+  (20) in a row. Each replay is metered as `keepalive`, with no `turn_id`.
+- **The Anthropic transport sends `max_tokens: 0` unstreamed**, as the API requires. A
+  live check on claude-sonnet-5-5: the streamed call wrote 20,660 tokens; the replay, with
+  the same tools (`eager_input_streaming` included), thinking, effort and beta, read all
+  20,660 and billed no output.
+- **`cache_write` in `PRICES` is the 1-hour rate** (2× input), the TTL every mark asks for.
+  The 5-minute rate it held priced every write at 62.5% of its bill, so earlier totals read
+  low wherever writes weighed.
+- **Open**: rewrites with no gap behind them. On the same days, five came 0 to 16 minutes
+  after the call before, by their reads restarts or doc edits, not traced one by one. A
+  `load: always` board rewrites every block after it on each edit.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
