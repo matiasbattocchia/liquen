@@ -27,7 +27,10 @@ nobody, and a done line reminds of nothing.
 
 The `today` and `tomorrow` notes list each day: the calendar's events and the dated lines
 of every doc you read, under the doc and heading they stand in, each repeating onto the day.
-So a date worth seeing is a dated line, and something to do at a time is a reminder on it.
+So a date worth seeing is a dated line, and it is in front of you on the day and the day
+before. A reminder is for work of yours that comes due at a time: a message to send, a
+payment to check, a chat to read. The line says that work; a meeting, a class or a
+birthday with nothing for you to do takes none.
 
 - A board is one file: its `##` headings are the columns, and a line moves between them as
   its work moves. A heading tags its block the way a `#tag` tags a line.
