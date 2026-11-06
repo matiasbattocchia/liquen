@@ -147,13 +147,16 @@ alike. The header is hop-by-hop and never reaches the origin.
   the agents' shells reaches neither the grants nor the tunnels.
 - **The nonce outlives a restart.** It is minted once per agent and kept under
   `data/system/` beside the CA, so a job that outlives the harness keeps reaching the world.
-- **One placeholder.** Every fronted variable holds `sentinel-token`, in place of a
-  `mu-grant-…` handle per grant. The proxy picks the grant from the agent and the request:
-  the one fronted for that agent whose hosts and paths admit it. Two that both admit it
-  answer `401`, naming them; `liquen connect token` warns when a new grant's hosts overlap
-  one already fronted for the same agent, as it warns of one never fronted.
+- **A placeholder names its variable.** A fronted variable holds `sentinel-<VAR>`
+  (`GH_TOKEN=sentinel-GH_TOKEN`), in place of a random `mu-grant-…` handle. The agent and
+  the variable pick the grant: `frontedFor` fronts at most one per variable for an agent,
+  so the pair names exactly one, and the proxy swaps it where the host and path admit it.
+  Two grants on one host stay apart by the variable the agent reached for: the org's mailbox
+  and Ana's own on `users/me/messages/send`, a bot token and a user token on
+  `chat.postMessage`, an anon key and a service key in one Supabase request.
 - **A grant spends only for its agents.** An agent's own grant swaps on its connection
-  alone, an org grant on any agent's.
+  alone, an org grant on any agent's. A placeholder for a variable the connection's agent
+  is not fronted answers `401`.
 
 Before landing, each common client is checked to send the credentials from the URL: curl,
 wget, git, pip, Python's `urllib`, Go, Deno, Rust's `reqwest`, npm and Node's `fetch`. One
