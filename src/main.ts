@@ -685,6 +685,7 @@ export async function start(
     unsubs.push(createTranscriber({
       subscribe: (l, o) => log.subscribe(l, o),
       publish: log.publish,
+      read: (q) => log.read(q),
       storage,
       command: catalog.processors.audio,
       locale: catalog.organization.locale,

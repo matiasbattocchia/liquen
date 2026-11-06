@@ -30,6 +30,7 @@ async function withTranscriber(
   const stop = createTranscriber({
     subscribe: (l, o) => log.subscribe(l, o),
     publish: log.publish,
+    read: (q) => log.read(q),
     storage,
     command,
     ...org,
@@ -99,6 +100,26 @@ Deno.test("a voice note gets a transcript add-event", async () => {
     assertEquals(tr.envelope.sender, undefined); // nobody spoke — the harness derived it
     assertEquals(tr.agent, undefined); // …which also keeps it off dispatch's predicate (§4)
   });
+});
+
+Deno.test("the same note forwarded again takes the words it was given: the model hears it once", async () => {
+  // each run of the processor leaves a mark, so a second run would say "twice"
+  const runs = await Deno.makeTempFile();
+  try {
+    await withTranscriber(
+      `cat > /dev/null; echo x >> ${runs}; echo "vamos el martes ($(wc -l < ${runs}))"`,
+      async (t) => {
+        await t.publish(voiceNote(t.media));
+        await t.waitFor(async () => (await t.transcripts()).length === 1);
+        await t.publish(voiceNote(t.media, { external_id: "wa:note2" }));
+        await t.waitFor(async () => (await t.transcripts()).length === 2);
+        const words = (await t.transcripts()).map((e) => (e.parts[0] as { text: string }).text);
+        assertEquals(words, ["vamos el martes (1)", "vamos el martes (1)"]);
+      },
+    );
+  } finally {
+    await Deno.remove(runs);
+  }
 });
 
 Deno.test("the org's locale reaches the processor as LANG — its own business there", async () => {

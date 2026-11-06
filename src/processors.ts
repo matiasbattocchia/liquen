@@ -26,9 +26,13 @@
  * WUMs stay invariant, and the words render as a later `<transcript re=…>` line (§5). The
  * wake it fires is the point: the agent reads the note when the words arrive.
  *
- * Idempotence: `external_id = transcript:<audio external_id>` — deterministic, so the
- * publish is an upsert: a crash-and-replay merges instead of duplicating, and one audio
- * message gets exactly one transcript.
+ * Idempotence, twice:
+ *   the EVENT   `external_id = transcript:<audio external_id>` — deterministic, so the
+ *               publish is an upsert: a crash-and-replay merges instead of duplicating,
+ *               and one audio message gets exactly one transcript.
+ *   the WORK    the same bytes are one object, and `refs` names every message that
+ *               carries it: a note forwarded again takes the words an earlier one was
+ *               given, and the model never runs twice over them.
  *
  * What never transcribes: silenced rows (history and muted chats are not news, §5), the
  * model's own voice (`turn_id` — it knows what it said), action-carrying events, mirror
@@ -47,7 +51,7 @@
 
 import { isStored, keyOf, type Storage } from "./store/storage.ts";
 import { silenced } from "./render.ts";
-import type { Appender, Subscriber } from "./store/log.ts";
+import type { Appender, Reader, Subscriber } from "./store/log.ts";
 import type { Draft, Event, FilePart, MessageEvent } from "./types.ts";
 
 /** A hung model must not wedge the queue (a real 0.9.1 failure mode): well past the
@@ -59,6 +63,8 @@ export interface TranscriberDeps {
   subscribe: Subscriber["subscribe"];
   /** → the EventLog: a transcript is an ordinary published event (§3). */
   publish: Appender["publish"];
+  /** The log, read: another message that references the same bytes, and its words. */
+  read: Reader["read"];
   /** Where the audio's bytes are kept. */
   storage: Storage;
   /** The processor (config `processors.audio`): bytes on stdin → text on stdout. */
@@ -98,10 +104,8 @@ async function transcribe(
   audio: FilePart,
   now: () => string,
 ): Promise<void> {
-  const bytes = await deps.storage.get(keyOf(audio.file.uri));
-  if (!bytes) return; // gone: nothing to hear
-  const text = (await run(deps.command, bytes, PROCESSOR_TIMEOUT_MS, processorEnv(deps))).trim();
-  if (!text) return; // a silent clip has no words to add
+  const text = await heard(deps, audio.file.uri) ?? await hear(deps, audio.file.uri);
+  if (!text) return; // a silent clip, or bytes gone: no words to add
   const { service, connection_address, conversation, external_id } = e.envelope;
   await deps.publish({
     ts: now(),
@@ -117,6 +121,27 @@ async function transcribe(
     payload: { action: "add", ref_external_id: external_id },
     parts: [{ type: "text", kind: "transcript", text }],
   } as Draft<MessageEvent>);
+}
+
+/** The words already heard in these bytes: another message that references the same
+ *  object (`refs`, §8) and has its transcript. A note forwarded again is one object, so the
+ *  model hears it once. */
+async function heard(deps: TranscriberDeps, uri: string): Promise<string | undefined> {
+  for (const e of await deps.read({ uri, types: ["message"] })) {
+    const id = e.envelope.external_id;
+    if (!id) continue;
+    const [words] = await deps.read({ externalId: `transcript:${id}`, limit: 1 });
+    const text = words?.parts?.find((p) => p.type === "text" && p.kind === "transcript");
+    if (text?.type === "text" && text.text) return text.text;
+  }
+  return undefined;
+}
+
+/** The processor run over the object's bytes. */
+async function hear(deps: TranscriberDeps, uri: string): Promise<string> {
+  const bytes = await deps.storage.get(keyOf(uri));
+  if (!bytes) return "";
+  return (await run(deps.command, bytes, PROCESSOR_TIMEOUT_MS, processorEnv(deps))).trim();
 }
 
 /** stdin → stdout through `sh -c`. Sequential write-then-read is safe because a

@@ -6311,7 +6311,7 @@ The storage batch of `CHANGES.md`, a step at a time.
   through `bytesOf`, the loader and the transcriber read through it, and the signed `/m/`
   path names a key. A workspace file sent on WhatsApp is kept first: the ingest served
   only `conversations/`, so such a send got a path the bridge was refused. The transcript
-  sidecar is gone; a forwarded note is heard again until `refs` answers it. The bridge
+  sidecar is gone; a forwarded note is heard once through `refs` (below). The bridge
   labels an upload's part with its medium's type (`open-bsp-whatsmeow` 27eae8f).
 - **The log guards it.** `refs(uri, event_id)` on both engines, written with each row from
   the parts it stores. `ReadQuery.uri` reads the rows that reference an object, so under
@@ -6326,6 +6326,8 @@ The storage batch of `CHANGES.md`, a step at a time.
   shells included. `aread <uri>` prints text or the media mark (the uri itself, which
   attaches through the Files port); `--to <path>` lands the bytes. **Open**: a Cloudflare
   sandbox reaches no door, so `aread storage://…` there says so.
+- **A forwarded note is heard once.** The transcriber asks `refs` for another message
+  carrying the same object and takes its transcript, in place of the sidecar.
 
 ### What is open (2026-10-20)
 

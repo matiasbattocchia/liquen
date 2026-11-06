@@ -1673,7 +1673,9 @@ when its words arrive (the instructions say to wait for them). Sender-less and a
 and out of the mirror's absorb guard); render puts the AUDIO's author on the line, since the
 words are the only part of the pair that reads as speech and the marker they point at may
 be a turn behind or past the WUM caps. `external_id = transcript:<audio external_id>` (the
-upsert makes one audio message exactly one transcript). Serial, one note at a time: transcription is CPU-bound and a burst of forwarded notes is
+upsert makes one audio message exactly one transcript), and the same bytes forwarded again
+take the words an earlier message that references the object was given (`refs`), so the
+model hears them once. Serial, one note at a time: transcription is CPU-bound and a burst of forwarded notes is
 exactly when N model trees must not race each other; concurrency becomes a `processors`
 knob if a GPU box ever runs it.
 
