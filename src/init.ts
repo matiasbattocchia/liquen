@@ -13,6 +13,7 @@
 import { materialize, starterConfig } from "./config.ts";
 import { onFiles, seedOrg } from "./store/seed.ts";
 import { entry } from "./entry.ts";
+import { helpFlag } from "./connect/help.ts";
 
 /** template name in `scaffold/` → name in the project (dotfiles ship undotted so the
  *  scaffold itself never acts as one) */
@@ -48,12 +49,18 @@ export async function init(path: string): Promise<void> {
   await seedOrg(onFiles(`${path}/data`));
 }
 
+export const USAGE = `usage: liquen init <path>
+
+  Make a new org at <path>: its config.jsonc, its scaffold, and the docs every agent reads.
+  \`liquen agent <name>\` then adds an agent to it.`;
+
 if (import.meta.main) {
   await entry(async () => {
+    helpFlag(Deno.args, USAGE);
     const [path, ...rest] = Deno.args;
-    if (!path || rest.length > 0) {
-      console.error("usage: deno run -A jsr:@liquen/liquen/init <path>");
-      Deno.exit(1);
+    // a flag is never an org's folder: `--typo` would otherwise become one
+    if (!path || rest.length > 0 || path.startsWith("-")) {
+      throw new Error(path?.startsWith("-") ? `unknown flag ${path}\n${USAGE}` : USAGE);
     }
     await init(path);
     console.log(

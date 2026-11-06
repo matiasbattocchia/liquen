@@ -6268,8 +6268,8 @@ tenth or less, and a read starts the hour again.
   its `console` there; the detach's shell redirect is gone. The bound is `halve`
   (`hole.ts`), shared with the job spool, at `RUN_LOG_CAP` (16 MiB). Checked on a scratch
   org: `-D`, an attached run, a refused second start and main alone each wrote stamped
-  lines. **Open**: `liquen init --help` makes an org named `--help` rather than printing
-  the usage.
+  lines. `liquen init --help` made an org named `--help`; it prints the usage now, and a
+  stray flag is refused rather than taken for a folder.
 - **A member's sign-in can leave mail out.** `CONNECTORS.md` says how, beside `listen`:
   `--scopes` or `?scopes=` without the mail read scope, a revoke first on Google, whose
   consent keeps what was granted before, and no mail sent on Microsoft without
