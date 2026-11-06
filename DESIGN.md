@@ -1615,6 +1615,15 @@ inside the agent's own ground — its folder (relative paths are from there), `o
 has, kept by the broker, since the broker reads as itself (`FileScope`, xi's `files`
 port; tool-result attachments pass the same check).
 
+**The log guards the store.** Publishing writes each kept uri an event's parts name into
+`refs(uri, event_id)`, in the same transaction and from the parts the row stores, so a
+re-statement moves them and a dropped echo takes its own. An agent reads an object when
+an event it can read references it: a read filtered by `uri` under the agent's law, the
+same law every read of its goes through. A reference grants nothing: a draft an agent
+publishes may name a kept object only if it can read it already, or if no event
+references it yet, which is how its own upload stands (`PublishOptions.reads`, beside the
+`check`, inside the writing transaction on both engines).
+
 A `FilePart` renders as its kind's element — `<image name path/>`, `<audio/>`, `<document/>` — the durable
 handle (kept: its `storage://` uri; local: the plain path, re-viewable via `aread`/bash;
 external: the url).

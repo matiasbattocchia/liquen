@@ -71,6 +71,7 @@ import { createSweeper, type Sweeper } from "./sweep.ts";
 import { bindRoster, ROSTER_VIEWS } from "./roster.ts";
 import { routedSession } from "../session.ts";
 import { foldName } from "./names.ts";
+import { keptIn } from "./storage.ts";
 import {
   build,
   cutOf,
@@ -112,6 +113,9 @@ export interface ReadQuery {
    *  stamped on the same instant. */
   afterId?: EventId;
   beforeId?: EventId;
+  /** Rows that reference this kept object (`refs`, §8): under an agent's law, whether the
+   *  agent may read it. */
+  uri?: string;
   /** Rows whose text parts hold this fragment, or any one of these: literal, case and
    *  accents folded (`fold`, the name rule's form). */
   text?: string | string[];
@@ -231,6 +235,11 @@ export interface PublishOptions {
    *  before anything lands — one refused draft aborts the batch, as Postgres aborts the
    *  INSERT. The refusal names the draft's type. */
   check?: Law;
+  /** The writer's read law: a reference grants nothing (§8), so every kept object a draft
+   *  names must already be the writer's to read — an event it can read references it — or
+   *  be referenced by no event at all, which is how the writer's own upload stands.
+   *  Checked in the same transaction as `check`. */
+  reads?: Law;
   /** SHED (§5 media): in the same transaction, drop the attachment bytes this session's
    *  tool results pinned (`extra.media`) up to `through` — the checkpoint being published
    *  covers them, and nothing renders them again. The rows keep everything else. */
@@ -501,6 +510,14 @@ export async function openLog(
        WHERE updated_at > created_at;
      -- the sweeper's scan: the state is the one lifecycle key it selects on
      CREATE INDEX IF NOT EXISTS events_state ON events(json_extract(status, '$.state'));
+     -- which events reference which kept object (§8): who may read it, and whether it is
+     -- still wanted. Written with the event, from the parts it stores
+     CREATE TABLE IF NOT EXISTS refs (
+       uri      TEXT NOT NULL,
+       event_id TEXT NOT NULL,
+       PRIMARY KEY (uri, event_id)
+     ) WITHOUT ROWID;
+     CREATE INDEX IF NOT EXISTS refs_event ON refs(event_id);
      CREATE TABLE IF NOT EXISTS usage (   -- telemetry, NOT events (§2): append-only spend
        created_at         TEXT NOT NULL,
        agent_id           TEXT,
@@ -579,8 +596,31 @@ export async function openLog(
        session_id = CASE WHEN events.session_id IS NULL THEN excluded.session_id
                          ELSE events.session_id END,
        updated_at = excluded.updated_at
-     RETURNING id`, // the STORED id: minted in write(), or the surviving row's on a merge
+     RETURNING id, parts`, // the STORED row: minted in write(), or the survivor of a merge
   );
+  // a row's references follow the parts it stores, whichever writer's they are
+  const unref = db.prepare("DELETE FROM refs WHERE event_id = ?");
+  const ref = db.prepare("INSERT OR IGNORE INTO refs (uri, event_id) VALUES (?, ?)");
+  const refer = (id: string, parts: string | null) => {
+    unref.run(id);
+    for (const uri of keptIn(parts === null ? null : JSON.parse(parts))) ref.run(uri, id);
+  };
+  // a reference grants nothing (§8): a kept object a writer names is one an event the
+  // writer may read references, or one no event references yet (its own upload)
+  const readers = new Map<string, ReturnType<typeof db.prepare>>();
+  const unreferenced = db.prepare("SELECT 1 AS x FROM refs WHERE uri = ? LIMIT 1");
+  const mayName = (law: Law, uri: string): boolean => {
+    let stmt = readers.get(law.sql);
+    if (stmt === undefined) {
+      stmt = db.prepare(
+        `SELECT 1 AS x FROM refs JOIN events ON events.id = refs.event_id
+          WHERE refs.uri = $r_uri AND (${law.sql}) LIMIT 1`,
+      );
+      readers.set(law.sql, stmt);
+    }
+    return stmt.get({ ...law.params, r_uri: uri }) !== undefined ||
+      unreferenced.get(uri) === undefined;
+  };
   // the merge-only path (§3): a PARTLESS draft is a patch, not an event — receipts and
   // lifecycle stamps reference a message; if the message isn't here, there is nothing to
   // stamp and NOTHING is stored (out-of-order tolerance dropped on purpose: a delivery
@@ -739,7 +779,8 @@ export async function openLog(
       r.payload,
       r.extra,
       r.status,
-    ) as { id: string };
+    ) as { id: string; parts: string | null };
+    refer(stored.id, stored.parts);
     return storedAs(event, stored.id, offer);
   };
 
@@ -792,6 +833,12 @@ export async function openLog(
           if (!admits(opts.check, d)) {
             throw new Error(`policy: draft not writable (type=${d.type})`);
           }
+        }
+      }
+      if (opts.reads !== undefined) {
+        for (const d of drafts) {
+          const denied = keptIn(d.parts).find((uri) => !mayName(opts.reads!, uri));
+          if (denied) throw new Error(`policy: ${denied} is not yours to read`);
         }
       }
       // shed before the batch lands, so the checkpoint's own rows are never touched
@@ -988,6 +1035,7 @@ export async function openLog(
           if (clash && clash.id !== id) {
             absorb.run(clash.id, now, id);
             drop.run(clash.id);
+            unref.run(clash.id);
           }
         }
         mark.run(

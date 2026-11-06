@@ -61,6 +61,28 @@ Deno.test("read: the policy applies BEFORE the limit — the window fills with v
   });
 });
 
+Deno.test("a kept object is the agent's to read, and to name, through the rows it can read (§8)", async () => {
+  await withLog(async (log) => {
+    const carrying = (id: string, conversation: string, uri: string): MessageEvent => ({
+      ...msg(id, conversation, ""),
+      parts: [{ type: "file", kind: "image", file: { mime_type: "image/png", uri } }],
+    });
+    await log.publish([
+      carrying("01", "a", "storage://media/mine.png"),
+      carrying("02", "b", "storage://media/theirs.png"),
+    ]);
+    const view = scoped(log, { using: inConv("a") });
+    assertEquals((await view.read({ uri: "storage://media/mine.png", limit: 1 })).length, 1);
+    assertEquals((await view.read({ uri: "storage://media/theirs.png", limit: 1 })).length, 0);
+    await view.publish(carrying("03", "a", "storage://media/mine.png"));
+    await assertRejects(
+      () => view.publish(carrying("04", "a", "storage://media/theirs.png")),
+      Error,
+      "not yours to read",
+    );
+  });
+});
+
 Deno.test("read: a law fills the window in the engine — the N most recent VISIBLE rows, no JS walk", async () => {
   await withLog(async (log) => {
     await log.upsertMemberships([

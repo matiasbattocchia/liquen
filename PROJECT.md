@@ -6313,6 +6313,12 @@ The storage batch of `CHANGES.md`, a step at a time.
   only `conversations/`, so such a send got a path the bridge was refused. The transcript
   sidecar is gone; a forwarded note is heard again until `refs` answers it. The bridge
   labels an upload's part with its medium's type (`open-bsp-whatsmeow` 27eae8f).
+- **The log guards it.** `refs(uri, event_id)` on both engines, written with each row from
+  the parts it stores. `ReadQuery.uri` reads the rows that reference an object, so under
+  an agent's law it says whether the agent may read it. `scoped()` hands publish the
+  agent's read law (`reads`), and a draft naming an object the agent cannot read is
+  refused unless nothing references it yet: the agent's own upload is told apart by that
+  alone, with no table of who uploaded what.
 
 ### What is open (2026-10-20)
 

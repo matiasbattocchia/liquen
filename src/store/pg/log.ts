@@ -50,6 +50,7 @@ import {
   utcOf,
 } from "../events.ts";
 import { newId } from "../id.ts";
+import { keptIn } from "../storage.ts";
 import type { Draft, Envelope, Event, EventId } from "../../types.ts";
 import { compile, connect, count, type Db, rows, scrub, type Sql } from "./sql.ts";
 import { prepare } from "./schema.ts";
@@ -112,7 +113,13 @@ ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO UPDATE SET
   agent_id   = coalesce(events.agent_id, excluded.agent_id),
   session_id = coalesce(events.session_id, excluded.session_id),
   updated_at = excluded.updated_at
-RETURNING id`;
+RETURNING id, parts`;
+
+/** A row's references follow the parts it stores, whichever writer's they are (§8). */
+const UNREF = "DELETE FROM refs WHERE event_id = $1::text";
+const REF = `INSERT INTO refs (uri, event_id) VALUES ($1::text, $2::text)
+  ON CONFLICT DO NOTHING`;
+const UNREFERENCED = "SELECT 1 FROM refs WHERE uri = $1::text LIMIT 1";
 
 /** A ruling on the use already stands (`settles`): the settlement in hand is not stored. */
 const RULED = `SELECT 1 FROM events
@@ -261,7 +268,7 @@ export async function openPgLog(
       cuts.push(cut);
     }
     const id = r.id ?? newId();
-    const [stored] = await rows<{ id: string }>(tx, UPSERT, [
+    const [stored] = await rows<{ id: string; parts: unknown }>(tx, UPSERT, [
       id,
       externalOf(r, event, id),
       r.type,
@@ -282,7 +289,23 @@ export async function openPgLog(
       r.extra,
       r.status,
     ]);
+    await count(tx, UNREF, [stored.id]);
+    const parts = typeof stored.parts === "string" ? JSON.parse(stored.parts) : stored.parts;
+    for (const uri of keptIn(parts)) await count(tx, REF, [uri, stored.id]);
     return storedAs(event, stored.id, offer);
+  };
+
+  // a reference grants nothing (§8): a kept object a writer names is one an event the
+  // writer may read references, or one no event references yet (its own upload)
+  const mayName = async (db: Db, law: Law, uri: string): Promise<boolean> => {
+    const c = compile(
+      `SELECT 1 FROM refs JOIN events ON events.id = refs.event_id
+        WHERE refs.uri = $r_uri::text AND (${law.sql}) LIMIT 1`,
+      [],
+      { ...law.params, r_uri: uri },
+    );
+    return (await rows(db, c.text, c.params)).length > 0 ||
+      (await rows(db, UNREFERENCED, [uri])).length === 0;
   };
 
   // the pinned attachment bytes of a session's tool results (`PublishOptions.shed`, §5):
@@ -328,6 +351,15 @@ export async function openPgLog(
         for (const d of drafts) {
           if (!(await admits(tx, opts.check, d))) {
             throw new Error(`policy: draft not writable (type=${d.type})`);
+          }
+        }
+      }
+      if (opts.reads !== undefined) {
+        for (const d of drafts) {
+          for (const uri of keptIn(d.parts)) {
+            if (!(await mayName(tx, opts.reads, uri))) {
+              throw new Error(`policy: ${uri} is not yours to read`);
+            }
           }
         }
       }
@@ -496,6 +528,7 @@ export async function openPgLog(
           if (clash && clash.id !== id) {
             await count(tx, ABSORB, [clash.id, now, id]);
             await count(tx, "DELETE FROM events WHERE id = $1::text", [clash.id]);
+            await count(tx, UNREF, [clash.id]);
           }
         }
         await count(tx, MARK, [

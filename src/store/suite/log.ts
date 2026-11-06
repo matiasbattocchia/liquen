@@ -377,6 +377,52 @@ export function logSuite(s: Substrate): void {
     });
   });
 
+  /** A message carrying a kept object. */
+  const carrying = (id: string, conversation: string, uri: string, key?: string): MessageEvent => {
+    const e = msg(id, conversation, "");
+    return {
+      ...e,
+      envelope: { ...e.envelope, ...(key ? { external_id: key } : {}) },
+      parts: [{ type: "file", kind: "image", file: { mime_type: "image/png", uri } }],
+    };
+  };
+
+  Deno.test("refs follow the parts a row stores: a re-statement moves them, a dropped echo takes its own (§8)", async () => {
+    await withLog(async (log) => {
+      const ids = async (uri: string) => (await log.read({ uri })).map((e) => e.id);
+      await log.publish(carrying("01", "c1", "storage://media/a.png", "x1"));
+      await log.publish(carrying("02", "c2", "storage://media/a.png"));
+      assertEquals(await ids("storage://media/a.png"), ["01", "02"]);
+      // the same message said again with another file: its reference moves with its parts
+      await log.publish(carrying("03", "c1", "storage://media/b.png", "x1"));
+      assertEquals(await ids("storage://media/a.png"), ["02"]);
+      assertEquals(await ids("storage://media/b.png"), ["01"]);
+      // an echo that landed as a row of its own goes when the send's id is backfilled
+      await log.publish(carrying("04", "c1", "storage://media/c.png", "gh:9"));
+      await log.publish(msg("05", "c1", "the send"));
+      await log.setDelivery("05", { external_id: "gh:9" });
+      assertEquals(await ids("storage://media/c.png"), []);
+    });
+  });
+
+  Deno.test("a reference grants nothing: a writer names only what it may read, or what nobody references yet (§8)", async () => {
+    await withLog(async (log) => {
+      const inC1 = { sql: "events.conversation_address = $c", params: { c: "c1" } };
+      await log.publish(carrying("01", "c1", "storage://media/mine.png"));
+      await log.publish(carrying("02", "c2", "storage://media/theirs.png"));
+      const forward = (id: string, uri: string) =>
+        log.publish(carrying(id, "c1", uri), { reads: inC1 });
+      await forward("03", "storage://media/mine.png");
+      await forward("04", "storage://media/fresh.png"); // an upload nobody references yet
+      await assertRejects(
+        () => forward("05", "storage://media/theirs.png"),
+        Error,
+        "storage://media/theirs.png is not yours to read",
+      );
+      assertEquals((await log.read()).map((e) => e.id), ["01", "02", "03", "04"]);
+    });
+  });
+
   Deno.test("setDelivery sender: fills when empty, never overwrites — the echo's fact wins first (§4)", async () => {
     await withLog(async (log) => {
       await log.publish(msg("01", "wa:x", "hola"));

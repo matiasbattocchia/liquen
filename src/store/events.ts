@@ -189,6 +189,10 @@ export function build(
   if (q.before !== undefined) (where.push("timestamp < ?"), params.push(utcOf(q.before)));
   if (q.afterId !== undefined) (where.push("id > ?"), params.push(q.afterId));
   if (q.beforeId !== undefined) (where.push("id < ?"), params.push(q.beforeId));
+  if (q.uri !== undefined) {
+    where.push("id IN (SELECT event_id FROM refs WHERE uri = ?)");
+    params.push(q.uri);
+  }
   if (q.types && q.types.length > 0) {
     where.push(`type IN (${q.types.map(() => "?").join(",")})`);
     params.push(...q.types);

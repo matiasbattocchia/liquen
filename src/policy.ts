@@ -148,16 +148,21 @@ export function scoped(log: Log, policy: Policy): Log {
     ...log,
     // a refused draft aborts the whole transaction — nothing lands, and a turn-end's lease
     // outlives it
+    // …and a kept object a draft names must be one the agent may read: a reference grants
+    // nothing (§8)
     publish:
       ((one: Draft | Draft[], opts = {}) =>
-        log.publish(one as Draft[], { ...opts, check: both(opts.check, check) })) as Appender[
-          "publish"
-        ],
+        log.publish(one as Draft[], {
+          ...opts,
+          check: both(opts.check, check),
+          reads: both(opts.reads, using),
+        })) as Appender["publish"],
     publishAndRelease:
       ((one: Draft | Draft[], lease: Lease, opts = {}) =>
         log.publishAndRelease(one as Draft[], lease, {
           ...opts,
           check: both(opts.check, check),
+          reads: both(opts.reads, using),
         })) as Appender["publishAndRelease"],
     read: (q = {}) => log.read({ ...q, law: both(q.law, using) }),
     subscribe: (listener, opts = {}) =>

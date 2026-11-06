@@ -36,6 +36,18 @@ export const keyOf = (uri: string): string => uri.slice(STORAGE_SCHEME.length);
 /** The uri a key is named by. */
 export const uriOf = (key: string): string => `${STORAGE_SCHEME}${key}`;
 
+/** The kept objects a row's parts name, each once: what its references are. */
+export function keptIn(parts: unknown): string[] {
+  if (!Array.isArray(parts)) return [];
+  const uris = parts.flatMap((p) => {
+    const uri = (p as { type?: unknown; file?: { uri?: unknown } })?.file?.uri;
+    return (p as { type?: unknown })?.type === "file" && typeof uri === "string" && isStored(uri)
+      ? [uri]
+      : [];
+  });
+  return [...new Set(uris)];
+}
+
 /** A key is a relative path of plain segments: nothing in it can reach outside the store. */
 export function plainKey(key: string): boolean {
   return /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(key) &&

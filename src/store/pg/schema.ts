@@ -141,6 +141,15 @@ CREATE INDEX IF NOT EXISTS events_updated ON events (updated_at, id)
 CREATE INDEX IF NOT EXISTS events_state ON events ((status ->> 'state'));
 CREATE INDEX IF NOT EXISTS events_ref ON events (type, (payload ->> 'ref_id'));
 
+-- which events reference which kept object (§8): who may read it, and whether it is still
+-- wanted. Written with the event, from the parts it stores
+CREATE TABLE IF NOT EXISTS refs (
+  uri      ${T} NOT NULL,
+  event_id ${T} NOT NULL,
+  PRIMARY KEY (uri, event_id)
+);
+CREATE INDEX IF NOT EXISTS refs_event ON refs (event_id);
+
 CREATE OR REPLACE FUNCTION events_rang() RETURNS trigger LANGUAGE plpgsql AS $f$
 BEGIN
   PERFORM pg_notify(TG_TABLE_SCHEMA || '.events', '');
