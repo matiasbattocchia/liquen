@@ -38,6 +38,7 @@
 import { parse } from "@std/jsonc";
 import { findRoot, orgFlag, withMember, withoutMember } from "./config.ts";
 import { entry } from "./entry.ts";
+import { helpFlag } from "./connect/help.ts";
 import { running } from "./stop.ts";
 import { packageManifest } from "./package.ts";
 import { openStore } from "./store/mod.ts";
@@ -255,9 +256,20 @@ export function linked(root: string): string | null {
   return null;
 }
 
+export const USAGE = `usage: liquen update [--dir <org>]
+
+  Move the org onto the newest release of liquen, then bring its tasks and tool docs up to
+  that release's.`;
+
 if (import.meta.main) {
   await entry(async () => {
     const org = orgFlag();
+    helpFlag(org.args, USAGE);
+    // --sync and --tasks are the release's own second half, not a person's words
+    const stray = org.args.find((a, i) =>
+      a !== "--sync" && a !== "--tasks" && org.args[i - 1] !== "--sync"
+    );
+    if (stray !== undefined) throw new Error(`unknown argument ${stray}\n${USAGE}`);
     const root = findRoot(org);
     const at = org.args.indexOf("--sync");
     if (at >= 0) return await sync(root, org.args[at + 1] ?? null);

@@ -36,6 +36,7 @@
 
 import { findRoot, orgFlag, STOP_TIMEOUT_MS } from "./config.ts";
 import { entry } from "./entry.ts";
+import { helpFlag } from "./connect/help.ts";
 
 /** Where the locks live, under the org's data root, and what names one. */
 const RUN = "run";
@@ -151,9 +152,18 @@ async function end(dir: string, role: string, pid: number, root: string): Promis
   }
 }
 
+export const USAGE = `usage: liquen stop [--dir <org>]
+
+  End the org's run, whoever started it: the supervisor and what it runs, and a main an
+  interface raised alone.`;
+
 if (import.meta.main) {
   await entry(async () => {
-    const root = findRoot(orgFlag());
+    const org = orgFlag();
+    helpFlag(org.args, USAGE);
+    // a word stop does not know is not a stop: the run stays up
+    if (org.args.length > 0) throw new Error(`unknown argument ${org.args[0]}\n${USAGE}`);
+    const root = findRoot(org);
     const dir = `${root}/data`;
     const stopped: string[] = [];
     // the supervisor first and alone — it respawns what it outlives
