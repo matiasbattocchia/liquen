@@ -134,3 +134,27 @@ other line is a person's, and steers as `<principal name="…">`.
 
 The system instructions say what `<agent>` is, and `RENDER.md` lists it. A room the org bot
 adopted stays a steering room when its agent later gets an account of its own.
+
+## 12. The proxy knows the agent from the connection
+
+Each agent's shells reach the proxy at `http://<agent>:<nonce>@127.0.0.1:<port>`, in
+`HTTPS_PROXY`, `HTTP_PROXY` and `http_proxy` (`sandbox.ts:367`). The client sends it as
+`Proxy-Authorization` on a `CONNECT` and on each plain request, and the proxy reads the
+agent there, so every egress row names one: a blind tunnel, an org grant and an agent's own
+alike. The header is hop-by-hop and never reaches the origin.
+
+- **No nonce, no service.** A connection without a valid one gets `407`. A process outside
+  the agents' shells reaches neither the grants nor the tunnels.
+- **The nonce outlives a restart.** It is minted once per agent and kept under
+  `data/system/` beside the CA, so a job that outlives the harness keeps reaching the world.
+- **One placeholder.** Every fronted variable holds `sentinel-token`, in place of a
+  `mu-grant-…` handle per grant. The proxy picks the grant from the agent and the request:
+  the one fronted for that agent whose hosts and paths admit it. Two that both admit it
+  answer `401`, naming them; `liquen connect token` warns when a new grant's hosts overlap
+  one already fronted for the same agent, as it warns of one never fronted.
+- **A grant spends only for its agents.** An agent's own grant swaps on its connection
+  alone, an org grant on any agent's.
+
+Before landing, each common client is checked to send the credentials from the URL: curl,
+wget, git, pip, Python's `urllib`, Go, Deno, Rust's `reqwest`, npm and Node's `fetch`. One
+that drops them is refused outright, so the check comes first.
