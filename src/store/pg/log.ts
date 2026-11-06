@@ -164,8 +164,6 @@ UPDATE events SET
   updated_at = $2::text
 WHERE id = $3::text`;
 
-/** Open a Log on the Postgres database at `url`, in `schema` (created when absent). `now`
- *  is the clock the lease reads (§9). */
 /** A telemetry read's time window, as WHERE terms on `created_at`. */
 function windowed(
   q: { after?: string; before?: string },
@@ -190,14 +188,17 @@ function recent(filtered: string, q: { limit?: number }, params: unknown[]): str
     recent ORDER BY created_at`;
 }
 
+/** Open a Log on the Postgres database at `url`, in `schema` (created when absent). `now`
+ *  is the clock the lease reads (§9); `bucket` is where the org keeps its objects, when
+ *  that is a bucket. */
 export async function openPgLog(
   url: string,
-  opts: { schema?: string; now?: () => number } = {},
+  opts: { schema?: string; now?: () => number; bucket?: string } = {},
 ): Promise<Log> {
   const schema = opts.schema ?? "public";
   const sql = connect(url, schema);
   try {
-    await prepare(sql, schema);
+    await prepare(sql, schema, opts.bucket);
   } catch (err) {
     await sql.end();
     throw err;

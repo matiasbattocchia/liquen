@@ -6341,6 +6341,14 @@ The storage batch of `CHANGES.md`, a step at a time.
   its keys `STORAGE_ACCESS_KEY_ID` and `STORAGE_SECRET_ACCESS_KEY`. Checked against MinIO
   (`bitnamilegacy/minio`; Docker Hub and Quay no longer serve MinIO's own image): a round
   trip, a listing, collection, and a forged secret refused. `LIQUEN_TEST_S3` runs it.
+- **The policy on `storage.objects`.** On Postgres, `object_readable(uri)` is the agent's
+  history law over `refs`, run as the store's owner so the agent role gets the answer and
+  never the rows. Where the database keeps Supabase's bucket index, the log lays a policy
+  on `storage.objects` with it: the agent role reads an object of the org's bucket when the
+  function says so. Checked on Postgres 17 against a stand-in `storage.objects`, not yet
+  on Supabase. The agent is the one `liquen.agent` names, as for the docs; through
+  Supabase's Storage API it would be named by its token's claims, which waits with the
+  edge.
 
 ### What is open (2026-10-20)
 

@@ -19,7 +19,9 @@
  * place before the DDL runs, and a store ahead of it belongs to a newer liquen.
  */
 
+import { historyFor } from "../../policy.ts";
 import { MIND } from "../../session.ts";
+import { STORAGE_SCHEME } from "../storage.ts";
 import { UNPREFIX } from "../connections.ts";
 import { DROP_THREAD, MAIL_GROUPS, MAIL_MAILBOXES, MAIL_THREADS } from "../events.ts";
 import type { Db, Sql } from "./sql.ts";
@@ -605,6 +607,41 @@ END
 $f$;
 `;
 
+/** The agent a transaction names, where a law reads its parameter. */
+const LAW_AGENT = "nullif(current_setting('liquen.agent', true), '')";
+
+/** An object is the agent's to read when an event it can read references it (§8): the
+ *  agent's history law (`historyFor`) over `refs`, the agent the one the transaction names
+ *  as `liquen.agent`, and no one's when none is named. The function runs as the store's
+ *  owner (`SECURITY DEFINER`), so the agent role reaches the answer and never the rows.
+ *
+ *  On a database that keeps the bucket's index, Supabase's `storage.objects`, the same
+ *  answer is the policy on it: the agent role reads an object of the org's bucket when the
+ *  function says so. Elsewhere the door's check stands alone (`door.ts`). */
+const objectsDdl = (schema: string, bucket: string | undefined) => `
+CREATE OR REPLACE FUNCTION object_readable(uri text) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ${ident(schema)}, pg_temp AS $f$
+  SELECT ${LAW_AGENT} IS NOT NULL AND EXISTS (
+    SELECT 1 FROM refs r JOIN events ON events.id = r.event_id
+    WHERE r.uri = $1 AND (${historyFor("").using!.sql.replaceAll("$law_agent", LAW_AGENT)}))
+$f$;
+REVOKE EXECUTE ON FUNCTION object_readable(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION object_readable(text) TO ${AGENT_ROLE};
+${
+  bucket === undefined ? "" : `
+DO $d$ BEGIN
+  IF to_regclass('storage.objects') IS NOT NULL THEN
+    GRANT USAGE ON SCHEMA storage TO ${AGENT_ROLE};
+    GRANT SELECT ON storage.objects TO ${AGENT_ROLE};
+    DROP POLICY IF EXISTS ${ident(`liquen:${schema}`)} ON storage.objects;
+    CREATE POLICY ${ident(`liquen:${schema}`)} ON storage.objects FOR SELECT TO ${AGENT_ROLE}
+      USING (bucket_id = ${literal(bucket)}
+             AND ${ident(schema)}.object_readable('${STORAGE_SCHEME}' || name));
+  END IF;
+END $d$;
+`
+}`;
+
 /** The version the DDL creates. A store found below it is raised in place, once, by the
  *  steps between; a store above it was made by a newer liquen, and this one refuses it. */
 export const VERSION = 8;
@@ -649,8 +686,9 @@ const RAISE: Record<number, (tx: Db) => Promise<void>> = {
 /** Open the schema: create it when absent, raise it when behind, and run the DDL — every
  *  table `IF NOT EXISTS`, every function and view `OR REPLACE`, so the definitions are the
  *  last opener's. Once across every process opening it at the same moment: the advisory
- *  lock is the schema's name, held for the transaction. */
-export async function prepare(sql: Sql, schema: string): Promise<void> {
+ *  lock is the schema's name, held for the transaction. `bucket` is the org's, when its
+ *  objects are kept in one: its index's policy is laid with the rest. */
+export async function prepare(sql: Sql, schema: string, bucket?: string): Promise<void> {
   await sql.begin(async (tx) => {
     await tx.unsafe("SELECT pg_advisory_xact_lock(hashtext($1::text))", [`liquen:${schema}`]);
     await tx.unsafe(`CREATE SCHEMA IF NOT EXISTS ${ident(schema)}`);
@@ -665,7 +703,9 @@ export async function prepare(sql: Sql, schema: string): Promise<void> {
       );
     }
     for (let v = found?.version ?? VERSION; v < VERSION; v++) await RAISE[v]?.(tx);
-    await tx.unsafe(functions() + LOG_DDL + VAULT_DDL + docsDdl(schema));
+    await tx.unsafe(
+      functions() + LOG_DDL + VAULT_DDL + docsDdl(schema) + objectsDdl(schema, bucket),
+    );
     if (found === undefined) {
       await tx.unsafe("INSERT INTO schema_version (version) VALUES ($1::integer)", [VERSION]);
     } else if (found.version < VERSION) {
@@ -677,4 +717,9 @@ export async function prepare(sql: Sql, schema: string): Promise<void> {
 /** A name quoted as an identifier. */
 export function ident(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
+}
+
+/** A string quoted as a literal. */
+function literal(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
 }

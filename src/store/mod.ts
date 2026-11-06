@@ -25,7 +25,7 @@ import { openPgCredentials } from "./pg/credentials.ts";
 import { openPgDocs } from "./pg/docs.ts";
 import { onFiles, type Relaybed } from "./seed.ts";
 import { fileStorage, type Storage } from "./storage.ts";
-import { s3AddressOf, s3Storage } from "./s3.ts";
+import { bucketOf, s3AddressOf, s3Storage } from "./s3.ts";
 import { readConfig } from "../config.ts";
 
 /** The docs as a process opens them: the read port, the bed the seeds go in, and — where
@@ -86,10 +86,9 @@ export function storeAt(at: Database): Store {
   // the object store, opened once and on first need: a bucket's keys are read then, so a
   // process that keeps no file never asks for them
   let kept: Storage | undefined;
+  const inBucket = at.storage !== undefined && at.storage !== "filesystem";
   const storage = () =>
-    kept ??= at.storage === undefined || at.storage === "filesystem"
-      ? fileStorage(at.dir)
-      : s3Storage(s3AddressOf(at.storage));
+    kept ??= inBucket ? s3Storage(s3AddressOf(at.storage!)) : fileStorage(at.dir);
   if (at.engine === "sqlite") {
     return {
       log: (opts) => openLog(`${at.dir}/log`, opts),
@@ -99,7 +98,13 @@ export function storeAt(at: Database): Store {
     };
   }
   return {
-    log: (opts) => openPgLog(at.url, { schema: at.schema, ...opts }),
+    // the bucket's name goes with the log, whose schema lays the policy on the bucket's index
+    log: (opts) =>
+      openPgLog(at.url, {
+        schema: at.schema,
+        ...(inBucket ? { bucket: bucketOf(at.storage!) } : {}),
+        ...opts,
+      }),
     vault: (opts) => openPgCredentials(at.url, { schema: at.schema, ...opts }),
     docs: async () =>
       at.docs === "filesystem" ? files() : table(await openPgDocs(at.url, { schema: at.schema })),

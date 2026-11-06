@@ -21,6 +21,15 @@ export interface S3Address {
   secretAccessKey: string;
 }
 
+/** The bucket `deployment.storage` names. Throws a sentence when the URL names none. */
+export function bucketOf(url: string): string {
+  const bucket = new URL(url).pathname.split("/").filter(Boolean)[0];
+  if (!bucket) {
+    throw new Error(`deployment.storage ${url} names no bucket: https://<endpoint>/<bucket>`);
+  }
+  return bucket;
+}
+
 /** The address `deployment.storage` names, the keys read from `env`. Throws a sentence when
  *  the URL names no bucket or a key is missing. */
 export function s3AddressOf(
@@ -28,10 +37,7 @@ export function s3AddressOf(
   env: (name: string) => string | undefined = (n) => Deno.env.get(n),
 ): S3Address {
   const u = new URL(url);
-  const bucket = u.pathname.split("/").filter(Boolean)[0];
-  if (!bucket) {
-    throw new Error(`deployment.storage ${url} names no bucket: https://<endpoint>/<bucket>`);
-  }
+  const bucket = bucketOf(url);
   const accessKeyId = env("STORAGE_ACCESS_KEY_ID") ?? "";
   const secretAccessKey = env("STORAGE_SECRET_ACCESS_KEY") ?? "";
   if (!accessKeyId || !secretAccessKey) {

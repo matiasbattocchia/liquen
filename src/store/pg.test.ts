@@ -17,6 +17,8 @@ import { routedSession } from "../session.ts";
 import { connect } from "./pg/sql.ts";
 import { AGENT_ROLE, VERSION } from "./pg/schema.ts";
 import { openPgDocs } from "./pg/docs.ts";
+import { openPgLog } from "./pg/log.ts";
+import type { Draft } from "../types.ts";
 
 import { agentsSuite } from "./suite/agents.ts";
 import { connectionsSuite } from "./suite/connections.ts";
@@ -294,6 +296,73 @@ if (url === undefined) {
     } finally {
       await sql.end();
       await docs.close();
+      await store.drop();
+    }
+  });
+
+  /* ── the bucket's index ─────────────────────────────────────────────── */
+
+  /** Supabase's `storage.objects`, its two columns the policy reads, stood in where the
+   *  database has none and taken away after. */
+  Deno.test("storage.objects: the agent reads an object of the org's bucket when an event it can read references it", async () => {
+    const store = await pg.fresh();
+    const sql = connect(url, store.schema);
+    const [{ had }] = await sql.unsafe(
+      "SELECT to_regclass('storage.objects') IS NOT NULL AS had",
+    ) as unknown as { had: boolean }[];
+    if (!had) {
+      await sql.unsafe(`CREATE SCHEMA storage;
+        CREATE TABLE storage.objects (bucket_id text, name text);
+        ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY`);
+    }
+    const log = await openPgLog(url, { schema: store.schema, bucket: "org" });
+    try {
+      await sql.unsafe(
+        `INSERT INTO storage.objects (bucket_id, name) VALUES
+           ('org', 'media/a.png'), ('org', 'media/b.png'), ('org', 'media/loose.png'),
+           ('elsewhere', 'media/a.png')`,
+      );
+      await log.upsertMemberships([
+        { service: "local", connection: "default", conversation: "c1", agentId: "ana" },
+        { service: "local", connection: "default", conversation: "c2", agentId: "bo" },
+      ]);
+      const carrying = (conversation: string, uri: string): Draft => ({
+        ts: "2026-11-06T00:00:00Z",
+        type: "message",
+        envelope: {
+          service: "local",
+          connection_address: "default",
+          conversation: { address: conversation },
+        },
+        parts: [{ type: "file", kind: "image", file: { mime_type: "image/png", uri } }],
+      });
+      await log.publish([
+        carrying("c1", "storage://media/a.png"),
+        carrying("c2", "storage://media/b.png"),
+      ]);
+      const reads = (
+        agent: string,
+        statement = "SELECT bucket_id || ':' || name AS v FROM storage.objects ORDER BY 1",
+      ) =>
+        sql.begin(async (tx) => {
+          await tx.unsafe(`SET LOCAL ROLE ${AGENT_ROLE}`);
+          await tx.unsafe("SELECT set_config('liquen.agent', $1::text, true)", [agent]);
+          return (await tx.unsafe(statement) as unknown as { v: string }[]).map((r) => r.v);
+        });
+      assertEquals(await reads("ana"), ["org:media/a.png"]);
+      assertEquals(await reads("bo"), ["org:media/b.png"]);
+      assertEquals(await reads(""), []);
+      // the answer, never the rows
+      await assertRejects(
+        () => reads("ana", "SELECT id AS v FROM events"),
+        Error,
+        "permission denied",
+      );
+    } finally {
+      await log.close();
+      await sql.unsafe("DELETE FROM storage.objects WHERE bucket_id IN ('org', 'elsewhere')");
+      if (!had) await sql.unsafe("DROP SCHEMA storage CASCADE");
+      await sql.end();
       await store.drop();
     }
   });

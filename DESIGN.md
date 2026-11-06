@@ -1624,9 +1624,12 @@ an event it can read references it: a read filtered by `uri` under the agent's l
 same law every read of its goes through. A reference grants nothing: a draft an agent
 publishes may name a kept object only if it can read it already, or if no event
 references it yet, which is how its own upload stands (`PublishOptions.reads`, beside the
-`check`, inside the writing transaction on both engines). References keep an object: main
-sweeps the store hourly (`collect`) and lets go of what no event references once it is a
-day old, the wait an upload is given for the message it rides in to land.
+`check`, inside the writing transaction on both engines). On Postgres the same answer is
+the database's: `object_readable(uri)` is the agent's history law over `refs`, and where
+the database keeps Supabase's bucket index, the policy on `storage.objects` asks it.
+References keep an object: main sweeps the store hourly (`collect`) and lets go of what no
+event references once it is a day old, the wait an upload is given for the message it
+rides in to land.
 
 A `FilePart` renders as its kind's element — `<image name path/>`, `<audio/>`, `<document/>` — the durable
 handle (kept: its `storage://` uri; local: the plain path, re-viewable via `aread`/bash;
