@@ -57,6 +57,7 @@
 import { aliasOf, type AliasRow } from "../store/connections.ts";
 import { LOCAL_CONNECTION, MIND, parseSession, sessionAddress } from "../session.ts";
 import {
+  alarmLine,
   failedCallOf,
   failureOf,
   isLate,
@@ -573,10 +574,11 @@ async function ccParts(
     const said = isLate(e) ? failedCallOf(e) : failureOf(e);
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${lastOf(said)}` }]);
   }
-  // an unload opens a turn that writes docs and ends silent: its line says what the calls
-  // after it are for
+  // an unload opens a turn that writes docs and ends silent: its line is the notice as the
+  // model reads it, what the calls after it answer
   if (unloadOf(e)) {
-    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` 🧠 ${w.unload}` }]);
+    const notice = alarmLine(e as AlarmEvent);
+    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` 📝 ${notice}` }]);
   }
   if (e.type === "alarm") {
     // a reminder of the agent's own lines, handed back: what the turn after it acts on
