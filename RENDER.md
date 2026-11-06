@@ -166,4 +166,5 @@ Search pages, which arrive as tool results.
 | `match`, `seen="window\|checkpoint\|never"` | ✗ | `search.md` |
 | `<call id at>`, `<contact name address/>`, `<profile address exists name/>` | ✗ | `search.md` |
 | `<doc handle keywords conversations/>` | ✗ | `search.md` |
+| `[handle]` and a doc's body, opening a page that reaches one room's newest line | ✗ | `search.md`: the reading a send asks for |
 | `— whatsapp … : address book not reached —`, `… lines between, not shown` | ✗ | `search.md` |
