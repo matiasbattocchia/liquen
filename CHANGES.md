@@ -112,3 +112,26 @@ punched up to the newer half's first line (`readLog` in `exec/bash.ts`, `falloca
 runs: its sign-in link carries `?scopes=` without the mail scope (`gmail.readonly`,
 `Mail.ReadWrite`), so its mailbox is neither polled nor readable on demand, while the org's
 mailbox is.
+
+## 10. The REPL says when the world is not connected
+
+A REPL that raised main alone (`attach.ts:100`) says so on entry: no connectors, edge or
+tunnel run, a send waits in the log, and `liquen start -D` brings the org up. Main raised
+alone stays as it is, a desk that ends 30 seconds after its last client.
+
+## 11. A steering room's lines name their writer
+
+A steering room stays a surface of the mind: whoever writes there steers, its lines fan in
+and the mind's fan out, as now. Fan-in keeps the writer's roster id on the copy
+(`extra.via`): the agent the surface row is stamped with, or the member the email on their
+profile names. Render marks the line by it, as `authorKeyOf` marks a world line: one of the
+agent's principals `principal`, another roster agent `agent`, anyone else nothing.
+
+```
+<principal name="Pablo" principal>pausá el informe</principal>
+<principal name="scout" agent>listo el scraping</principal>
+<principal name="Lucía">¿cuándo sale?</principal>
+```
+
+The system instructions say what each mark means, and `RENDER.md` lists them. A room the
+org bot adopted stays a steering room when its agent later gets an account of its own.
