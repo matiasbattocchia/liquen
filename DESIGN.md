@@ -194,6 +194,9 @@ next check, and picks up after a long quiet at once. It checks early when
 `digestAfterMessages` are unread **across the whole world** — the count measures how much has
 arrived, not how much arrived in one room, and there is nothing to exclude from it: what the
 principal says never accumulates, an engaged conversation wakes before it piles, a silenced one is not news.
+Both weigh words: a reaction, a deletion or a room's change is a **mark** nobody is owed an
+answer for, read when words make the check due and never making it due alone, and never
+counted unanswered.
 One look answers for every conversation because one look SEES every conversation: the turn
 reads a whole window, so the rooms it left alone were in front of the model too.
 Inside `sleepHours` ("23-8"-style on the org clock, null ⇒ never sleeps) it checks nothing:

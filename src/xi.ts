@@ -291,6 +291,10 @@ function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
  *      time it looked — the way you put the phone down and pick it up again
  *   6. or early, when `digestAfterMessages` have piled up across the whole world
  *
+ * Rungs 5 and 6 weigh words: a reaction, a deletion or a room's change is a mark nobody
+ * is owed an answer for, so it is read when words make the digest due and never makes it
+ * due alone.
+ *
  * A transcript is not a rung of its own: it INHERITS the attention of the note it names.
  * The words ARE that message, arriving late — so they wake once the note has been looked at
  * and could not be read (below the night, which swallows the note too), and they never count
@@ -361,7 +365,10 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // what the note could not use. A note still unread needs none of this: its words are in
   // the same pile it is, and the digest reads the two together.
   if (news.some((e) => lateWords(e, events, looked))) return "think";
-  return digestDue(news, looked, wake, now) ? "think" : "ignore";
+  // a MARK — a reaction, a deletion, a room's change — is owed no answer: it rides along
+  // when words make the digest due, and alone it never does
+  const said = news.filter((e) => e.type !== "message" || spoken(e) || words(e) !== undefined);
+  return said.length > 0 && digestDue(said, looked, wake, now) ? "think" : "ignore";
 }
 
 /** Is this event a transcript — machine words ridden onto a message that carried none? */
@@ -1657,10 +1664,12 @@ function accountOf(c: ConnectionRow): string {
 }
 
 /** Words that can be owed an answer: a message, a reply, an edit, a forward. A reaction, a
- *  delete or a derived transcript is a mark on a message, never a message. */
+ *  delete or a derived transcript is a mark on a message, and a room's change of members or
+ *  name a mark on the room, never a message. */
 function spoken(e: MessageEvent): boolean {
   const a = e.payload?.action;
-  return a !== "add" && a !== "remove" && a !== "delete";
+  return a !== "add" && a !== "remove" && a !== "delete" &&
+    !(e.parts.length > 0 && e.parts.every((p) => p.type === "data" && p.kind === "room"));
 }
 
 /** The answer that is not words (§5): a reaction OUR side put on their line. A room whose
