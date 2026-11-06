@@ -54,12 +54,6 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 Decided 6 Nov 2026.
 
-## 5. The bridge unescapes incoming cards
-
-`parseVcard` in `open-bsp-whatsmeow` (outside this repo) reverses the escaping of `\`, `,`,
-`;` and line breaks in `FN` and `TEL`, as the writer escapes them, so "Pérez, Juan" arrives
-whole.
-
 ## 6. A connector never heard reads as down
 
 `downOn` (`xi.ts:1582`) reads a row with no `heard_at`, whose `connected_at` is older than

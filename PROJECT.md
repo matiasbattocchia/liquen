@@ -6254,6 +6254,9 @@ tenth or less, and a read starts the hour again.
   under `denoland/deno`, and the Sandbox SDK's) already carry it, so `date` honored `TZ`
   before; the line keeps it so when a base changes. The scaffold's image also gains
   `openssl`, which its base lacks and the proxy needs for its CA and its leaves.
+- **The bridge unescapes incoming cards** (`open-bsp-whatsmeow` d6742ef, `vcardUnescape`):
+  `FN` and `TEL` are read back as `vcardText` writes them, so "Pérez, Juan" arrives whole.
+  **Open**: the running bridge takes it at its next build and restart.
 
 ### What is open (2026-10-20)
 
