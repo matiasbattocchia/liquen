@@ -90,6 +90,7 @@ import { calendarEntries, dayOf, daySection, docEntries, docName, nextDay } from
 import type { Gates, Owed } from "./store/gates.ts";
 import type { Sweeper } from "./store/sweep.ts";
 import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./store/media.ts";
+import { isStored } from "./store/storage.ts";
 import type {
   BinDir,
   Carried,
@@ -390,7 +391,7 @@ function sealed(e: Event, events: Event[], wake: Wake, now: number): boolean {
   if (e.payload?.action !== undefined || e.payload?.turn_id !== undefined) return false;
   if (!e.envelope.external_id) return false;
   const media = e.parts.some((p) =>
-    p.type === "file" && kinds.includes(p.kind) && p.file.uri.startsWith("file://")
+    p.type === "file" && kinds.includes(p.kind) && isStored(p.file.uri)
   );
   if (!media || now - Date.parse(e.ts) >= PROCESSOR_TIMEOUT_MS) return false;
   return !events.some((x) => transcribes(x, e));

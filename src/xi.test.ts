@@ -675,7 +675,7 @@ const note = (conv: string, minAgo: number, id = "wa:n1") =>
       parts: [{
         type: "file",
         kind: "audio",
-        file: { mime_type: "audio/ogg", uri: "file:///n.ogg" },
+        file: { mime_type: "audio/ogg", uri: "storage://media/n.ogg" },
       }],
     } as Partial<Event> & { conv?: string },
   );

@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   bridgeTokenOf,
   createWhatsAppWebhook,
@@ -12,6 +12,8 @@ import type { Draft, Event, MessageEvent } from "../../types.ts";
 import { newId } from "../../store/id.ts";
 import type { Appender } from "../../store/log.ts";
 import type { ConnectionRow } from "../../store/connections.ts";
+import { fileStorage } from "../../store/storage.ts";
+import { saveMedia } from "../../store/media.ts";
 
 const TOKEN = "wa-s3cret";
 
@@ -476,9 +478,9 @@ Deno.test("an image the bridge landed carries its pixels, read off the file's he
       ...be32(1600),
       ...be32(1200),
     ]);
-    const uri = `file://${dir}/shot.png`;
-    await Deno.writeFile(`${dir}/shot.png`, png);
-    const { handler, published } = harness();
+    const storage = fileStorage(dir);
+    const { uri } = await saveMedia(storage, png, { mime_type: "image/png" });
+    const { handler, published } = harness({ storage });
     await handler(
       post(
         "/whatsapp-web-webhook",
@@ -811,24 +813,36 @@ Deno.test("sessions/events: a word the row already says keeps its stamp; an unkn
   assertEquals(upserts.length, 1);
 });
 
-Deno.test("media route stores bytes and answers the uri", async () => {
-  const { handler } = harness({
-    media: (bytes, meta) =>
-      Promise.resolve({
-        mime_type: meta.mime_type ?? "application/octet-stream",
-        uri: `file:///data/${meta.connection}/${meta.name} (${bytes.length}b)`,
-        size: bytes.length,
+Deno.test("media route keeps the bytes and answers their uri, named by what they are", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const storage = fileStorage(dir);
+    const { handler } = harness({ storage });
+    const upload = async (file: File) => {
+      const form = new FormData();
+      form.set("file", file);
+      form.set("organization_address", "5491100000000");
+      const res = await handler(
+        new Request("http://localhost/whatsapp-web-webhook/media", { method: "POST", body: form }),
+      );
+      assertEquals(res.status, 200);
+      return (await res.json() as { uri: string }).uri;
+    };
+    const jpeg = await upload(
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 1])], "foto.jpg", { type: "image/jpeg" }),
+    );
+    assert(/^storage:\/\/media\/[0-9a-f]{32}\.jpeg$/.test(jpeg), jpeg);
+    assertEquals([...(await storage.get(jpeg.slice(10)))!], [0xff, 0xd8, 0xff, 1]);
+    // a part labelled as bare bytes is named by its own: a voice note is an .ogg
+    const ogg = await upload(
+      new File([new TextEncoder().encode("OggS\0\x02")], "file", {
+        type: "application/octet-stream",
       }),
-  });
-  const form = new FormData();
-  form.set("file", new File([new Uint8Array([1, 2, 3])], "foto.jpg", { type: "image/jpeg" }));
-  form.set("organization_address", "5491100000000");
-  const res = await handler(
-    new Request("http://localhost/whatsapp-web-webhook/media", { method: "POST", body: form }),
-  );
-  assertEquals(res.status, 200);
-  const out = await res.json() as { uri: string };
-  assertStringIncludes(out.uri, "5491100000000/foto.jpg (3b)");
+    );
+    assert(ogg.endsWith(".ogg"), ogg);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("the served ingest needs the bridge token — unset is a refusal to bind", () => {

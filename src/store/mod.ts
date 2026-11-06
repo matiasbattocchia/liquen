@@ -23,6 +23,7 @@ import { openPgLog } from "./pg/log.ts";
 import { openPgCredentials } from "./pg/credentials.ts";
 import { openPgDocs } from "./pg/docs.ts";
 import { onFiles, type Relaybed } from "./seed.ts";
+import { fileStorage, type Storage } from "./storage.ts";
 import { readConfig } from "../config.ts";
 
 /** The docs as a process opens them: the read port, the bed the seeds go in, and — where
@@ -39,6 +40,8 @@ export interface Store {
   log(opts?: { now?: () => number }): Promise<Log>;
   vault(opts?: { now?: () => number }): Promise<Credentials>;
   docs(): Promise<DocStore>;
+  /** The object store: the media the org keeps (`storage.ts`). */
+  storage(): Storage;
 }
 
 /** The catalog's `deployment.database` and `deployment.docs` as an address: an engine, where its
@@ -78,11 +81,13 @@ export function storeAt(at: Database): Store {
     ...docs,
     bed: { laid: docs.laid, lay: docs.lay, text: docs.text, swap: docs.swap },
   });
+  const storage = () => fileStorage(at.dir);
   if (at.engine === "sqlite") {
     return {
       log: (opts) => openLog(`${at.dir}/log`, opts),
       vault: (opts) => openCredentials(at.dir, opts),
       docs: async () => at.docs === "filesystem" ? files() : table(await openSqliteDocs(at.dir)),
+      storage,
     };
   }
   return {
@@ -90,6 +95,7 @@ export function storeAt(at: Database): Store {
     vault: (opts) => openPgCredentials(at.url, { schema: at.schema, ...opts }),
     docs: async () =>
       at.docs === "filesystem" ? files() : table(await openPgDocs(at.url, { schema: at.schema })),
+    storage,
   };
 }
 

@@ -1597,14 +1597,17 @@ before plus new rows, until a checkpoint moves the floor:
 
 ### Media (kept like the rest, until the checkpoint)
 
-`FilePart.uri` is a real URI, and the SCHEME is the whole distinction: `file://` = local
-bytes (the canonical form; bare paths tolerated on input), `http(s)://` = an external
-link, passed through untouched — never downloaded nor uploaded broker-side (`size` is
-unknowable there, hence nullable). Inbound uris are always local — ingest downloads
-BROKER-side with the connection's credential into the conversation's media shelf
-(`conversations/<safe(address)>/media/<content-hash>.<ext>`, §8 — content-named, so
-re-downloads and the dispatch echo converge on one file; platform URL + token never
-cross the frontier, §9). Outbound uris are local or public: `send` takes
+`FilePart.uri` is a real URI, and the SCHEME is the whole distinction: `storage://` = an
+object the harness keeps, `file://` = a file of the agent's workspace (bare paths
+tolerated on input), `http(s)://` = an external link, passed through untouched — never
+downloaded nor uploaded broker-side (`size` is unknowable there, hence nullable). No host
+path enters the log. Inbound uris are always kept — ingest downloads BROKER-side with the
+connection's credential into the object store (`storage://media/<hash>.<ext>`,
+`src/store/storage.ts`, behind one port: files under `data/storage/` for now). The hash
+is the bytes' SHA-256 cut to 32 hex in one namespace for the org, so re-downloads, the
+dispatch echo and a file forwarded to three chats converge on one object; the extension
+is the bytes' own, sniffed when the wire labels them `application/octet-stream`. Platform
+URL + token never cross the frontier (§9). Outbound uris are kept, local or public: `send` takes
 `files: string[]` — paths statted broker-side, links kept as-is (no secret in a public
 URL, the frontier rule is untouched). A path is resolved through its links and must land
 inside the agent's own ground — its folder (relative paths are from there), `org/`,
@@ -1613,7 +1616,8 @@ has, kept by the broker, since the broker reads as itself (`FileScope`, xi's `fi
 port; tool-result attachments pass the same check).
 
 A `FilePart` renders as its kind's element — `<image name path/>`, `<audio/>`, `<document/>` — the durable
-handle (local: the plain path, re-viewable via `aread`/bash; external: the url).
+handle (kept: its `storage://` uri; local: the plain path, re-viewable via `aread`/bash;
+external: the url).
 Inlineable files (images, PDFs) additionally render as REAL API blocks after their element
 — local bytes as base64, external links as url-source blocks (the API fetches those
 itself) — and stay until the checkpoint, like the rest of the window: turning one into a
@@ -1660,9 +1664,7 @@ when its words arrive (the instructions say to wait for them). Sender-less and a
 and out of the mirror's absorb guard); render puts the AUDIO's author on the line, since the
 words are the only part of the pair that reads as speech and the marker they point at may
 be a turn behind or past the WUM caps. `external_id = transcript:<audio external_id>` (the
-upsert makes one audio message exactly one transcript), and a `<hash>.txt` sidecar beside
-the media file caches the work — the same bytes forwarded again publish from the cache.
-Serial, one note at a time: transcription is CPU-bound and a burst of forwarded notes is
+upsert makes one audio message exactly one transcript). Serial, one note at a time: transcription is CPU-bound and a burst of forwarded notes is
 exactly when N model trees must not race each other; concurrency becomes a `processors`
 knob if a GPU box ever runs it.
 
@@ -3096,7 +3098,7 @@ same session from the same three things, and what main keeps of its own is the `
 **Files are a port** (`Files`, `src/store/media.ts`): `resolve(ref)` is the `FilePart`
 a reference sends as, and the sandbox session carries the port because what an agent
 may attach is the ground it stands on — a remote sandbox answers it by moving the bytes
-onto the conversation's media shelf.
+into the object store.
 
 **A doc is a row with a handle** (`DocHeader`, `src/store/docs.ts`): the `docs` table's
 columns and the adapter's address for the doc, which render prints and the agent's read

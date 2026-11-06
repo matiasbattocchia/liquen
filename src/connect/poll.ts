@@ -27,6 +27,7 @@ import type { Appender, Reader } from "../store/log.ts";
 import type { CredentialRow, Credentials } from "../store/credentials.ts";
 import type { Connections } from "../store/connections.ts";
 import type { Registry } from "../store/agents.ts";
+import type { Storage } from "../store/storage.ts";
 import type { GrantBroker } from "../proxy/grants.ts";
 import type { Service } from "../types.ts";
 import { findRoot, orgFlag } from "../config.ts";
@@ -226,8 +227,8 @@ export interface PollIngestDeps {
   store:
     & Pick<Connections, "connection" | "connections" | "upsertConnections">
     & Pick<Registry, "agents">;
-  /** The data root the media shelf hangs off (`saveMedia`). */
-  dir: string;
+  /** Where a polled file is kept (`saveMedia`). */
+  storage: Storage;
   resources: string[];
   fetchApi: typeof fetch;
   onError: (key: string, err: unknown) => void;
@@ -277,7 +278,7 @@ export async function runPollIngest(
     creds,
     broker,
     store: log,
-    dir,
+    storage: store.storage(),
     resources,
     fetchApi: (input, init) => fetch(input, { ...init, client }),
     onError: (key, err) => {

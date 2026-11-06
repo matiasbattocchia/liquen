@@ -1020,7 +1020,7 @@ Deno.test("a gated send's last word is a line without text: what it carried, and
     await from("5492615550000", "Ana", "2026-09-23T19:44:00Z", [{
       type: "file",
       kind: "audio",
-      file: { mime_type: "audio/ogg", uri: "file:///nota.ogg" },
+      file: { mime_type: "audio/ogg", uri: "storage://media/nota.ogg" },
     }], "wa:n1");
     await log.publish({
       ts: "2026-09-23T19:45:00Z",

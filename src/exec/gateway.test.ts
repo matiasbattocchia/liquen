@@ -16,7 +16,7 @@ import {
   sandboxIdOf,
 } from "./gateway.ts";
 import { newId } from "../store/id.ts";
-import { pathOf } from "../store/media.ts";
+import { fileStorage } from "../store/storage.ts";
 import type { ExecFacts, ExecOutcome } from "../xi.ts";
 import { JOB_ENV, type ShellUpdate, SPOOL_CAP } from "./jobs.ts";
 
@@ -350,20 +350,19 @@ cases("a media mark becomes an attachment", async (shell) => {
   assertEquals(out, { output: "shown", files: ["/workspace/pic.png"] });
 });
 
-cases("a file the agent attaches lands on the conversation's shelf", async (shell, place) => {
+cases("a file the agent attaches is kept in the object store", async (shell, place) => {
   const dataDir = await Deno.makeTempDir();
   try {
     await run(shell, { command: "printf '\\x89PNG\\r\\n\\x1a\\nrest' > pic.png" });
-    const files = gatewayFiles(place.gateway, {
-      home: place.workspace,
-      dataDir,
-      conversation: "ada",
-    });
+    const storage = fileStorage(dataDir);
+    const files = gatewayFiles(place.gateway, { home: place.workspace, storage });
     const part = await files.resolve("pic.png");
     assertEquals(part.kind, "image");
     assertEquals(part.file.mime_type, "image/png");
     assertEquals(part.file.name, "pic.png");
-    assert(pathOf(part.file.uri).startsWith(`${dataDir}/conversations/ada/media/`));
+    assert(/^storage:\/\/media\/[0-9a-f]{32}\.png$/.test(part.file.uri), part.file.uri);
+    // a kept object passes through as it is
+    assertEquals((await files.resolve(part.file.uri)).file.uri, part.file.uri);
     assertEquals((await files.snapshot(part))?.media_type, "image/png");
     await assertRejects(() => files.resolve("gone.png"), Error, "no such file");
     await assertRejects(() => files.resolve("/etc/passwd"), Error, "outside your files");
@@ -373,8 +372,7 @@ cases("a file the agent attaches lands on the conversation's shelf", async (shel
     const standing = gatewayFiles(place.gateway, {
       home: place.workspace,
       cwd: shell.cwd,
-      dataDir,
-      conversation: "ada",
+      storage,
     });
     assertEquals((await standing.resolve("b.png")).file.name, "b.png");
     await assertRejects(() => standing.resolve("../../etc/passwd"), Error, "outside your files");

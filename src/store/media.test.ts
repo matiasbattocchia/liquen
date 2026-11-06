@@ -1,11 +1,13 @@
 /**
- * media: conversation-scoped, content-named storage (§8) — the hash names the bytes, so
- * re-downloads and the dispatch echo converge on ONE file; the path is the durable handle.
+ * media: content-named objects (§8) — the hash names the bytes, so re-downloads, the
+ * dispatch echo and a forward converge on ONE object; the uri is the durable handle.
  */
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { openCredentials } from "./credentials.ts";
+import { fileStorage } from "./storage.ts";
 import {
+  bytesOf,
   filePartOf,
   imageSize,
   kindOf,
@@ -83,27 +85,39 @@ Deno.test("imageSize: the pixels off a PNG, GIF, WebP or JPEG header, and none o
   assertEquals(imageSize(png.subarray(0, 20)), null); // cut short
 });
 
-Deno.test("saveMedia: content-named and idempotent — same bytes, same path, one file", async () => {
+Deno.test("saveMedia: content-named in one namespace — the same bytes are one object, wherever they came from", async () => {
   const root = await Deno.makeTempDir();
   try {
+    const storage = fileStorage(root);
     const bytes = new TextEncoder().encode("the same bytes");
-    const a = await saveMedia(root, "C1", bytes, { mime_type: "image/png", name: "shot.png" });
-    const b = await saveMedia(root, "C1", bytes, { mime_type: "image/png", name: "shot.png" });
+    const a = await saveMedia(storage, bytes, { mime_type: "image/png", name: "shot.png" });
+    const b = await saveMedia(storage, bytes, { mime_type: "image/png", name: "other.png" });
     assertEquals(a.uri, b.uri);
     assertEquals(a.size, bytes.length);
-    assert(a.uri.startsWith("file://")); // the canonical local scheme
-    assert(a.uri.endsWith(".png"));
-    assert(a.uri.includes("/conversations/C1/media/"));
-    assertEquals(await Deno.readTextFile(new URL(a.uri)), "the same bytes");
-    // a conversation address with unsafe chars slugs into a directory name
-    const c = await saveMedia(root, "mind@ana,mind@bo", bytes, { name: "x.pdf" });
-    assert(c.uri.includes("/conversations/mind_ana_mind_bo/media/"));
-    assertEquals(c.mime_type, "application/pdf"); // inferred from the name
+    assert(/^storage:\/\/media\/[0-9a-f]{32}\.png$/.test(a.uri), a.uri);
+    assertEquals(new TextDecoder().decode((await storage.get(a.uri.slice(10)))!), "the same bytes");
+    assertEquals(
+      [...Deno.readDirSync(`${root}/storage/media`)].map((e) => e.name),
+      [a.uri.slice(16)],
+    );
+    // a name says what nameless bytes are
+    const c = await saveMedia(storage, bytes, { name: "x.pdf" });
+    assertEquals(c.mime_type, "application/pdf");
     // mime params stripped: a WA voice note says `audio/ogg; codecs=opus` — it lands
     // as .ogg (a .bin was unplayable AND invisible to the extension-keyed maps)
-    const d = await saveMedia(root, "C1", bytes, { mime_type: "audio/ogg; codecs=opus" });
+    const d = await saveMedia(storage, bytes, { mime_type: "audio/ogg; codecs=opus" });
     assert(d.uri.endsWith(".ogg"));
     assertEquals(d.mime_type, "audio/ogg");
+    // labelled as bare bytes, the bytes say what they are: an upload's default label
+    const ogg = new Uint8Array([..."OggS"].map((ch) => ch.charCodeAt(0)).concat(0, 2, 0, 0));
+    const e = await saveMedia(storage, ogg, {
+      mime_type: "application/octet-stream",
+      name: "file",
+    });
+    assertEquals([e.mime_type, e.uri.endsWith(".ogg")], ["audio/ogg", true]);
+    // and what neither the label nor the bytes nor the name say is .bin
+    const f = await saveMedia(storage, bytes, { mime_type: "application/octet-stream" });
+    assert(f.uri.endsWith(".bin"));
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -162,6 +176,31 @@ Deno.test("loadMediaBlock: images/PDFs inline as base64; other kinds and missing
   }
 });
 
+Deno.test("a kept object resolves as a part and inlines through the store; with no store it does neither", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    const storage = fileStorage(root);
+    const kept = await saveMedia(storage, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2]), {
+      name: "dot.png",
+    });
+    const part = await localFiles(undefined, storage).resolve(kept.uri);
+    assertEquals(
+      [part.kind, part.file.uri, part.file.size, part.file.name],
+      ["image", kept.uri, 6, kept.uri.slice(16)],
+    );
+    assertEquals((await loadMediaBlock(kept.uri, storage))?.media_type, "image/png");
+    assertEquals(await loadMediaBlock(kept.uri), null);
+    await assertRejects(() => localFiles().resolve(kept.uri), Error, "no such file in storage");
+    await assertRejects(
+      () => localFiles(undefined, storage).resolve("storage://media/gone.png"),
+      Error,
+      "no such file in storage",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("localFiles.snapshot: the part's bytes NOW, as its block — nothing for what can't inline", async () => {
   const root = await Deno.makeTempDir();
   try {
@@ -214,7 +253,8 @@ const req = (path: string) => new Request(`http://ingest${path}`);
 Deno.test("signed media path: minted relative, served by any process holding the key", async () => {
   const root = await Deno.makeTempDir();
   try {
-    const file = await saveMedia(root, "C1", new TextEncoder().encode("bytes"), {
+    const storage = fileStorage(root);
+    const file = await saveMedia(storage, new TextEncoder().encode("bytes"), {
       mime_type: "image/png",
       name: "a.png",
     });
@@ -223,14 +263,14 @@ Deno.test("signed media path: minted relative, served by any process holding the
     // relative on purpose: the fetching service resolves it against liquen's own address,
     // which is the one it already delivers to — liquen never states its host
     assert(path.startsWith("/m/"));
-    const res = await serveMedia(req(path), root, () => secret);
+    const res = await serveMedia(req(path), storage, () => secret);
     assertEquals(res?.status, 200);
     assertEquals(res?.headers.get("content-type"), "image/png");
     assertEquals(await res?.text(), "bytes");
     // stateless: nothing was minted into memory, so a "restarted" verifier still serves it
-    assertEquals((await serveMedia(req(path), root, () => secret))?.status, 200);
+    assertEquals((await serveMedia(req(path), fileStorage(root), () => secret))?.status, 200);
     // and it stays valid for a retry — a served path is not consumed
-    assertEquals((await serveMedia(req(path), root, () => secret))?.status, 200);
+    assertEquals((await serveMedia(req(path), storage, () => secret))?.status, 200);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -239,36 +279,38 @@ Deno.test("signed media path: minted relative, served by any process holding the
 Deno.test("signed media path: another path is not one, a forged one is gone", async () => {
   const root = await Deno.makeTempDir();
   try {
-    const file = await saveMedia(root, "C1", new TextEncoder().encode("bytes"), { name: "a.png" });
+    const storage = fileStorage(root);
+    const file = await saveMedia(storage, new TextEncoder().encode("bytes"), { name: "a.png" });
     const path = await signMediaPath(file.uri, "s3cret");
+    const serve = (p: string, secret = "s3cret") => serveMedia(req(p), storage, () => secret);
     // not our route at all ⇒ null, so the caller's own handler answers it
-    assertEquals(await serveMedia(req("/whatsapp-web-webhook"), root, () => "s3cret"), null);
+    assertEquals(await serve("/whatsapp-web-webhook"), null);
     // a different key, a tampered mac, a tampered payload, a shape that is not one
-    assertEquals((await serveMedia(req(path), root, () => "other"))?.status, 404);
-    assertEquals((await serveMedia(req(`${path}x`), root, () => "s3cret"))?.status, 404);
-    assertEquals((await serveMedia(req("/m/bm90aGluZw.bWFj"), root, () => "s3cret"))?.status, 404);
-    assertEquals((await serveMedia(req("/m/"), root, () => "s3cret"))?.status, 404);
+    assertEquals((await serve(path, "other"))?.status, 404);
+    assertEquals((await serve(`${path}x`))?.status, 404);
+    assertEquals((await serve("/m/bm90aGluZw.bWFj"))?.status, 404);
+    assertEquals((await serve("/m/"))?.status, 404);
     // expired ⇒ gone, however well signed
     const stale = await signMediaPath(file.uri, "s3cret", Date.now() - 1);
-    assertEquals((await serveMedia(req(stale), root, () => "s3cret"))?.status, 404);
+    assertEquals((await serve(stale))?.status, 404);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
 });
 
-Deno.test("signed media path: the store's boundary is checked on its own", async () => {
+Deno.test("signed media path: only a kept object is signed, and only media is served", async () => {
   const root = await Deno.makeTempDir();
   try {
-    // a signature proves who minted the path, never that the path is innocent: a secret
-    // that leaked (or a bug that signed the wrong thing) still cannot read the org's docs
-    const outside = `${root}/system/instructions.md`;
-    await Deno.mkdir(`${root}/system`, { recursive: true });
-    await Deno.writeTextFile(outside, "the operator's own file");
-    const path = await signMediaPath(outside, "s3cret");
-    assertEquals((await serveMedia(req(path), root, () => "s3cret"))?.status, 404);
-    // ...and the traversal spelling of the same thing
-    const climb = await signMediaPath(`${root}/conversations/../system/x.md`, "s3cret");
-    assertEquals((await serveMedia(req(climb), root, () => "s3cret"))?.status, 404);
+    const storage = fileStorage(root);
+    // a file on this machine is no object: it is kept first, then signed
+    await assertRejects(() => signMediaPath(`file://${root}/system/x.md`, "s3cret"), Error, "kept");
+    // a signature proves who minted the path, never that the key is innocent: a secret that
+    // leaked (or a bug that signed the wrong thing) still reads nothing outside the media
+    await storage.put("other/x.md", new TextEncoder().encode("not media"), "text/markdown");
+    for (const key of ["other/x.md", "media/../other/x.md"]) {
+      const path = await signMediaPath(`storage://${key}`, "s3cret");
+      assertEquals((await serveMedia(req(path), storage, () => "s3cret"))?.status, 404);
+    }
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -295,15 +337,16 @@ Deno.test("the signing key lives in the vault, so two processes agree on it", as
 Deno.test("saveMedia: the extension comes from the name only when the name carries one", async () => {
   const root = await Deno.makeTempDir();
   try {
+    const storage = fileStorage(root);
     const bytes = new TextEncoder().encode("bytes");
-    const a = await saveMedia(root, "C1", bytes, {
+    const a = await saveMedia(storage, bytes, {
       mime_type: "image/png",
       name: "weird.name/with slash",
     });
     assert(a.uri.endsWith(".png"), a.uri);
-    const b = await saveMedia(root, "C1", bytes, { name: "no.such ext" });
+    const b = await saveMedia(storage, bytes, { name: "no.such ext" });
     assert(b.uri.endsWith(".bin"), b.uri);
-    assertEquals(await Deno.readTextFile(new URL(b.uri)), "bytes");
+    assertEquals(new TextDecoder().decode((await bytesOf(storage, b.uri))!), "bytes");
   } finally {
     await Deno.remove(root, { recursive: true });
   }

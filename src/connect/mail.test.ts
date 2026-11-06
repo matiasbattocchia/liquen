@@ -24,6 +24,10 @@ import {
 import type { DeliveryPatch, ReadQuery, Subscriber } from "../store/log.ts";
 import type { Draft, Event, EventId, MessageEvent } from "../types.ts";
 import { newId } from "../store/id.ts";
+import { fileStorage } from "../store/storage.ts";
+
+/** A store these sends never read: none of them carries a kept file. */
+const storage = fileStorage("/nonexistent");
 
 const ME = "me@org.com";
 const ANA = mailbox("Ana@X.com", "Ana García");
@@ -380,6 +384,7 @@ Deno.test("mail dispatch: a send to addresses opens a thread — a MIME to them 
   const log = fakeLog();
   const w = wire({ thread: "t7" });
   createMailDispatch({
+    storage,
     service: "google",
     subscribe: log.subscribe,
     read: log.read,
@@ -420,6 +425,7 @@ Deno.test("mail dispatch: a wire that cannot name the thread it opened leaves th
   const log = fakeLog();
   const w = wire();
   createMailDispatch({
+    storage,
     service: "microsoft",
     subscribe: log.subscribe,
     read: log.read,
@@ -485,6 +491,7 @@ Deno.test("mail dispatch: a send into a thread is a reply-all to its latest mess
   ]);
   const w = wire({ thread: "t9" });
   createMailDispatch({
+    storage,
     service: "google",
     subscribe: log.subscribe,
     read: log.read,
@@ -539,6 +546,7 @@ Deno.test("mail dispatch: a Reply-To answers for its sender; our own message not
   ]);
   const w = wire();
   createMailDispatch({
+    storage,
     service: "google",
     subscribe: log.subscribe,
     read: log.read,
@@ -565,6 +573,7 @@ Deno.test("mail dispatch: a thread is the account's — another mailbox's copy o
   ]);
   const w = wire();
   createMailDispatch({
+    storage,
     service: "google",
     subscribe: log.subscribe,
     read: log.read,
@@ -591,6 +600,7 @@ Deno.test("mail dispatch: a reply the wire files in another thread moves there",
   const log = fakeLog([], [inThread("m1@x.com", "2026-09-23T11:00:00Z", {})]);
   const w = wire({ thread: "t10" });
   createMailDispatch({
+    storage,
     service: "google",
     subscribe: log.subscribe,
     read: log.read,
@@ -610,6 +620,7 @@ Deno.test("mail dispatch: what mail cannot do fails with its class — an edit, 
   const log = fakeLog();
   let posts = 0;
   createMailDispatch({
+    storage,
     service: "google",
     subscribe: log.subscribe,
     read: log.read,
@@ -649,6 +660,7 @@ Deno.test("mail dispatch: an address another wire of the service carries is left
   const log = fakeLog();
   let posts = 0;
   createMailDispatch({
+    storage,
     service: "microsoft",
     subscribe: log.subscribe,
     read: log.read,

@@ -15,6 +15,7 @@ import { type ExecGround, type ExecPlane, installExecGround, shippedAt } from ".
 import type { ShellUpdate } from "./exec/jobs.ts";
 import { type Files, localFiles } from "./store/media.ts";
 import type { Store } from "./store/mod.ts";
+import type { Storage } from "./store/storage.ts";
 import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
 import { defaultAudit, type Proxy, type ProxyDeps, sentinelOf, startProxy } from "./proxy/proxy.ts";
@@ -117,6 +118,7 @@ export async function openLocalSandbox(
   // the egress proxy (§9): front every credential row that declares an env var — user
   // space gets the placeholder + proxy env, never a real credential
   const proxy = await installProxy(dir, store);
+  const storage = store.storage();
   const localeEnv = orgEnv(locale, timezone);
   const grounds = new Map<string, ExecGround>();
   for (const agentId of agents) {
@@ -143,7 +145,7 @@ export async function openLocalSandbox(
       home,
       cwd: shell.cwd,
       roots: [home, `${dir}/shared`, `${dir}/system`, `${dir}/conversations`],
-    });
+    }, storage);
   };
   return {
     forAgent(agentId) {
@@ -175,6 +177,8 @@ export interface CloudflareSandboxOptions {
   url: string;
   /** Its bearer token (`SANDBOX_API_KEY`). */
   token: string;
+  /** Where a file the agent attaches is kept. */
+  storage: Storage;
   /** The agents that run: each gets a sandbox of its own. */
   agents: string[];
   locale?: string | null;
@@ -213,12 +217,11 @@ const REMOTE_ENV: Record<string, string> = {
  *  (`sandbox/cloudflare/`), ONE SHELL PER SESSION on it (§9). The sandbox is named by the
  *  agent's id, started by its first bash call and kept by one lease its sessions share
  *  (`lease`); its workspace is the agent's folder, scratch that a stopped container does
- *  not keep — the docs are in the table. A file the agent attaches is copied onto the
- *  conversation's media shelf under `dir`. Closing ends or leaves every shell's jobs, and
- *  leaves the sandboxes to the gateway's sleep. */
+ *  not keep — the docs are in the table. A file the agent attaches is copied into the
+ *  object store. Closing ends or leaves every shell's jobs, and leaves the sandboxes to the
+ *  gateway's sleep. */
 export function openCloudflareSandbox(
-  dir: string,
-  { url, token, agents, locale, timezone, bashWaitMs, sleepMinutes, tell }:
+  { url, token, storage, agents, locale, timezone, bashWaitMs, sleepMinutes, tell }:
     CloudflareSandboxOptions,
 ): Sandbox {
   const env = { ...REMOTE_ENV, ...orgEnv(locale, timezone) };
@@ -255,12 +258,7 @@ export function openCloudflareSandbox(
             ...gateway,
             read: (path) => lease.on() ? gateway.read(path) : Promise.resolve(null),
           };
-          const files = gatewayFiles(reading, {
-            home: REMOTE_HOME,
-            cwd: shell.cwd,
-            dataDir: dir,
-            conversation: key,
-          });
+          const files = gatewayFiles(reading, { home: REMOTE_HOME, cwd: shell.cwd, storage });
           return {
             ...shell,
             // the place an attach names is the principal's, on this machine: no address

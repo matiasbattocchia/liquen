@@ -13,6 +13,10 @@ import { withTimeout } from "../http.ts";
 import { DispatchError, SignedOut } from "../errors.ts";
 import { type DeliveryPatch, openLog } from "../../store/log.ts";
 import type { FilePart, MessageEvent } from "../../types.ts";
+import { fileStorage } from "../../store/storage.ts";
+
+/** A store these legs never read: none of them uploads a file. */
+const storage = fileStorage("/nonexistent");
 
 /** An agent reply as the anchor produces it: BARE address, service/connection on the
  *  envelope (routing is the service field now — no prefix, §3). */
@@ -420,6 +424,7 @@ Deno.test("slack wire: a token Slack ended is signed out, on every leg; another 
   const wire = slackWire({
     tokenFor: () => Promise.resolve("xoxb-t"),
     fetch: (() => Promise.resolve(Response.json({ ok: false, error }))) as typeof fetch,
+    storage,
   });
   const at = { connection: "T1", channel: "C1" };
   await assertRejects(() => wire.post(at, "hola"), SignedOut, "chat.postMessage: token_revoked");
@@ -446,6 +451,7 @@ Deno.test("slack wire: a reaction already there, or already gone, is the state w
   const wire = slackWire({
     tokenFor: () => Promise.resolve("xoxb-t"),
     fetch: (() => Promise.resolve(Response.json({ ok: false, error }))) as typeof fetch,
+    storage,
   });
   const at = { connection: "T1", channel: "C1" };
   await wire.react(at, { ts: "1.2", glyph: "👍", remove: false });
@@ -463,6 +469,7 @@ Deno.test("slack wire: a hung API call fails inside the fetch's bound — the dr
   const wire = slackWire({
     tokenFor: () => Promise.resolve("xoxb-t"),
     fetch: withTimeout(hang, 20),
+    storage,
   });
   const t0 = Date.now();
   const err = await assertRejects(() => wire.post({ connection: "T1", channel: "C1" }, "hola"));
@@ -520,7 +527,7 @@ Deno.test("slack wire: the workspace's name for an email, asked once; a miss ask
       : { ok: false, error: "users_not_found" };
     return Promise.resolve(new Response(JSON.stringify(body)));
   }) as typeof globalThis.fetch;
-  const { nameByEmail } = slackWire({ tokenFor: () => Promise.resolve("xoxb"), fetch });
+  const { nameByEmail } = slackWire({ tokenFor: () => Promise.resolve("xoxb"), fetch, storage });
   assertEquals(await nameByEmail("T1:UBOT", "matias@turtle.xyz"), "Cabra");
   assertEquals(await nameByEmail("T1:UBOT", "Matias@Turtle.xyz"), "Cabra"); // remembered
   assertEquals(await nameByEmail("T1:UBOT", "x@else.io"), undefined);

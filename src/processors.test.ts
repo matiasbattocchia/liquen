@@ -1,6 +1,8 @@
 import { assert, assertEquals } from "@std/assert";
 import { createTranscriber, transcribable } from "./processors.ts";
 import { openLog } from "./store/log.ts";
+import { fileStorage } from "./store/storage.ts";
+import { saveMedia } from "./store/media.ts";
 import type { Draft, Event, MessageEvent } from "./types.ts";
 
 /** A live org with the transcriber on a REAL log — the upsert idempotence is half the
@@ -11,19 +13,24 @@ async function withTranscriber(
     publish: (e: Draft<Event>) => Promise<Event>;
     transcripts: () => Promise<MessageEvent[]>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
-    media: string; // a real .ogg on disk for FileParts to point at
+    media: string; // the uri of a kept .ogg for FileParts to point at
   }) => Promise<void>,
   org: { locale?: string } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
   await log.upsertConnections([{ service: "whatsapp", address: "549" }]);
-  const media = `${dir}/note.ogg`;
-  await Deno.writeTextFile(media, "not really ogg bytes");
+  const storage = fileStorage(dir);
+  const { uri: media } = await saveMedia(
+    storage,
+    new TextEncoder().encode("not really ogg bytes"),
+    { mime_type: "audio/ogg" },
+  );
   const errors: unknown[] = [];
   const stop = createTranscriber({
     subscribe: (l, o) => log.subscribe(l, o),
     publish: log.publish,
+    storage,
     command,
     ...org,
     onError: (_e, err) => errors.push(err),
@@ -73,13 +80,13 @@ const voiceNote = (
   parts: [{
     type: "file",
     kind: "audio",
-    file: { mime_type: "audio/ogg", uri: `file://${media}`, name: "PTT.ogg" },
+    file: { mime_type: "audio/ogg", uri: media, name: "PTT.ogg" },
   }],
   ...(over.extra ? { extra: over.extra } : {}),
   ...(over.payload ? { payload: over.payload } : {}),
 });
 
-Deno.test("a voice note gets a transcript add-event; the sidecar caches the words", async () => {
+Deno.test("a voice note gets a transcript add-event", async () => {
   // the command reads stdin (the audio bytes) and answers words — the stdin→stdout contract
   await withTranscriber("wc -c > /dev/null && echo 'hola, ¿viste el set?'", async (t) => {
     const note = await t.publish(voiceNote(t.media));
@@ -91,16 +98,6 @@ Deno.test("a voice note gets a transcript add-event; the sidecar caches the word
     assertEquals(tr.envelope.conversation.address, note.envelope.conversation.address);
     assertEquals(tr.envelope.sender, undefined); // nobody spoke — the harness derived it
     assertEquals(tr.agent, undefined); // …which also keeps it off dispatch's predicate (§4)
-    // the sidecar landed beside the media file: the durable text, and the work cache
-    const sidecar = t.media.replace(/\.ogg$/, ".txt");
-    assertEquals((await Deno.readTextFile(sidecar)).trim(), "hola, ¿viste el set?");
-    // the same bytes forwarded again (a new message) publish from the CACHE — the command
-    // would now fail, so a second transcript proves the model never re-ran
-    await Deno.writeTextFile(sidecar, "palabras cacheadas\n");
-    await t.publish(voiceNote(t.media, { external_id: "wa:note2" }));
-    await t.waitFor(async () => (await t.transcripts()).length === 2);
-    const again = (await t.transcripts()).find((e) => e.payload?.ref_external_id === "wa:note2")!;
-    assertEquals(again.parts[0], { type: "text", kind: "transcript", text: "palabras cacheadas" });
   });
 });
 
@@ -141,19 +138,13 @@ Deno.test("a failing or silent processor publishes nothing", async () => {
     await t.publish(voiceNote(t.media));
     await new Promise((r) => setTimeout(r, 200));
     assertEquals(await t.transcripts(), []);
-    // and no sidecar either — a failure is not an empty transcript
-    await Deno.lstat(t.media.replace(/\.ogg$/, ".txt")).then(
-      () => {
-        throw new Error("sidecar written on failure");
-      },
-      () => {},
-    );
   });
 });
 
 Deno.test("transcribable: silenced, actions, the model's voice, copies and wireless rows skip", () => {
-  const base = voiceNote("/tmp/x.ogg") as MessageEvent;
+  const base = voiceNote("storage://media/x.ogg") as MessageEvent;
   assert(transcribable({ ...base, id: "e1" }));
+  assert(!transcribable(voiceNote("https://x.io/a.ogg") as MessageEvent)); // a link: no bytes held
   assert(!transcribable({ ...base, id: "e1", extra: { backfill: true } })); // silenced (§5)
   assert(!transcribable({ ...base, id: "e1", extra: { via: { event: "e0" } } })); // a copy
   assert(!transcribable({ ...base, id: "e1", payload: { action: "edit" } }));

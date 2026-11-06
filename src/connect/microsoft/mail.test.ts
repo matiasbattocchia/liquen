@@ -66,9 +66,9 @@ function graph(
   }) as typeof fetch;
 }
 
-const saved: { conversation: string; bytes: Uint8Array; meta: unknown }[] = [];
-const save: SaveFile = (conversation, bytes, meta) => {
-  saved.push({ conversation, bytes, meta });
+const saved: { bytes: Uint8Array; meta: unknown }[] = [];
+const save: SaveFile = (bytes, meta) => {
+  saved.push({ bytes, meta });
   return Promise.resolve({
     type: "file",
     kind: "document",
@@ -239,7 +239,6 @@ Deno.test("outlook mail: a listed id is read back as text with its headers → t
       },
     });
     assertEquals(saved.length, 1);
-    assertEquals(saved[0].conversation, "AAQk42");
     assertEquals(new TextDecoder().decode(saved[0].bytes), "%PDF-1.4");
     assertEquals(
       (await syncOf(creds))?.inbox,

@@ -19,7 +19,8 @@
  */
 
 import type { ChatPostMessageResponse } from "@slack/web-api";
-import { isExternal, pathOf } from "../../store/media.ts";
+import { bytesOf, isExternal, tailOf } from "../../store/media.ts";
+import type { Storage } from "../../store/storage.ts";
 import { DispatchError, SignedOut } from "../errors.ts";
 import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
@@ -310,6 +311,8 @@ export interface SlackWireDeps {
   tokenFor: (connection: string, author?: string) => Promise<string>;
   /** Every API call goes through this — bounded by `API_TIMEOUT_MS` unless injected. */
   fetch?: typeof fetch;
+  /** Where a kept file's bytes are read from, to upload. */
+  storage: Storage;
 }
 
 /** The three Web-API legs over one token resolver. A non-2xx transport answer (429, 5xx)
@@ -323,7 +326,7 @@ export function slackWire(
   nameByEmail: (connection: string, email: string) => Promise<string | undefined>;
 } {
   const fetchApi = deps.fetch ?? timedFetch;
-  const { tokenFor } = deps;
+  const { tokenFor, storage } = deps;
 
   // one form-encoded Web-API call (the upload endpoints don't take JSON)
   /** `settled`: the refusals that name the state already wanted, answered as success. */
@@ -362,8 +365,9 @@ export function slackWire(
       // one Slack message carrying every attachment
       const ids: { id: string; title?: string }[] = [];
       for (const f of local) {
-        const bytes = await Deno.readFile(pathOf(f.file.uri));
-        const name = f.file.name ?? f.file.uri.slice(f.file.uri.lastIndexOf("/") + 1);
+        const bytes = await bytesOf(storage, f.file.uri);
+        if (!bytes) throw new DispatchError(`${f.file.uri}: the file is gone`, 400);
+        const name = f.file.name ?? tailOf(f.file.uri);
         const up = await api<{ ok: boolean; error?: string; upload_url: string; file_id: string }>(
           "files.getUploadURLExternal",
           token,
@@ -503,7 +507,10 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   const log = await store.log();
   const creds = await store.vault();
 
-  const { post, react, amend, nameByEmail } = slackWire({ tokenFor: slackTokenFor(creds) });
+  const { post, react, amend, nameByEmail } = slackWire({
+    tokenFor: slackTokenFor(creds),
+    storage: store.storage(),
+  });
 
   const { logDirectory } = await import("../mentions.ts");
   // the referent's row, by its external id: a reply row's ref names the thread root

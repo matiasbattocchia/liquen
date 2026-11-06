@@ -36,6 +36,7 @@ import type { ConnectionRow, Connections, MembershipRow } from "../../store/conn
 import type { Registry } from "../../store/agents.ts";
 import type { Draft, Event, EventId, FilePart, MessageEvent } from "../../types.ts";
 import type { SaveFile } from "../mail.ts";
+import { fileStorage } from "../../store/storage.ts";
 import { newId } from "../../store/id.ts";
 
 const KEY = "microsoft:ana@contoso.com";
@@ -124,9 +125,9 @@ function graph(
   }) as typeof fetch;
 }
 
-const saved: { conversation: string; bytes: Uint8Array; meta: unknown }[] = [];
-const save: SaveFile = (conversation, bytes, meta) => {
-  saved.push({ conversation, bytes, meta });
+const saved: { bytes: Uint8Array; meta: unknown }[] = [];
+const save: SaveFile = (bytes, meta) => {
+  saved.push({ bytes, meta });
   return Promise.resolve({
     type: "file",
     kind: meta.mime_type?.startsWith("image/") ? "image" : "document",
@@ -332,10 +333,7 @@ Deno.test("teams webhook: the handshake echoes the token plain; a notice is acke
     assertEquals(row.payload, { mentions: [{ address: OID, name: "Ana" }] });
     assertEquals(row.parts.map((p) => p.type), ["text", "file", "file"]);
     assertEquals((row.parts[0] as { text: string }).text, "@Ana the budget");
-    assertEquals(saved.map((s) => [s.conversation, [...s.bytes]]), [[CHAT, [1, 2, 3]], [CHAT, [
-      4,
-      5,
-    ]]]);
+    assertEquals(saved.map((s) => [...s.bytes]), [[1, 2, 3], [4, 5]]);
     assertEquals((saved[1].meta as { name?: string }).name, "Budget.docx");
     // the token rode every read
     assert(calls.every((c) => c.headers.get("authorization") === "Bearer eyJ.fresh"));
@@ -1521,7 +1519,11 @@ Deno.test("teams wire: a post with a local file uploads it (a channel's folder, 
         new Response(null, { status: 204 }),
       [`POST /chats/${CHAT}/messages/7/unsetReaction`]: () => new Response(null, { status: 204 }),
     }, calls);
-    const wire = teamsWire({ broker: createGrantBroker({ creds }), fetchApi });
+    const wire = teamsWire({
+      broker: createGrantBroker({ creds }),
+      fetchApi,
+      storage: fileStorage(dir),
+    });
     const grant = { connection: "ana@contoso.com", agentId: "ana" };
     const file: FilePart = {
       type: "file",

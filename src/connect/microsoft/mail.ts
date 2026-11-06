@@ -236,7 +236,7 @@ async function messageOf(
         if (a["@odata.type"] !== "#microsoft.graph.fileAttachment" || a.isInline) continue;
         if (!a.contentBytes) continue;
         files.push(
-          await deps.save(parsed.thread, decodeBase64(a.contentBytes), {
+          await deps.save(decodeBase64(a.contentBytes), {
             mime_type: a.contentType,
             name: a.name,
           }),
@@ -376,7 +376,7 @@ export function runIngest(): Promise<() => Promise<void>> {
     SERVICE,
     "mail",
     () => Promise.resolve(FOLDERS),
-    (deps: PollIngestDeps) => createOutlookPoller({ ...deps, save: mediaShelf(deps.dir) }),
+    (deps: PollIngestDeps) => createOutlookPoller({ ...deps, save: mediaShelf(deps.storage) }),
   );
 }
 

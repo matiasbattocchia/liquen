@@ -64,9 +64,9 @@ function gmail(
   }) as typeof fetch;
 }
 
-const saved: { conversation: string; bytes: Uint8Array; meta: unknown }[] = [];
-const save: SaveFile = (conversation, bytes, meta) => {
-  saved.push({ conversation, bytes, meta });
+const saved: { bytes: Uint8Array; meta: unknown }[] = [];
+const save: SaveFile = (bytes, meta) => {
+  saved.push({ bytes, meta });
   return Promise.resolve({
     type: "file",
     kind: "document",
@@ -235,7 +235,6 @@ Deno.test("gmail: history → the message in full → the row; attachments fetch
       },
     });
     assertEquals(saved.length, 1);
-    assertEquals(saved[0].conversation, "t1");
     assertEquals(new TextDecoder().decode(saved[0].bytes), "%PDF-1.4");
     assertEquals(saved[0].meta, { mime_type: "application/pdf", name: "receipt.pdf" });
     assertEquals(await cursorOf(creds), "5010");

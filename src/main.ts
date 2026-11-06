@@ -167,8 +167,10 @@ export async function start(
   ));
   const log = await store.log();
   const docs = await store.docs(); // the doc cascade, files or the table (§8, §9)
-  // the media port (§5): the file adapter, remembered across every agent this process renders
-  const media = memoizedLoader(loadMediaBlock);
+  // the media port (§5): the object store's bytes, and a local file's, remembered across
+  // every agent this process renders
+  const storage = store.storage();
+  const media = memoizedLoader((uri) => loadMediaBlock(uri, storage));
   // the framework way (§9): no explicit principals ⇒ the catalog's roster IS the org
   const derived = config.principals === undefined; // …and gets the connections-map policy (§6)
   // the catalog: the entry point read the file once (readConfig) and hands main the VALUE —
@@ -270,9 +272,10 @@ export async function start(
     },
   };
   const sandbox = remote
-    ? openCloudflareSandbox(dir, {
+    ? openCloudflareSandbox({
       url: remote,
       token: sandboxToken(),
+      storage,
       sleepMinutes: catalog?.deployment.sandboxSleepMinutes,
       ...planeOptions,
     })
@@ -680,6 +683,7 @@ export async function start(
     unsubs.push(createTranscriber({
       subscribe: (l, o) => log.subscribe(l, o),
       publish: log.publish,
+      storage,
       command: catalog.processors.audio,
       locale: catalog.organization.locale,
       onError: (e, err) =>

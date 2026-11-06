@@ -28,7 +28,7 @@
  */
 
 import { isExternal } from "../../store/media.ts";
-import { httpError } from "../errors.ts";
+import { DispatchError, httpError } from "../errors.ts";
 import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
 import type {
@@ -297,7 +297,10 @@ export function bridgeSend(
  *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
 export async function runDispatch(): Promise<() => Promise<void>> {
   const { openStore } = await import("../../store/mod.ts");
-  const { mediaSecret, signMediaPath } = await import("../../store/media.ts");
+  const { bytesOf, mediaSecret, saveMedia, signMediaPath } = await import(
+    "../../store/media.ts"
+  );
+  const { isStored } = await import("../../store/storage.ts");
   const { whatsappConfig } = await import("./config.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
@@ -309,9 +312,19 @@ export async function runDispatch(): Promise<() => Promise<void>> {
 
   // The bytes leave by being FETCHED: a signed, expiring path rides `media_url`, the
   // bridge resolves it against the address it already delivers to and GETs it there —
-  // the INGEST serves it (one door in, §4). Nothing is buffered on either side, the
-  // file never rides the log or the agent's context (§9), and a retry re-fetches.
-  const mediaUrl: WAMediaUrl = async (f) => signMediaPath(f.file.uri, await mediaSecret(creds));
+  // the INGEST serves it (one door in, §4), out of the object store. A file of the
+  // agent's workspace is kept there first, so the path names an object. The file never
+  // rides the log or the agent's context (§9), and a retry re-fetches.
+  const storage = store.storage();
+  const mediaUrl: WAMediaUrl = async (f) => {
+    let uri = f.file.uri;
+    if (!isStored(uri)) {
+      const bytes = await bytesOf(storage, uri);
+      if (!bytes) throw new DispatchError(`${uri}: the file is gone`, 400);
+      uri = (await saveMedia(storage, bytes, f.file)).uri;
+    }
+    return signMediaPath(uri, await mediaSecret(creds));
+  };
 
   const send = bridgeSend(base, token);
 

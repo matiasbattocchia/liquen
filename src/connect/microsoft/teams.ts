@@ -66,7 +66,8 @@ import { createPoller, FETCH_TIMEOUT_MS, granted, type PollIngestDeps } from "..
 import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import { DispatchError } from "../errors.ts";
 import { claimMentions, type Directory, logDirectory, type NameEntry } from "../mentions.ts";
-import { isExternal, pathOf } from "../../store/media.ts";
+import { bytesOf, isExternal, tailOf } from "../../store/media.ts";
+import type { Storage } from "../../store/storage.ts";
 import type { Appender, DeliveryPatch, Log, Reader, Subscriber } from "../../store/log.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
 import { type ConnectionRow, type Connections, mirrorsOf } from "../../store/connections.ts";
@@ -680,7 +681,7 @@ export function teamsMapper(deps: MapperDeps): (
     const parts: Part[] = [];
     if (body.text) parts.push({ type: "text", kind: "text", text: body.text });
     for (const url of body.hosted) {
-      const file = await fetchOnto(graph, url, address, undefined, deps.save);
+      const file = await fetchOnto(graph, url, undefined, deps.save);
       if (file) parts.push(file);
     }
     let reply: string | undefined = at.root ? teamsRef(address, at.root) : undefined;
@@ -698,7 +699,6 @@ export function teamsMapper(deps: MapperDeps): (
       const file = await fetchOnto(
         graph,
         `${GRAPH}/shares/${shareId(a.contentUrl)}/driveItem/content`,
-        address,
         a.name ?? undefined,
         deps.save,
       );
@@ -922,11 +922,10 @@ async function letGo(
   );
 }
 
-/** Read bytes at `url` with the grant's token onto the shelf; null when the wire refuses. */
+/** Read bytes at `url` with the grant's token into the store; null when the wire refuses. */
 async function fetchOnto(
   graph: Graph,
   url: string,
-  conversation: string,
   name: string | undefined,
   save: SaveFile,
 ): Promise<FilePart | null> {
@@ -937,7 +936,7 @@ async function fetchOnto(
   }
   const bytes = new Uint8Array(await res.arrayBuffer());
   const mime = res.headers.get("content-type")?.split(";")[0].trim() || undefined;
-  return await save(conversation, bytes, { ...(mime ? { mime_type: mime } : {}), name });
+  return await save(bytes, { ...(mime ? { mime_type: mime } : {}), name });
 }
 
 /** A sharing URL as the `/shares` API takes it: `u!` + unpadded base64url of the URL. */
@@ -1637,6 +1636,8 @@ export function toTeamsHtml(text: string, dir: NameEntry[]): { html: string; men
 export interface TeamsWireDeps {
   broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
   fetchApi: typeof fetch;
+  /** Where a kept file's bytes are read from, to upload. */
+  storage: Storage;
 }
 
 /** The legs over one token source. A non-2xx keeps its status as the failure's class. */
@@ -1675,14 +1676,10 @@ export function teamsWire(deps: TeamsWireDeps): TeamsWire {
         name: string;
       }[] = [];
       for (const f of local) {
-        const name = f.file.name ?? f.file.uri.slice(f.file.uri.lastIndexOf("/") + 1);
-        const item = await upload(
-          graph,
-          place,
-          name,
-          f.file.mime_type,
-          await Deno.readFile(pathOf(f.file.uri)),
-        );
+        const name = f.file.name ?? tailOf(f.file.uri);
+        const bytes = await bytesOf(deps.storage, f.file.uri);
+        if (!bytes) throw new DispatchError(`${f.file.uri}: the file is gone`, 400);
+        const item = await upload(graph, place, name, f.file.mime_type, bytes);
         attachments.push({ id: item.id, contentType: "reference", contentUrl: item.url, name });
       }
       const html = [message.html, ...links.map((l) => `<a href="${l}">${l}</a>`)]
@@ -1802,13 +1799,13 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const { readConfig } = await import("../../config.ts");
   const { ingestAddress } = await import("../../edge.ts");
   const root = findRoot(orgFlag());
-  const dir = `${root}/data`;
   const store = await openStore(root);
   const { publicUrl } = (await readConfig(root)).edge;
   const log = await store.log();
   const creds = await store.vault();
   const broker = createGrantBroker({ creds });
-  const save = mediaShelf(dir);
+  const storage = store.storage();
+  const save = mediaShelf(storage);
   const names = teamsNames((address, kind) => log.stampKind(SERVICE, address, kind));
   // the gap first: what Graph stopped telling while nobody listened, before any notice
   const catchUp = createTeamsCatchUp({
@@ -1888,7 +1885,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   const stop = createTeamsDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     read: (q) => log.read(q),
-    wire: teamsWire({ broker, fetchApi: timedFetch }),
+    wire: teamsWire({ broker, fetchApi: timedFetch, storage: store.storage() }),
     directory: logDirectory((q) => log.read(q) as Promise<Event[]>),
     nameByEmail: placeNameByEmail(
       names,

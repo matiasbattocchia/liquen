@@ -1655,6 +1655,19 @@ Deno.test("media: an external link renders a url-source block — no bytes, no b
   assertStringIncludes(JSON.stringify(messages), 'path=\\"https://example.com/pics/cat.jpg\\"');
 });
 
+Deno.test("media: a kept object's marker names its storage uri, a workspace file its path", () => {
+  const events: Event[] = [
+    fileMsg("e1", "2026-07-21T10:00:00Z", "storage://media/0f1e.jpg"),
+    fileMsg("e2", "2026-07-21T10:00:01Z", "file:///home/ana/out.pdf"),
+  ];
+  const dump = JSON.stringify(
+    render({ events, docs: [], session: SESSION, zone: "UTC", now: "2026-07-21T10:01:00Z" })
+      .messages,
+  );
+  assertStringIncludes(dump, 'path=\\"storage://media/0f1e.jpg\\"');
+  assertStringIncludes(dump, 'path=\\"/home/ana/out.pdf\\"');
+});
+
 Deno.test("media: a tool_result's pinned bytes win over the table — two reads of one path, each its own picture (§5)", () => {
   const t = "2026-07-21T10:00:00Z";
   const dot = {

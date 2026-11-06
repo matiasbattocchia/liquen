@@ -284,11 +284,12 @@ name the wire gave it, which is what the send lands under.
 
 Most services take a file by **push** — Slack's `files.uploadV2`, Gmail's MIME body: liquen
 reads the bytes and sends them. Some take a **link** the service fetches instead (the
-whatsmeow bridge, Twilio's `MediaUrl`, the Cloud API's `link`), and for a file in
-`data/media` that link has to point back at liquen.
+whatsmeow bridge, Twilio's `MediaUrl`, the Cloud API's `link`), and that link has to
+point back at liquen. It names a kept object: a file of the agent's workspace is put in
+the object store first.
 
 It points back **relatively**. `signMediaPath` (`store/media.ts`) mints `/m/<payload>.<mac>`
-— the absolute path and an expiry, HMAC'd with a key in the vault — and the service
+— the object's key and an expiry, HMAC'd with a key in the vault — and the service
 resolves it against the address it already delivers to. That address is the connector's
 own ingest: the same door the service posts events at serves `/m/…`, so the ingest's
 address is said once, not once per leg. Who says it is the pairing door: the whatsmeow
@@ -559,7 +560,7 @@ filed it in. `external_id` is `mail:<account>:<Message-ID>`: each mailbox holdin
 message keeps its own copy, in its own thread. An inbound `In-Reply-To` is the row's
 `reply` reference. The body is the plain text with its quoted history cut (`stripQuotes`: the
 `On … wrote:` attribution, Outlook's separator, a forwarded header block, a trailing `>`
-block); an HTML-only body is read as words. Attachments are file parts on the media shelf;
+block); an HTML-only body is read as words. Attachments are file parts kept in the object store;
 inline images are not attachments. All of that is `src/connect/mail.ts`, shared with
 Outlook: a mail connector is its wire, nothing more.
 
@@ -734,7 +735,7 @@ what — a notice repeated lands once. The sender is the Teams user id; one that
 `oid` is that grant's owner (`agent.id`), and anyone else is the roster member declaring the
 email the chat lists for them. The member whose subscription delivered a chat is a member
 of it. The body is HTML: `<at>` becomes `@Name` and `payload.mentions`, `<emoji>`
-its glyph, a hosted image (a pasted screenshot) its bytes on the media shelf, a `reference`
+its glyph, a hosted image (a pasted screenshot) its bytes in the object store, a `reference`
 attachment its bytes through `/shares/<encoded url>/driveItem/content` (`Files.ReadWrite`),
 or a link in the words when the grant cannot read it.
 

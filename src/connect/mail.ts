@@ -44,7 +44,8 @@ import { DispatchError } from "./errors.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type { Credentials } from "../store/credentials.ts";
 import type { GrantBroker } from "../proxy/grants.ts";
-import { isExternal, kindOf, pathOf, saveMedia } from "../store/media.ts";
+import { bytesOf, isExternal, kindOf, saveMedia, tailOf } from "../store/media.ts";
+import type { Storage } from "../store/storage.ts";
 import type { Conversation, Draft, EventId, FilePart, MessageEvent, Service } from "../types.ts";
 import { findRoot, orgFlag } from "../config.ts";
 import { timedFetch } from "./http.ts";
@@ -327,19 +328,18 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
-/* ── the media shelf: attachments land beside the conversation ─────────────────────── */
+/* ── the media shelf: attachments land in the object store ─────────────────────────── */
 
-/** Store one attachment's bytes for a conversation → the file part. */
+/** Keep one attachment's bytes → the file part. */
 export type SaveFile = (
-  conversation: string,
   bytes: Uint8Array,
   meta: { mime_type?: string; name?: string },
 ) => Promise<FilePart>;
 
-/** The org's media shelf under `dir` (the data root). */
-export function mediaShelf(dir: string): SaveFile {
-  return async (conversation, bytes, meta) => {
-    const file = await saveMedia(dir, conversation, bytes, meta);
+/** The org's media, kept in `storage`. */
+export function mediaShelf(storage: Storage): SaveFile {
+  return async (bytes, meta) => {
+    const file = await saveMedia(storage, bytes, meta);
     return { type: "file", kind: kindOf(file.mime_type), file };
   };
 }
@@ -456,6 +456,8 @@ export interface MailDispatchDeps {
   subscribe: Subscriber["subscribe"];
   read: Reader["read"];
   send: MailSend;
+  /** Where a kept attachment's bytes are read from. */
+  storage: Storage;
   /** An address another wire of the same service carries (Teams, beside Outlook mail):
    *  its rows are that wire's dispatch's, and this one leaves them queued for it. */
   elsewhere?: (address: string) => boolean;
@@ -554,12 +556,9 @@ export function createMailDispatch(deps: MailDispatchDeps): () => Promise<void> 
           links.push(f.file.uri);
           continue;
         }
-        const name = f.file.name ?? f.file.uri.slice(f.file.uri.lastIndexOf("/") + 1);
-        files.push({
-          name,
-          mime: f.file.mime_type,
-          bytes: await Deno.readFile(pathOf(f.file.uri)),
-        });
+        const bytes = await bytesOf(deps.storage, f.file.uri);
+        if (!bytes) throw new DispatchError(`${f.file.uri}: the file is gone`, 400);
+        files.push({ name: f.file.name ?? tailOf(f.file.uri), mime: f.file.mime_type, bytes });
       }
       const text = [work.text, ...links].filter((s) => s.length > 0).join("\n");
       if (!text && files.length === 0) throw new DispatchError("nothing to send", 400);
@@ -630,6 +629,7 @@ export async function runMailDispatch(
     subscribe: (l, o) => log.subscribe(l, o),
     read: (q) => log.read(q),
     send: wire({ creds, broker, fetchApi: timedFetch }),
+    storage: store.storage(),
     ...(elsewhere ? { elsewhere } : {}),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     store: log,

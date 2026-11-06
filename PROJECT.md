@@ -6300,6 +6300,20 @@ tenth or less, and a read starts the hour again.
   - **Open**: a job started before this change holds the old proxy URL and a `mu-grant-…`
     handle, so its requests are refused after the upgrade; it is restarted by hand.
 
+### Media is kept in an object store (2026-11-06) — LANDING
+
+The storage batch of `CHANGES.md`, a step at a time.
+
+- **The port.** `Storage` (`store/storage.ts`, `Store.storage()`), one backend so far:
+  files under `data/storage/`. Media is `storage://media/<hash>.<ext>`, the hash 32 hex of
+  SHA-256 in one namespace, the extension the bytes' (sniffed behind
+  `application/octet-stream`). Every ingest keeps through it, every dispatcher reads
+  through `bytesOf`, the loader and the transcriber read through it, and the signed `/m/`
+  path names a key. A workspace file sent on WhatsApp is kept first: the ingest served
+  only `conversations/`, so such a send got a path the bridge was refused. The transcript
+  sidecar is gone; a forwarded note is heard again until `refs` answers it. The bridge
+  labels an upload's part with its medium's type (`open-bsp-whatsmeow` 27eae8f).
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

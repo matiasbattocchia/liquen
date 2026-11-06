@@ -15,8 +15,8 @@
  * `transcribable`'s `kind === "audio"` test, the scalar config key `processors.audio`, and
  * the output part's `kind: "transcript"`. A second modality (image OCR/caption, document
  * extraction) is therefore a DISPATCH, not a rewrite: `processors` becomes kind → command,
- * the selector picks the first part whose kind has one, and the sidecar stops being one
- * `<hash>.txt` per file. The open question is the part kind: `transcript` is a lie for a
+ * and the selector picks the first part whose kind has one. The open question is the part
+ * kind: `transcript` is a lie for a
  * caption, but each new name (`caption`, `extract`) is a member of a closed union that
  * render.ts must learn — one neutral `derived` kind carrying its origin is the alternative,
  * and it changes what the model sees. Decide that before writing the map.
@@ -26,12 +26,9 @@
  * WUMs stay invariant, and the words render as a later `<transcript re=…>` line (§5). The
  * wake it fires is the point: the agent reads the note when the words arrive.
  *
- * Idempotence, twice:
- *   the EVENT   `external_id = transcript:<audio external_id>` — deterministic, so the
- *               publish is an upsert: a crash-and-replay merges instead of duplicating,
- *               and one audio message gets exactly one transcript.
- *   the WORK    a `<hash>.txt` sidecar beside the media file caches the text — the same
- *               bytes forwarded again publish a fresh event without re-running the model.
+ * Idempotence: `external_id = transcript:<audio external_id>` — deterministic, so the
+ * publish is an upsert: a crash-and-replay merges instead of duplicating, and one audio
+ * message gets exactly one transcript.
  *
  * What never transcribes: silenced rows (history and muted chats are not news, §5), the
  * model's own voice (`turn_id` — it knows what it said), action-carrying events, mirror
@@ -48,7 +45,7 @@
  * conversation around them.
  */
 
-import { pathOf } from "./store/media.ts";
+import { isStored, keyOf, type Storage } from "./store/storage.ts";
 import { silenced } from "./render.ts";
 import type { Appender, Subscriber } from "./store/log.ts";
 import type { Draft, Event, FilePart, MessageEvent } from "./types.ts";
@@ -62,6 +59,8 @@ export interface TranscriberDeps {
   subscribe: Subscriber["subscribe"];
   /** → the EventLog: a transcript is an ordinary published event (§3). */
   publish: Appender["publish"];
+  /** Where the audio's bytes are kept. */
+  storage: Storage;
   /** The processor (config `processors.audio`): bytes on stdin → text on stdout. */
   command: string;
   /** The org's locale (config `locale`) — the processor's LANG. What a processor makes of
@@ -90,7 +89,7 @@ export function transcribable(e: Event): FilePart | null {
   if (e.payload?.action || e.payload?.turn_id || e.extra?.via) return null;
   if (!e.envelope.external_id) return null;
   const audio = e.parts.find((p): p is FilePart => p.type === "file" && p.kind === "audio");
-  return audio && audio.file.uri.startsWith("file://") ? audio : null;
+  return audio && isStored(audio.file.uri) ? audio : null;
 }
 
 async function transcribe(
@@ -99,20 +98,9 @@ async function transcribe(
   audio: FilePart,
   now: () => string,
 ): Promise<void> {
-  const path = pathOf(audio.file.uri);
-  const sidecar = path.replace(/\.[^./]+$/, "") + ".txt";
-  let text: string;
-  try {
-    text = (await Deno.readTextFile(sidecar)).trim(); // cached — same bytes, same words
-  } catch {
-    text = (await run(
-      deps.command,
-      await Deno.readFile(path),
-      PROCESSOR_TIMEOUT_MS,
-      processorEnv(deps),
-    )).trim();
-    if (text) await Deno.writeTextFile(sidecar, text + "\n");
-  }
+  const bytes = await deps.storage.get(keyOf(audio.file.uri));
+  if (!bytes) return; // gone: nothing to hear
+  const text = (await run(deps.command, bytes, PROCESSOR_TIMEOUT_MS, processorEnv(deps))).trim();
   if (!text) return; // a silent clip has no words to add
   const { service, connection_address, conversation, external_id } = e.envelope;
   await deps.publish({

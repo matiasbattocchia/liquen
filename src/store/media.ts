@@ -1,14 +1,15 @@
 /**
- * store/media.ts — the media store (§8 conversation scope): received and sent files land
- * on disk, conversation-scoped and CONTENT-NAMED.
+ * store/media.ts — media (§8): the files received and sent, kept in the object store
+ * (`storage.ts`) and CONTENT-NAMED.
  *
- * `${root}/conversations/<safe(address)>/media/<content-hash>.<ext>` — the hash names the
- * bytes, so a re-download, a retry, and the dispatch echo all converge on one file (the
- * same idempotence the log gets from `external_id`). The conversation dir is already the
- * §8 conversation scope; media is just its binary shelf.
+ * `storage://media/<content-hash>.<ext>` — the hash names the bytes, so a re-download, a
+ * retry, the dispatch echo and a file forwarded to three chats all converge on one object
+ * (the same idempotence the log gets from `external_id`).
  *
- * The path IS the durable handle: a `FilePart.uri` points here, render shows it as a
- * kind marker (`<image/>`, `<audio/>`…) the agent can re-view any time (`aread`/bash), and `loadMediaBlock`
+ * A uri has three schemes: `storage://` for what the harness keeps, `file://` for the
+ * agent's workspace (a file about to go out), `https://` for an outside link. The uri IS
+ * the durable handle: a `FilePart.uri` holds it, render shows it in a kind marker
+ * (`<image/>`, `<audio/>`…) the agent can re-read any time (`aread`), and `mediaLoader`
  * turns it into a real Messages-API base64 block beside it, until the checkpoint covers it
  * or the window's media budget is spent (§5).
  */
@@ -19,17 +20,38 @@ import { basename, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { FilePart, MediaKind } from "../types.ts";
 import type { Credentials } from "./credentials.ts";
+import { isStored, keyOf, plainKey, type Storage, uriOf } from "./storage.ts";
 
 /** The scheme IS the distinction: `http(s)` = an external link (no local bytes, never
- *  fetched broker-side); everything else is local — canonically `file://`, bare paths
- *  tolerated on input. */
+ *  fetched broker-side); `storage://` an object the harness keeps; everything else is a
+ *  file on this machine — canonically `file://`, bare paths tolerated on input. */
 export function isExternal(uri: string): boolean {
   return /^https?:\/\//.test(uri);
 }
 
-/** A local uri → its filesystem path (`file://` unwrapped, bare passed through). */
+/** A file uri → its filesystem path (`file://` unwrapped, bare passed through). */
 export function pathOf(uri: string): string {
   return uri.startsWith("file://") ? fileURLToPath(uri) : uri;
+}
+
+/** The bytes a kept or local uri holds: an object through the store, a file off the disk;
+ *  null for a link, or when they are gone. */
+export async function bytesOf(
+  storage: Storage,
+  uri: string,
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  if (isExternal(uri)) return null;
+  if (isStored(uri)) return await storage.get(keyOf(uri));
+  try {
+    return await Deno.readFile(pathOf(uri));
+  } catch {
+    return null;
+  }
+}
+
+/** The name a uri's last segment gives a file that carries none. */
+export function tailOf(uri: string): string {
+  return isStored(uri) ? keyOf(uri).split("/").at(-1)! : basename(pathOf(uri));
 }
 
 /** ext ↔ mime, the small closed set the harness cares to name; everything else is a
@@ -152,10 +174,18 @@ export function imageSize(bytes: Uint8Array): { width: number; height: number } 
   }
 }
 
-/** A local image's pixels, from the head of its file; null when it is none or is gone. */
-export async function imageSizeOf(uri: string): Promise<{ width: number; height: number } | null> {
+/** A kept or local image's pixels, from the head of its bytes; null when it is none or is
+ *  gone. */
+export async function imageSizeOf(
+  storage: Storage,
+  uri: string,
+): Promise<{ width: number; height: number } | null> {
   if (isExternal(uri)) return null;
   try {
+    if (isStored(uri)) {
+      const bytes = await storage.get(keyOf(uri));
+      return bytes ? imageSize(bytes.subarray(0, SIZE_HEAD)) : null;
+    }
     return imageSize(await head(pathOf(uri), SIZE_HEAD));
   } catch {
     return null;
@@ -168,41 +198,41 @@ export function looksBinary(bytes: Uint8Array): boolean {
   return bytes.includes(0);
 }
 
-/** A conversation address as a directory name — one-way slug, filesystem-safe. */
-function safe(address: string): string {
-  return address.replace(/[^A-Za-z0-9._-]/g, "_");
+/** The hex digits a media key's hash keeps of the SHA-256: 128 bits. */
+const HASH_HEX = 32;
+
+/** What bytes are, as a mime: the wire's word when it names a type, the bytes' own
+ *  signature when it names none (`application/octet-stream`, the label a form upload
+ *  wears by default), then the name's extension. */
+export function mimeFor(bytes: Uint8Array, meta: { mime_type?: string; name?: string }): string {
+  // params stripped: the wire says `audio/ogg; codecs=opus`, the maps key on the bare type
+  const said = meta.mime_type?.split(";")[0].trim().toLowerCase();
+  if (said && said !== "application/octet-stream") return said;
+  return sniffMime(bytes) ?? (meta.name ? mimeOf(meta.name) : null) ?? "application/octet-stream";
 }
 
-/** Store bytes for a conversation; returns the `FilePart.file` shape pointing at the
- *  local ABSOLUTE path. Content-hash named ⇒ idempotent: saving the same bytes twice
- *  (re-download, echo) is one file, and existing bytes are never rewritten. */
+/** Keep bytes as media; returns the `FilePart.file` shape naming the object. Content-hash
+ *  named ⇒ idempotent: the same bytes saved twice (re-download, echo, a forward) are one
+ *  object, never rewritten. The extension is the bytes': the mime's, else the name's when
+ *  it is one, else `bin`. */
 export async function saveMedia(
-  root: string,
-  conversation: string,
+  storage: Storage,
   bytes: Uint8Array,
   meta: { mime_type?: string; name?: string } = {},
 ): Promise<FilePart["file"]> {
-  // params stripped: the wire says `audio/ogg; codecs=opus`, the maps key on the bare type
-  const mime = meta.mime_type?.split(";")[0].trim() ?? (meta.name ? mimeOf(meta.name) : null) ??
-    "application/octet-stream";
+  const mime = mimeFor(bytes, meta);
   // the name's extension only when it IS one — a wire name is free text (a path, a title)
   const base = meta.name?.split("/").at(-1) ?? "";
   const fromName = /^[^.]+\.([A-Za-z0-9]{1,8})$/.exec(base)?.[1] ?? "";
-  const ext = (fromName || EXT[mime] || "bin").toLowerCase();
+  const ext = (EXT[mime] || fromName || "bin").toLowerCase();
   const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")
-    .slice(0, 16);
-  const dir = resolve(root, "conversations", safe(conversation), "media");
-  await Deno.mkdir(dir, { recursive: true });
-  const path = `${dir}/${hash}.${ext}`;
-  try {
-    await Deno.writeFile(path, bytes, { createNew: true });
-  } catch (err) {
-    if (!(err instanceof Deno.errors.AlreadyExists)) throw err; // same hash ⇒ same bytes
-  }
+    .slice(0, HASH_HEX);
+  const key = `media/${hash}.${ext}`;
+  await storage.put(key, bytes, mime);
   return {
     mime_type: mime,
-    uri: pathToFileURL(path).toString(),
+    uri: uriOf(key),
     ...(meta.name ? { name: meta.name } : {}),
     size: bytes.length,
     ...imageSize(bytes),
@@ -231,9 +261,9 @@ export async function mediaSecret(creds: Credentials): Promise<string> {
   return (await creds.get(MEDIA_SECRET_KEY))!.value.secret;
 }
 
-/** Mint the path a service fetches outbound bytes from. The capability IS the url —
- *  `<expiry>:<path>`, HMAC'd — so verification holds no state and survives a restart
- *  (an in-memory token map does not, and a bridge retry after one would 404).
+/** Mint the path a service fetches outbound bytes from, for a kept object. The capability
+ *  IS the url — `<expiry>:<key>`, HMAC'd — so verification holds no state and survives a
+ *  restart (an in-memory token map does not, and a bridge retry after one would 404).
  *
  *  RELATIVE on purpose. The service already knows where liquen is: liquen's address is the one
  *  IT delivers to. Resolving `/m/…` against that base is the whole reason liquen never has
@@ -243,18 +273,19 @@ export async function signMediaPath(
   secret: string,
   expiresAt = Date.now() + MEDIA_TTL_MS, // the clock seam; tests mint expired paths
 ): Promise<string> {
-  const payload = `${expiresAt}:${resolve(pathOf(uri))}`;
+  if (!isStored(uri)) throw new Error(`only a kept object is signed: ${uri}`);
+  const payload = `${expiresAt}:${keyOf(uri)}`;
   const mac = encodeBase64Url(await sign(secret, payload));
   return `/m/${encodeBase64Url(new TextEncoder().encode(payload))}.${mac}`;
 }
 
 /** Serve a signed path, or null when the request is not one — the caller's own routes
- *  take it from there. A bad mac, a stale expiry, and a path outside the media store all
- *  answer the same 404: the signature proves who minted it, never that the path is
- *  innocent, so the store's boundary is checked on its own. */
+ *  take it from there. A bad mac, a stale expiry, and a key outside the media all answer
+ *  the same 404: the signature proves who minted it, never that the key is innocent, so
+ *  the boundary is checked on its own. */
 export async function serveMedia(
   req: Request,
-  root: string,
+  storage: Storage,
   secret: () => string | Promise<string>, // lazy: the key is only read for OUR route
 ): Promise<Response | null> {
   const path = new URL(req.url).pathname;
@@ -271,16 +302,14 @@ export async function serveMedia(
   if (!await verify(await secret(), payload, mac)) return gone;
   const cut = payload.indexOf(":");
   const expiresAt = Number(payload.slice(0, cut));
-  const file = payload.slice(cut + 1);
+  const key = payload.slice(cut + 1);
   if (!(expiresAt > Date.now())) return gone;
-  if (!file.startsWith(resolve(root, "conversations") + "/")) return gone;
-  try {
-    return new Response(await Deno.readFile(file), {
-      headers: { "content-type": mimeOf(file) ?? "application/octet-stream" },
-    });
-  } catch {
-    return gone;
-  }
+  if (!key.startsWith("media/") || !plainKey(key)) return gone;
+  const bytes = await storage.get(key).catch(() => null);
+  if (!bytes) return gone;
+  return new Response(bytes as BodyInit, {
+    headers: { "content-type": mimeOf(key) ?? "application/octet-stream" },
+  });
 }
 
 const hmacKey = (secret: string, use: "sign" | "verify") =>
@@ -342,17 +371,38 @@ export interface Files {
 
 /** The local adapter: this filesystem, under a scope — or, without one, whatever the
  *  process can read. */
-export const localFiles = (scope?: FileScope): Files => ({
-  resolve: (ref) => filePartOf(ref, scope),
-  snapshot: (part) => loadMediaBlock(part.file.uri),
+export const localFiles = (scope?: FileScope, storage?: Storage): Files => ({
+  resolve: (ref) => filePartOf(ref, scope, storage),
+  snapshot: (part) => loadMediaBlock(part.file.uri, storage),
 });
 
 /** A file reference → a `FilePart` (the send side). A local path (bare or `file://`)
  *  is statted and classified — throws when it doesn't exist or, under a `scope`, when it
- *  resolves outside the scope's roots. An `http(s)` link passes through UNTOUCHED (no
- *  fetch, no size — mime guessed from the URL's extension): the platforms that take links
- *  send it as-is. */
-export async function filePartOf(ref: string, scope?: FileScope): Promise<FilePart> {
+ *  resolves outside the scope's roots. A `storage://` uri names an object already kept,
+ *  read for its size and kind. An `http(s)` link passes through UNTOUCHED (no fetch, no
+ *  size — mime guessed from the URL's extension): the platforms that take links send it
+ *  as-is. */
+export async function filePartOf(
+  ref: string,
+  scope?: FileScope,
+  storage?: Storage,
+): Promise<FilePart> {
+  if (isStored(ref)) {
+    const bytes = storage ? await storage.get(keyOf(ref)) : null;
+    if (!bytes) throw new Error(`${ref}: no such file in storage`);
+    const mime = mimeOf(ref) ?? sniffMime(bytes) ?? "application/octet-stream";
+    return {
+      type: "file",
+      kind: kindOf(mime),
+      file: {
+        mime_type: mime,
+        uri: ref,
+        name: tailOf(ref),
+        size: bytes.length,
+        ...(mime.startsWith("image/") ? imageSize(bytes.subarray(0, SIZE_HEAD)) : {}),
+      },
+    };
+  }
   if (isExternal(ref)) {
     const path = new URL(ref).pathname;
     const mime = mimeOf(path) ?? "application/octet-stream";
@@ -382,7 +432,7 @@ export async function filePartOf(ref: string, scope?: FileScope): Promise<FilePa
       uri,
       name: basename(abs),
       size,
-      ...(mime.startsWith("image/") ? await imageSizeOf(uri) : {}),
+      ...(mime.startsWith("image/") ? imageSize(await head(abs, SIZE_HEAD)) : {}),
     },
   };
 }
@@ -452,17 +502,18 @@ export function memoizedLoader(load: MediaLoader, capBytes = MEDIA_MEMO_BYTES): 
 /** Base64 held by `memoizedLoader` at most, across every agent this process renders. */
 const MEDIA_MEMO_BYTES = 64 * 1024 * 1024;
 
-/** The file adapter of the media port: a stored file → the base64 payload for a
- *  Messages-API image/document block, or null (not inlineable, over the cap, missing).
- *  Only TRAILING-region files are ever asked for, so the reads are few and recent. */
-export async function loadMediaBlock(uri: string): Promise<MediaBlock | null> {
+/** The media port's adapter: a kept object or a local file → the base64 payload for a
+ *  Messages-API image/document block, or null (not inlineable, over the cap, missing, an
+ *  object with no store to ask). Only TRAILING-region files are ever asked for, so the
+ *  reads are few and recent. */
+export async function loadMediaBlock(uri: string, storage?: Storage): Promise<MediaBlock | null> {
   if (isExternal(uri)) return null; // external links inline as url-source blocks, not bytes
-  const path = pathOf(uri);
-  const named = mimeOf(path); // extension first; a nameless file sniffs from its bytes below
+  if (isStored(uri) && !storage) return null;
+  const named = mimeOf(isStored(uri) ? keyOf(uri) : pathOf(uri)); // a nameless file sniffs
   if (named && !inlineable(named)) return null;
   try {
-    const bytes = await Deno.readFile(path);
-    if (bytes.length > INLINE_CAP) return null;
+    const bytes = isStored(uri) ? await storage!.get(keyOf(uri)) : await Deno.readFile(pathOf(uri));
+    if (!bytes || bytes.length > INLINE_CAP) return null;
     const mime = named ?? sniffMime(bytes);
     if (!mime || !inlineable(mime)) return null;
     return { media_type: mime, data: encodeBase64(bytes) };

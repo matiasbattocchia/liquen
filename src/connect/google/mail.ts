@@ -231,7 +231,7 @@ async function messageOf(
     const { data } = await res.json() as { data?: string };
     if (!data) continue;
     files.push(
-      await deps.save(parsed.thread, decodeBase64Url(data), { mime_type: a.mime, name: a.name }),
+      await deps.save(decodeBase64Url(data), { mime_type: a.mime, name: a.name }),
     );
   }
   return { ...parsed, files };
@@ -370,7 +370,7 @@ export function runIngest(): Promise<() => Promise<void>> {
     SERVICE,
     "mail",
     () => Promise.resolve([MAILBOX]),
-    (deps: PollIngestDeps) => createGmailPoller({ ...deps, save: mediaShelf(deps.dir) }),
+    (deps: PollIngestDeps) => createGmailPoller({ ...deps, save: mediaShelf(deps.storage) }),
   );
 }
 

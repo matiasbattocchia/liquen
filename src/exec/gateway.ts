@@ -34,6 +34,7 @@ import {
   saveMedia,
   sniffMime,
 } from "../store/media.ts";
+import { isStored, type Storage } from "../store/storage.ts";
 import type { CallRef, ExecFacts, ExecOutcome, ExecTool } from "../xi.ts";
 import type { Json } from "../types.ts";
 import { newId } from "../store/id.ts";
@@ -168,22 +169,17 @@ export function parseExecStream(text: string): GatewayExec {
 
 /** The files port over a remote sandbox (§9): a reference is a path in the agent's folder
  *  there — relative to where the shell stands (`cwd`, else the folder), or absolute, and
- *  either way under the folder — and resolving one moves its bytes onto the
- *  conversation's media shelf under `dataDir`, content-named, so the part it answers is a
- *  local file every reader already takes and the snapshot is of bytes that never change.
- *  A link passes through untouched. */
+ *  either way under the folder — and resolving one moves its bytes into the object store,
+ *  content-named, so the part it answers is an object every reader already takes and the
+ *  snapshot is of bytes that never change. A kept object and a link pass through as they
+ *  are. */
 export function gatewayFiles(
   gateway: Gateway,
-  { home, cwd, dataDir, conversation }: {
-    home: string;
-    cwd?: () => string;
-    dataDir: string;
-    conversation: string;
-  },
+  { home, cwd, storage }: { home: string; cwd?: () => string; storage: Storage },
 ): Files {
   return {
     async resolve(ref) {
-      if (isExternal(ref)) return filePartOf(ref);
+      if (isExternal(ref) || isStored(ref)) return filePartOf(ref, undefined, storage);
       const path = posix.resolve(cwd?.() ?? home, pathOf(ref));
       if (path !== home && !path.startsWith(`${home}/`)) {
         throw new Error(`${ref}: outside your files — attach from your folder`);
@@ -191,13 +187,13 @@ export function gatewayFiles(
       const bytes = await gateway.read(path);
       if (bytes === null) throw new Error(`${ref}: no such file in your folder`);
       const named = mimeOf(path) ?? sniffMime(bytes) ?? undefined;
-      const file = await saveMedia(dataDir, conversation, bytes, {
+      const file = await saveMedia(storage, bytes, {
         name: posix.basename(path),
         ...(named ? { mime_type: named } : {}),
       });
       return { type: "file", kind: kindOf(file.mime_type), file };
     },
-    snapshot: (part) => loadMediaBlock(part.file.uri),
+    snapshot: (part) => loadMediaBlock(part.file.uri, storage),
   };
 }
 

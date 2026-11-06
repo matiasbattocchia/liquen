@@ -1176,6 +1176,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const store = await openStore(root);
   const log = await store.log();
   const creds = await store.vault();
+  const storage = store.storage();
   // socket carriers: one per app-level token in the vault — Socket Mode is app-scoped,
   // and one socket carries every workspace that app is installed in (§4)
   const carriers = [
@@ -1215,10 +1216,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
         return null;
       }
       const bytes = new Uint8Array(await res.arrayBuffer());
-      const file = await saveMedia(dir, ctx.conversation, bytes, {
-        mime_type: f.mimetype,
-        name: f.name,
-      });
+      const file = await saveMedia(storage, bytes, { mime_type: f.mimetype, name: f.name });
       return { type: "file", kind: kindOf(file.mime_type), file };
     } catch (err) {
       console.error("[ingest] media download failed:", err instanceof Error ? err.message : err);

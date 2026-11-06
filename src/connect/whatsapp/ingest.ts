@@ -48,13 +48,13 @@ import type { Appender } from "../../store/log.ts";
 import type { Connections, ConnectionState } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
-import { imageSizeOf } from "../../store/media.ts";
+import { imageSizeOf, saveMedia } from "../../store/media.ts";
+import type { Storage } from "../../store/storage.ts";
 import type {
   Conversation,
   DataPart,
   DeliveryStatus,
   Draft,
-  FilePart,
   Lifecycle,
   MediaKind,
   MessageEvent,
@@ -181,15 +181,6 @@ export interface WASessionEvent {
   extra?: Record<string, unknown>;
 }
 
-/** The media seam (§5, §9): land decrypted bytes (the bridge already fetched and
- *  decrypted them) in the media store, scoped to the CONNECTION's shelf — at upload time
- *  the bridge doesn't say which conversation the file is for. Returns the `FilePart.file`
- *  shape whose `uri` goes back to the bridge. */
-export type WAMedia = (
-  bytes: Uint8Array,
-  meta: { connection: string; name?: string; mime_type?: string },
-) => Promise<FilePart["file"]>;
-
 export interface WhatsAppWebhookDeps {
   /** → the EventLog (the connection's only write). A batch publishes as ONE transaction. */
   publish: Appender["publish"];
@@ -197,8 +188,10 @@ export interface WhatsAppWebhookDeps {
    *  resolve senders; session events write the connection row (the frontier gate publish
    *  checks). Absent ⇒ pure mapping. */
   store?: Pick<Connections, "connection" | "upsertConnections"> & Partial<Pick<Registry, "agents">>;
-  /** The /media route's storage (absent ⇒ the route answers 501; messages still flow). */
-  media?: WAMedia;
+  /** The media seam (§5, §9): where the /media route keeps the bytes the bridge already
+   *  fetched and decrypted, and the `uri` it answers goes back to the bridge for the
+   *  message to carry. Absent ⇒ the route answers 501; messages still flow. */
+  storage?: Storage;
   /** Shared bearer token (the bridge's BRIDGE_TOKEN). Set ⇒ REQUIRED on every route. */
   bridgeToken?: string;
   now?: () => string;
@@ -283,8 +276,8 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
     const sizes = new Map<string, { width: number; height: number }>();
     await Promise.all((batch.messages ?? []).map(async (m) => {
       const f = m.content.file;
-      if (!f || !f.mime_type.startsWith("image/")) return;
-      const size = await imageSizeOf(f.uri);
+      if (!f || !f.mime_type.startsWith("image/") || !deps.storage) return;
+      const size = await imageSizeOf(deps.storage, f.uri);
       if (size) sizes.set(f.uri, size);
     }));
     const drafts: Draft<MessageEvent>[] = [
@@ -669,7 +662,7 @@ function mapStatus(
 /* ── the /media route: multipart bytes → the media store → {uri} ─────────────────── */
 
 async function media(req: Request, deps: WhatsAppWebhookDeps): Promise<Response> {
-  if (!deps.media) return text(501, "no media store");
+  if (!deps.storage) return text(501, "no media store");
   let form: FormData;
   try {
     form = await req.formData();
@@ -683,8 +676,7 @@ async function media(req: Request, deps: WhatsAppWebhookDeps): Promise<Response>
   }
   const name = typeof form.get("name") === "string" ? form.get("name") as string : file.name;
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const stored = await deps.media(bytes, {
-    connection,
+  const stored = await saveMedia(deps.storage, bytes, {
     ...(name ? { name } : {}),
     ...(file.type ? { mime_type: file.type } : {}),
   });
@@ -763,21 +755,18 @@ export function bridgeTokenOf(env: string | undefined): string {
  *  Returns stop: refuse new deliveries, finish the ones in flight, release the handles. */
 export async function runIngest(): Promise<() => Promise<void>> {
   const { openStore } = await import("../../store/mod.ts");
-  const { mediaSecret, saveMedia, serveMedia } = await import("../../store/media.ts");
+  const { mediaSecret, serveMedia } = await import("../../store/media.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const store = await openStore(root);
   const log = await store.log();
   const creds = await store.vault();
+  const storage = store.storage();
 
   const handler = createWhatsAppWebhook({
     publish: log.publish,
     store: log, // connections live on the Log (§4) — session events write the map
-    media: (bytes, meta) =>
-      saveMedia(dir, meta.connection, bytes, {
-        ...(meta.mime_type ? { mime_type: meta.mime_type } : {}),
-        ...(meta.name ? { name: meta.name } : {}),
-      }),
+    storage,
     bridgeToken: bridgeTokenOf(Deno.env.get("WA_BRIDGE_TOKEN")),
   });
   const { serveIngest } = await import("../serve.ts");
@@ -787,7 +776,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const server = await serveIngest(
     root,
     "whatsapp",
-    async (req) => await serveMedia(req, dir, () => mediaSecret(creds)) ?? await handler(req),
+    async (req) => await serveMedia(req, storage, () => mediaSecret(creds)) ?? await handler(req),
   );
   console.error(`[ingest] bridge → ${server.addr.path} → ${dir}/log`);
   return async () => {
