@@ -10,8 +10,8 @@
  *   token:<name>:<agent>    an agent's own — fronted in that pocket alone
  *
  * The row carries the token in `value.token` (static: the broker hands it back as-is) and
- * the proxy declaration in `extra`: `env`, the var user space holds the `mu-grant-…` handle
- * under, `hosts`, the only authorities the swap spends it toward, and `paths` when given,
+ * the proxy declaration in `extra`: `env`, the var user space holds the `sentinel-<VAR>`
+ * placeholder under, `hosts`, the only authorities the swap spends it toward, and `paths` when given,
  * the only paths there (a tenant's `/organization/<id>/`, for a key that opens every
  * tenant's). From the next
  * `liquen start` the agent's `fetch -H "Authorization: Bearer $VAR" https://<host>/…` is

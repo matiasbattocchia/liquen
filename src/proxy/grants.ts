@@ -2,13 +2,13 @@
  * proxy/grants.ts — the credential broker (DESIGN §9): the ONLY code in the proxy that ever
  * touches a secret.
  *
- * User space never holds a real credential — it holds a PLACEHOLDER handle (`mu-grant-…`),
- * an opaque capability (the file-descriptor analogy: readable, printable, meaningful only
- * here). The proxy sees the handle on the wire and asks the broker for the real access
- * token to swap in. The broker:
+ * User space never holds a real credential — it holds a PLACEHOLDER naming its variable
+ * (`sentinel-GH_TOKEN`), which the proxy reads on the wire, with the agent its connection
+ * names, as the grant that agent is fronted under that variable (`frontedFor`). It then
+ * asks the broker for the real access token to swap in. Inside the harness a grant is
+ * named by a handle the broker mints, which never leaves the process:
  *
  *   issue(credentialKey)   mint (or return) the handle standing for a vault grant.
- *   resolve(handle)        handle → the grant it names (credentialKey/agentId) — NO secret.
  *   accessTokenFor(handle, host?, path?)
  *                          a LIVE credential: a static `token` as-is (a pasted PAT, a
  *                          slack xoxb — nothing expires), the stored `access_token` while
@@ -43,10 +43,8 @@ export interface Grant {
 }
 
 export interface GrantBroker {
-  /** Mint (idempotent per key) the placeholder that stands for a vault grant. */
+  /** Mint (idempotent per key) the handle that stands for a vault grant. */
   issue(credentialKey: string, agentId?: string): string;
-  /** The grant a handle names — never a secret. */
-  resolve(handle: string): Grant | null;
   /** A live access token for the handle, refreshing when the stored one has expired.
    *  `host` is the dialed authority the token is about to be spent toward: a grant whose
    *  row declares `extra.hosts` is spendable ONLY toward them (exact or `*.` wildcard;
@@ -290,10 +288,6 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
       byHandle.set(handle, { credentialKey, ...(agentId ? { agentId } : {}) });
       byKey.set(credentialKey, handle);
       return handle;
-    },
-
-    resolve(handle: string): Grant | null {
-      return byHandle.get(handle) ?? null;
     },
 
     async accessTokenFor(handle: string, host?: string, path?: string): Promise<string | null> {

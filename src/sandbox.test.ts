@@ -57,7 +57,8 @@ Deno.test("the shell speaks through the proxy's pocket, in the org's locale and 
       new AbortController().signal,
     );
     const text = typeof out === "string" ? out : (out as { output: string }).output;
-    assert(text.startsWith("es_AR.UTF-8\nhttp://127.0.0.1:"), text);
+    // the proxy URL names the agent by a nonce of its own
+    assert(/^es_AR\.UTF-8\nhttp:\/\/a1:[0-9a-f]{32}@127\.0\.0\.1:\d+\n/.test(text), text);
     assert(text.includes("\ntrusted"), text);
     // plain HTTP goes through it as well, and nothing is left out of it
     assert(text.includes("\nplain-too"), text);
@@ -65,6 +66,55 @@ Deno.test("the shell speaks through the proxy's pocket, in the org's locale and 
     assert(text.includes("\nAsia/Tokyo\nAsia/Tokyo"), text);
   } finally {
     await sandbox.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a shell spends its own grant by the variable's name, and keeps reaching the proxy past a restart", async () => {
+  const dir = await Deno.makeTempDir();
+  // a local service the grant is declared for, port and all, so its token rides plain HTTP
+  const origin = Deno.serve(
+    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+    (req) => new Response(req.headers.get("authorization") ?? "-"),
+  );
+  const authority = `127.0.0.1:${origin.addr.port}`;
+  const store = storeAt({ engine: "sqlite", dir, docs: "filesystem" });
+  const vault = await store.vault();
+  await vault.put({
+    key: "token:crm:a1",
+    agentId: "a1",
+    value: { token: "REAL" },
+    extra: { env: "CRM_TOKEN", hosts: [authority] },
+  });
+  await vault.close();
+  const curl = (sandbox: Awaited<ReturnType<typeof openLocalSandbox>>, agent: string) =>
+    sandbox.forAgent(agent).session("mind").exec.bash.execute(
+      {
+        command: 'echo "$CRM_TOKEN|$NODE_USE_ENV_PROXY|$HTTPS_PROXY"; ' +
+          `curl -s -H "Authorization: Bearer sentinel-CRM_TOKEN" http://${authority}/x`,
+      },
+      new AbortController().signal,
+    ).then((out) => typeof out === "string" ? out : (out as { output: string }).output);
+  try {
+    let sandbox = await openLocalSandbox(dir, { store, agents: ["a1", "a2"] });
+    const [said, spent] = (await curl(sandbox, "a1")).split("\n");
+    const [placeholder, node, url] = said.split("|");
+    assertEquals([placeholder, node, spent], ["sentinel-CRM_TOKEN", "1", "Bearer REAL"]);
+    // a peer reaching for a1's variable is refused, and never reaches the service
+    assertEquals(
+      (await curl(sandbox, "a2")).split("\n")[1],
+      "liquen proxy: CRM_TOKEN is no grant of a2's",
+    );
+    await sandbox.close();
+    // the next harness answers at the same address, to the same nonce
+    sandbox = await openLocalSandbox(dir, { store, agents: ["a1", "a2"] });
+    const [again, spentAgain] = (await curl(sandbox, "a1")).split("\n");
+    assertEquals(again.split("|")[2], url);
+    assertEquals(spentAgain, "Bearer REAL");
+    assertEquals((await Deno.stat(`${dir}/system/proxy.json`)).mode! & 0o777, 0o600);
+    await sandbox.close();
+  } finally {
+    await origin.shutdown();
     await Deno.remove(dir, { recursive: true });
   }
 });

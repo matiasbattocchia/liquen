@@ -4,16 +4,25 @@
  * The wire half of the MITM the vault design is built on. A tool in user space is handed
  * its env vars (issued, never inherited — bash.ts clears the pocket first):
  *
- *   HTTPS_PROXY=http://127.0.0.1:<port>   send every HTTPS request here as a CONNECT tunnel
+ *   HTTPS_PROXY=http://<agent>:<nonce>@127.0.0.1:<port>
+ *                                         send every HTTPS request here as a CONNECT tunnel
  *   HTTP_PROXY, http_proxy=<the same>     send every plain-HTTP request here, absolute-form
  *   SSL_CERT_FILE=<ca.pem>                trust ONLY the liquen CA (so this proxy can terminate)
- *   <extra.env>=mu-grant-…                a PLACEHOLDER — the real token never enters user
- *                                         space; the var's NAME is the credential row's own
- *                                         declaration (main.ts fronts every row that makes one)
+ *   <VAR>=sentinel-<VAR>                  a PLACEHOLDER naming its own variable — the real
+ *                                         token never enters user space; the var is the
+ *                                         credential row's own declaration (`extra.env`)
+ *
+ * WHO is asking is the connection's: a client sends the URL's credentials as
+ * `Proxy-Authorization` on a CONNECT and on each plain request, and the nonce must be the
+ * agent's own (`caller`). A connection without one is answered `407` with a Basic
+ * challenge (git asks only once challenged), so a process outside the agents' shells
+ * reaches neither the grants nor the tunnels. The header is hop-by-hop and never reaches
+ * the origin.
  *
  * The proxy terminates the tunnel's TLS with a leaf it mints for the dialed host (ca.ts),
- * reads the plaintext request, and — wherever a header value carries a `mu-grant-…` handle —
- * substitutes the real access token the broker fetches from the vault (grants.ts). Then it
+ * reads the plaintext request, and — wherever a header value carries `sentinel-<VAR>` —
+ * substitutes the real access token of the grant that agent is fronted under that
+ * variable (`grantFor`), which the broker fetches from the vault (grants.ts). Then it
  * re-originates to the true host over real TLS and streams the answer back. User space never
  * holds a valid credential; the credential meets the request only here, at the last hop
  * before the origin.
@@ -46,8 +55,8 @@
  *
  * One policy rule attaches at the plaintext seam: the grant's HOST BINDING. A credential
  * row that declares `extra.hosts` spends only toward those origins — the swap refuses any
- * other dial (grants.ts hostAllowed), so a handle can't be aimed at an echo endpoint to
- * read the real token back. Method/path policy would attach at the same seam; none yet.
+ * other dial (grants.ts hostAllowed), so a placeholder can't be aimed at an echo endpoint
+ * to read the real token back. Its `extra.paths` binds the path the same way.
  */
 
 import http from "node:http";
@@ -56,7 +65,7 @@ import tls from "node:tls";
 import { Duplex, Readable } from "node:stream";
 // the runtime's web streams are node's; only their declarations differ
 import type { ReadableStream as WebStream, WritableStream as WebSink } from "node:stream/web";
-import type { GrantBroker } from "./grants.ts";
+import type { Grant, GrantBroker } from "./grants.ts";
 import type { CA, Leaf } from "./ca.ts";
 import { findRoot, orgFlag } from "../config.ts";
 import { entry } from "../entry.ts";
@@ -74,16 +83,32 @@ const HOP_BY_HOP = new Set([
   "host",
   "proxy-connection",
 ]);
-// the handle itself is the marker, wherever it rides: `Bearer mu-grant-…`, gh's
-// `token mu-grant-…`, an `x-api-key: mu-grant-…` — the swap is a SUBSTITUTION over every
-// header value, preserving whatever surrounds the handle, so a new tool needs no proxy
-// change. (A handle a tool base64s or signs over can't be substituted — such schemes
+/** What a placeholder opens with; the variable it stands in follows. */
+export const SENTINEL = "sentinel-";
+
+/** The placeholder user space holds under `name`. */
+export const sentinelOf = (name: string): string => `${SENTINEL}${name}`;
+
+// the placeholder itself is the marker, wherever it rides: `Bearer sentinel-GH_TOKEN`, gh's
+// `token sentinel-GH_TOKEN`, an `x-api-key: sentinel-API_KEY` — the swap is a SUBSTITUTION
+// over every header value, preserving whatever surrounds it, so a new tool needs no proxy
+// change. (A placeholder a tool base64s or signs over can't be substituted — such schemes
 // belong broker-side.)
-const HANDLE_RE = /mu-grant-[A-Za-z0-9]+/g;
+const SENTINEL_RE = /sentinel-([A-Za-z_][A-Za-z0-9_]*)/g;
+
+/** The challenge a connection without the agent's credentials is answered with, and why. */
+const CHALLENGE = 'Basic realm="liquen"';
+const UNNAMED = "this proxy serves an agent's shell, named by its proxy URL";
 
 export interface ProxyDeps {
   ca: CA;
   broker: GrantBroker;
+  /** Whether `nonce` is `agentId`'s own: a connection is let in on its
+   *  `Proxy-Authorization` alone, and every request on it is made for that agent. */
+  caller: (agentId: string, nonce: string) => boolean;
+  /** The grant an agent's `sentinel-<name>` stands for: the vault row fronted to that
+   *  agent under `name`, or null when the variable is not the agent's. */
+  grantFor: (agentId: string, name: string) => Promise<Grant | null>;
   /** The origin call — injectable for tests; default is the runtime `fetch` (real trust). */
   originFetch?: typeof fetch;
   /** An audit sink for every egress request; default logs a line to stderr. NEVER the
@@ -106,20 +131,22 @@ export interface EgressAudit {
   host: string; // the dialed authority: `host`, or `host:port` off the scheme's port
   path: string;
   status: number;
-  agentId?: string;
+  agentId: string; // whose connection made it
   swapped: boolean; // did a placeholder get a real credential
 }
 
 /**
- * Serve one decrypted request for the dialed authority: swap a placeholder bearer for the
- * real token, re-originate, and audit. The request's own scheme is the origin's: `https:`
- * off a decrypted tunnel, `http:` off a plain-HTTP request. Pure over its deps (no TLS) —
- * the proxy's testable core.
+ * Serve one decrypted request `agentId` made toward the dialed authority: swap each
+ * placeholder for the real token of the grant the agent is fronted under its variable,
+ * re-originate, and audit. The request's own scheme is the origin's: `https:` off a
+ * decrypted tunnel, `http:` off a plain-HTTP request. Pure over its deps (no TLS) — the
+ * proxy's testable core.
  */
 export async function proxyRequest(
   host: string,
   req: Request,
   deps: ProxyDeps,
+  agentId: string,
 ): Promise<Response> {
   const originFetch = deps.originFetch ?? fetch;
   const audit = deps.audit ?? defaultAudit;
@@ -136,13 +163,12 @@ export async function proxyRequest(
   }
 
   let swapped = false;
-  let agentId: string | undefined;
-  // every handle in the request, resolved once — a token per distinct handle, refused as
-  // a whole if any can't be honored toward THIS host
+  // every placeholder in the request, resolved once — a token per variable, refused as a
+  // whole if any can't be honored for this agent toward THIS host
   const real = new Map<string, string>();
-  const carried = [...headers].some(([, v]) => v.search(HANDLE_RE) !== -1);
+  const carried = [...headers].some(([, v]) => v.search(SENTINEL_RE) !== -1);
   if (carried && url.protocol === "http:" && !(deps.plain?.(host) ?? false)) {
-    audit({ method: req.method, host, path: url.pathname, status: 403, swapped: false });
+    audit({ method: req.method, host, path: url.pathname, status: 403, agentId, swapped: false });
     return new Response(
       `liquen proxy: a credential rides plain HTTP only toward a host its grant names with ` +
         `its port (${host} is not one)\n`,
@@ -150,34 +176,35 @@ export async function proxyRequest(
     );
   }
   for (const [, v] of headers) {
-    for (const { 0: handle } of v.matchAll(HANDLE_RE)) {
-      if (real.has(handle)) continue;
-      agentId ??= deps.broker.resolve(handle)?.agentId;
+    for (const { 0: placeholder, 1: name } of v.matchAll(SENTINEL_RE)) {
+      if (real.has(placeholder)) continue;
+      const grant = await deps.grantFor(agentId, name);
       // the path judged is the one re-originated: `target` is built from it
-      const token = await deps.broker.accessTokenFor(handle, host, url.pathname);
+      const token = grant &&
+        await deps.broker.accessTokenFor(
+          deps.broker.issue(grant.credentialKey, grant.agentId),
+          host,
+          url.pathname,
+        );
       if (!token) {
         // a placeholder we can't honor never leaves the box as-is (it would 401 upstream
-        // and leak the handle) — fail it here; same answer when the grant's host or path
-        // binding refuses the request
-        audit({
-          method: req.method,
-          host,
-          path: url.pathname,
-          status: 401,
-          agentId,
-          swapped: false,
-        });
+        // and leak the variable's name) — fail it here: a variable the agent is not
+        // fronted, a grant with no live credential, or one whose host or path binding
+        // refuses the request
+        audit({ method: req.method, host, path: url.pathname, status: 401, agentId, swapped });
         return new Response(
-          "liquen proxy: no credential for this grant, or grant not valid for this host or path\n",
+          grant
+            ? "liquen proxy: no credential for this grant, or grant not valid for this host or path\n"
+            : `liquen proxy: ${name} is no grant of ${agentId}'s\n`,
           { status: 401 },
         );
       }
-      real.set(handle, token);
+      real.set(placeholder, token);
     }
   }
   if (real.size) {
     for (const [k, v] of [...headers]) {
-      headers.set(k, v.replace(HANDLE_RE, (h) => real.get(h) ?? h));
+      headers.set(k, v.replace(SENTINEL_RE, (p) => real.get(p) ?? p));
     }
     swapped = true;
   }
@@ -210,8 +237,29 @@ export interface Proxy {
 }
 
 /** What the HTTP server meets a connection as: a tunnel the proxy decrypted for one
- *  authority, or a client's plain-HTTP requests in absolute form. */
-type Feed = { authority: string } | { plain: true };
+ *  authority and the agent its CONNECT named, or a client's plain-HTTP requests in
+ *  absolute form, each naming its agent itself. */
+type Feed = { authority: string; agentId: string } | { plain: true };
+
+/** The agent a `Proxy-Authorization` value names, when the nonce it carries is that
+ *  agent's own; null for any other value, or none. */
+export function callerOf(
+  header: string | null | undefined,
+  caller: ProxyDeps["caller"],
+): string | null {
+  const m = header?.match(/^\s*Basic\s+([A-Za-z0-9+/]+=*)\s*$/i);
+  if (!m) return null;
+  let said: string;
+  try {
+    said = atob(m[1]);
+  } catch {
+    return null;
+  }
+  const at = said.indexOf(":");
+  if (at <= 0) return null;
+  const agentId = decodeURIComponent(said.slice(0, at));
+  return caller(agentId, said.slice(at + 1)) ? agentId : null;
+}
 
 /** Start the proxy on loopback. `port: 0` picks an ephemeral one (read `.port` back). */
 export function startProxy(
@@ -227,13 +275,18 @@ export function startProxy(
     const feed = feeds.get(req.socket);
     if (!feed) res.writeHead(421).end();
     else if ("authority" in feed) {
-      void serve(feed.authority, "https:", req.url ?? "/", req, res, deps);
+      void serve(feed.authority, "https:", req.url ?? "/", req, res, deps, feed.agentId);
     } else void servePlain(req, res, deps);
   });
   server.on("upgrade", (req: http.IncomingMessage, socket: Duplex, early: Uint8Array) => {
     const feed = feeds.get(socket);
-    if (feed && "plain" in feed) bridgeUpgrade(req, socket, early, audit);
-    else socket.destroy();
+    const agentId = callerOf(req.headers["proxy-authorization"], deps.caller);
+    if (!feed || !("plain" in feed)) socket.destroy();
+    else if (agentId === null) {
+      socket.end(
+        `HTTP/1.1 407 ${UNNAMED}\r\nproxy-authenticate: ${CHALLENGE}\r\nconnection: close\r\n\r\n`,
+      );
+    } else bridgeUpgrade(req, socket, early, audit, agentId);
   });
   // A server that is not listening is closing, to the runtime: it destroys a connection
   // the moment its answer is out instead of keeping it alive for the client's next
@@ -255,9 +308,10 @@ export function startProxy(
   const deny = async (conn: Deno.Conn, status: number, reason: string): Promise<void> => {
     const phrase = reason.replace(/[^\x20-\x7e]/g, "?").slice(0, 200);
     const body = `liquen proxy: ${phrase}\n`;
+    const challenge = status === 407 ? `proxy-authenticate: ${CHALLENGE}\r\n` : "";
     await conn.write(
       new TextEncoder().encode(
-        `HTTP/1.1 ${status} ${phrase}\r\ncontent-type: text/plain\r\n` +
+        `HTTP/1.1 ${status} ${phrase}\r\ncontent-type: text/plain\r\n${challenge}` +
           `content-length: ${body.length}\r\nconnection: close\r\n\r\n${body}`,
       ),
     ).catch(() => {});
@@ -270,8 +324,10 @@ export function startProxy(
     if (!head) return deny(conn, 400, "send CONNECT host:port, or a request in absolute form");
     if (head.authority === undefined) return feed(conn, head.early, { plain: true });
     const authority = head.authority;
+    const agentId = callerOf(head.auth, deps.caller);
+    if (agentId === null) return deny(conn, 407, UNNAMED);
     const said = (status: number) =>
-      audit({ method: "CONNECT", host: authority, path: "", status, swapped: false });
+      audit({ method: "CONNECT", host: authority, path: "", status, agentId, swapped: false });
     const origin = originOf(authority);
     if (deps.terminates?.(authority) ?? true) {
       let leaf: Leaf;
@@ -282,7 +338,7 @@ export function startProxy(
         return deny(conn, 502, `no certificate can stand for ${origin.hostname}`);
       }
       await answer(conn);
-      return feed(conn, head.early, { authority }, leaf);
+      return feed(conn, head.early, { authority, agentId }, leaf);
     }
     let up: Deno.Conn;
     try {
@@ -370,7 +426,8 @@ function prefixed(first: Uint8Array, rest: ReadableStream<Uint8Array>): Readable
   });
 }
 
-/** One plain-HTTP request: its absolute-form URL names the origin. */
+/** One plain-HTTP request: its absolute-form URL names the origin, and its
+ *  `Proxy-Authorization` the agent it is made for. */
 function servePlain(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -384,7 +441,13 @@ function servePlain(
     );
     return Promise.resolve();
   }
-  return serve(url.host, "http:", `${url.pathname}${url.search}`, req, res, deps);
+  const agentId = callerOf(req.headers["proxy-authorization"], deps.caller);
+  if (agentId === null) {
+    res.writeHead(407, { "proxy-authenticate": CHALLENGE, "content-type": "text/plain" })
+      .end(`liquen proxy: ${UNNAMED}\n`);
+    return Promise.resolve();
+  }
+  return serve(url.host, "http:", `${url.pathname}${url.search}`, req, res, deps, agentId);
 }
 
 /** One request, as the HTTP server parsed it, through `proxyRequest` and back. */
@@ -395,6 +458,7 @@ async function serve(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   deps: ProxyDeps,
+  agentId: string,
 ): Promise<void> {
   const headers = new Headers();
   for (let i = 0; i + 1 < req.rawHeaders.length; i += 2) {
@@ -409,7 +473,7 @@ async function serve(
   });
   let response: Response;
   try {
-    response = await proxyRequest(authority, request, deps);
+    response = await proxyRequest(authority, request, deps, agentId);
   } catch {
     response = new Response(`liquen proxy: ${authority} did not answer\n`, { status: 502 });
   }
@@ -429,6 +493,7 @@ function bridgeUpgrade(
   socket: Duplex,
   early: Uint8Array,
   audit: (line: EgressAudit) => void,
+  agentId: string,
 ): void {
   const url = URL.parse(req.url ?? "");
   if (url?.protocol !== "http:") return void socket.destroy();
@@ -438,6 +503,7 @@ function bridgeUpgrade(
       host: url.host,
       path: url.pathname,
       status,
+      agentId,
       swapped: false,
     });
   const up = net.connect({
@@ -475,12 +541,13 @@ function originOf(authority: string): { hostname: string; port: number } {
 }
 
 /** Read what opens a fresh conn (it may arrive in pieces). A CONNECT is read whole: the
- *  dialed authority (`host`, or `host:port` off 443) plus any bytes past the head, an
- *  optimistic client's first tunnel bytes. Anything else is a plain-HTTP request, handed
- *  back as the bytes read so far. null if the conn closed, or sent no head in 4 KiB. */
+ *  dialed authority (`host`, or `host:port` off 443), its `Proxy-Authorization`, and any
+ *  bytes past the head, an optimistic client's first tunnel bytes. Anything else is a
+ *  plain-HTTP request, handed back as the bytes read so far. null if the conn closed, or
+ *  sent no head in 4 KiB. */
 async function readHead(
   conn: Deno.Conn,
-): Promise<{ authority?: string; early: Uint8Array } | null> {
+): Promise<{ authority?: string; auth?: string; early: Uint8Array } | null> {
   const buf = new Uint8Array(4096);
   let n = 0;
   while (true) {
@@ -494,10 +561,12 @@ async function readHead(
     }
     const end = headEnd(buf, n);
     if (end < 0) continue;
-    const m = new TextDecoder().decode(buf.subarray(0, end)).match(/^CONNECT (\S+?)(?::(\d+))? /);
+    const text = new TextDecoder().decode(buf.subarray(0, end));
+    const m = text.match(/^CONNECT (\S+?)(?::(\d+))? /);
     if (!m) return null;
     const authority = !m[2] || m[2] === "443" ? m[1] : `${m[1]}:${m[2]}`;
-    return { authority, early: buf.slice(end, n) };
+    const auth = text.match(/\r\nproxy-authorization:[ \t]*([^\r\n]*)/i)?.[1];
+    return { authority, ...(auth !== undefined ? { auth } : {}), early: buf.slice(end, n) };
   }
 }
 
@@ -513,7 +582,7 @@ function headEnd(buf: Uint8Array, n: number): number {
 
 export function defaultAudit(a: EgressAudit): void {
   console.error(
-    `[proxy] ${a.agentId ?? "-"} ${a.method} ${a.host}${a.path} → ${a.status}` +
+    `[proxy] ${a.agentId} ${a.method} ${a.host}${a.path} → ${a.status}` +
       (a.swapped ? " (swapped)" : ""),
   );
 }
@@ -550,9 +619,6 @@ if (import.meta.main) {
       key = grants[0].key;
     }
 
-    const broker = createGrantBroker({ creds });
-    const ca = await openCA(dir);
-    const proxy = startProxy({ ca, broker });
     const grant = await creds.get(key);
     // the row's own declaration names the var (main.ts fronts the same way): a grant that
     // declares none is fronted nowhere
@@ -561,11 +627,26 @@ if (import.meta.main) {
       console.error(`[proxy] ${key} declares no env var (extra.env): nothing to front`);
       Deno.exit(2);
     }
-    const handle = broker.issue(key, grant?.agentId);
+    // this proxy serves one caller, the shell it prints for, by a nonce of its own
+    const who = grant?.agentId ?? "org";
+    const nonce = crypto.randomUUID().replaceAll("-", "");
+    const ca = await openCA(dir);
+    const proxy = startProxy({
+      ca,
+      broker: createGrantBroker({ creds }),
+      caller: (agentId, said) => agentId === who && said === nonce,
+      grantFor: (_agentId, name) =>
+        Promise.resolve(
+          name === varName
+            ? { credentialKey: key, ...(grant?.agentId ? { agentId: grant.agentId } : {}) }
+            : null,
+        ),
+    });
+    const at = `http://${encodeURIComponent(who)}:${nonce}@127.0.0.1:${proxy.port}`;
     console.error(`[proxy] on :${proxy.port} — fronting ${key}\n`);
-    console.error(`export HTTPS_PROXY=http://127.0.0.1:${proxy.port}`);
-    console.error(`export HTTP_PROXY=http://127.0.0.1:${proxy.port}`);
+    console.error(`export HTTPS_PROXY=${at}`);
+    console.error(`export HTTP_PROXY=${at}`);
     console.error(`export SSL_CERT_FILE=${proxy.caPath}`);
-    console.error(`export ${varName}=${handle}`);
+    console.error(`export ${varName}=${sentinelOf(varName)}`);
   });
 }

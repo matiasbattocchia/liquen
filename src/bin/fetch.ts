@@ -2,8 +2,8 @@
  * bin/fetch.ts — the HTTP binary (DESIGN §9): `fetch`, laid beside aread · awrite · aedit.
  *
  * An HTTP call needs nothing of main's: the credential boundary is the egress proxy, which
- * hands user space `HTTPS_PROXY`, a trust file and a `mu-grant-…` handle per fronted
- * grant, and swaps the handle for the live token wherever a header carries it. So this
+ * hands user space `HTTPS_PROXY`, a trust file and a `sentinel-<VAR>` placeholder per
+ * fronted grant, and swaps it for the live token wherever a header carries it. So this
  * binary is credential-blind — an agent writes `-H "Authorization: Bearer $GH_TOKEN"` and
  * the proxy does the rest — and what it adds over a raw client is the discipline an agent
  * needs from a read of the world:

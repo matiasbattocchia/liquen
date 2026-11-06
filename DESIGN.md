@@ -3183,8 +3183,20 @@ true for exec (kernel handles it), false for control (only harness/human authori
      it is plumbing that makes a tool accept our proxy, not a credential. The file is
      handed under every name the common clients read a bundle by (`SSL_CERT_FILE`,
      `REQUESTS_CA_BUNDLE`, `PIP_CERT`; `NODE_EXTRA_CA_CERTS` and `DENO_CERT` get the CA
-     alone, each runtime adding it to its own roots) + a
-     `mu-grant-…` placeholder standing for the vault grant. The proxy terminates ONLY
+     alone, each runtime adding it to its own roots) + a placeholder naming its
+     variable (`GH_TOKEN=sentinel-GH_TOKEN`). **The proxy knows the agent from the
+     connection**: each agent's shells are handed `http://<agent>:<nonce>@127.0.0.1:<port>`,
+     which the common clients send as `Proxy-Authorization` on a CONNECT and on each plain
+     request (curl, wget, git once challenged, pip and Python's `urllib`, Go, Deno, Rust's
+     `reqwest`, npm, and Node's `fetch` under `NODE_USE_ENV_PROXY`, which the shells
+     carry). A connection without the agent's own nonce is answered `407`, so a process
+     outside the agents' shells reaches neither a grant nor a tunnel. The nonce and the
+     port are kept beside the CA (`data/system/proxy.json`), so a job that outlives the
+     harness reaches the next one at the address it was handed. The agent and the
+     variable pick the grant: `frontedFor` fronts at most one row per variable for an
+     agent, so two grants on one host (the org's mailbox and a member's, a bot token and a
+     user token) stay apart by the variable the agent reached for, and a placeholder for
+     a variable the agent is not fronted answers `401`. The proxy terminates ONLY
      the authorities a fronted grant binds — where a placeholder can ride and the swap
      has to see plaintext — with a per-host leaf (`ca.ts`), on the tunnel's own socket,
      the decrypted stream handed to an HTTP server that listens on nothing, swaps the placeholder for a
@@ -3204,17 +3216,16 @@ true for exec (kernel handles it), false for control (only harness/human authori
      spent only on requests under them, by whole segments, so one key that opens every
      tenant of an API can be held to one tenant's `/organization/<id>/`; a path the origin
      could read as another (a dot segment, an escaped separator) is refused, not read. The sandbox never holds token material, binary-agnostic (git included): the
-     swap is a substitution over header values (the handle is the marker, not any
+     swap is a substitution over header values (the placeholder is the marker, not any
      particular header), so a new tool costs no proxy change — its connect door declares
      the placeholder's env var and the grant's hosts on the vault row (`extra.env`,
      `extra.hosts`; for a service with no connector, the shipped `token` door writes the
      row from a paste — the tool column of the §4 grid, one row and nothing else), main
      fronts what's declared PER AGENT, read off the vault at every spawn so a grant stored
      while the org runs is in the next command's pocket — the org's row, or the
-     agent's own, never a peer's (`frontedFor`), so the handle in a pocket names a grant
-     its holder has and the audit's agent is the caller — and the swap refuses any dial outside
-     the declaration (so a handle can't be aimed at an echo endpoint to read the token
-     back). A host in the declaration may carry a port, which then binds that port alone,
+     agent's own, never a peer's (`frontedFor`), and the audit's agent is the connection's
+     — and the swap refuses any dial outside the declaration (so a placeholder can't be
+     aimed at an echo endpoint to read the token back). A host in the declaration may carry a port, which then binds that port alone,
      so a grant can name a local service (`localhost:8080`). The proxy fronts credentials
      and fences nothing: it dials what it is asked, this machine's loopback included, and
      what an agent reaches is its sandbox's to say (bare: everything; a bubble: below; a

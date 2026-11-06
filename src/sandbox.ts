@@ -17,7 +17,8 @@ import { type Files, localFiles } from "./store/media.ts";
 import type { Store } from "./store/mod.ts";
 import { createGrantBroker, frontedFor, hostAllowed } from "./proxy/grants.ts";
 import { openCA } from "./proxy/ca.ts";
-import { defaultAudit, startProxy } from "./proxy/proxy.ts";
+import { defaultAudit, type Proxy, type ProxyDeps, sentinelOf, startProxy } from "./proxy/proxy.ts";
+import { timingSafeEqual } from "node:crypto";
 import { sessionAddress } from "./session.ts";
 import {
   type Gateway,
@@ -291,9 +292,11 @@ export function openCloudflareSandbox(
  *  verifying against its own roots still reaches the world, and one honoring the file
  *  reaches the fronted hosts too. Which placeholders ride is the VAULT's say, not this
  *  file's: a credential row that declares `extra.env` (the connect doors write it) is
- *  fronted under that var, and which row fronts which agent is `frontedFor` — the org's,
- *  or the agent's own, never a peer's. So the handle in an agent's pocket names a grant
- *  that agent holds, and the audit line's agent is the caller. */
+ *  fronted under that var as `sentinel-<VAR>`, and which row fronts which agent is
+ *  `frontedFor` — the org's, or the agent's own, never a peer's. The proxy URL names the
+ *  agent by a nonce of its own, so the agent and the variable pick exactly one grant, and
+ *  every audit line's agent is the caller. Node's `fetch` reads the proxy settings only
+ *  under `NODE_USE_ENV_PROXY`, so the shells carry it. */
 interface ProxyHandle {
   env: (agentId: string) => Promise<Record<string, string>>;
   close(): Promise<void>;
@@ -331,27 +334,69 @@ async function writeTrustBundle(dir: string, caPath: string): Promise<string> {
   return out;
 }
 
+/** What the proxy keeps across restarts, beside the CA: the port it listens on and each
+ *  agent's nonce, so a job that outlives the harness reaches the next one at the address
+ *  it was handed. Readable by the harness alone: a nonce is what lets a connection in. */
+interface ProxyState {
+  port?: number;
+  nonces: Record<string, string>;
+}
+
+const PROXY_STATE = "system/proxy.json";
+
+async function readProxyState(dir: string): Promise<ProxyState> {
+  try {
+    const s = JSON.parse(await Deno.readTextFile(`${dir}/${PROXY_STATE}`));
+    return {
+      ...(typeof s.port === "number" ? { port: s.port } : {}),
+      nonces: s.nonces && typeof s.nonces === "object" ? s.nonces : {},
+    };
+  } catch {
+    return { nonces: {} };
+  }
+}
+
+async function writeProxyState(dir: string, state: ProxyState): Promise<void> {
+  const tmp = `${dir}/${PROXY_STATE}.tmp`;
+  await Deno.writeTextFile(tmp, JSON.stringify(state), { mode: 0o600 });
+  await Deno.rename(tmp, `${dir}/${PROXY_STATE}`);
+}
+
+/** Whether two nonces are the same, in time that tells nothing of where they differ. */
+function sameNonce(a: string, b: string): boolean {
+  const [x, y] = [new TextEncoder().encode(a), new TextEncoder().encode(b)];
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
 async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
   const creds = await store.vault();
   const log = await store.log();
   const broker = createGrantBroker({ creds });
   const ca = await openCA(dir);
-  // the vault as the last spawn read it: a grant stored while the org runs is fronted from
-  // the next command on, and one removed stops being
+  // the vault as it reads now: a grant stored while the org runs is fronted from the next
+  // command on, and one removed stops swapping at once
   const read = async () => (await creds.list("")).filter((r) => typeof r.extra?.env === "string");
   let fronted = await read();
-  const proxy = startProxy({
+  const state = await readProxyState(dir);
+  let saving = Promise.resolve();
+  const save = () => saving = saving.then(() => writeProxyState(dir, state));
+  const deps: ProxyDeps = {
     ca,
     broker,
+    caller: (agentId, nonce) =>
+      Object.hasOwn(state.nonces, agentId) && sameNonce(state.nonces[agentId], nonce),
+    grantFor: async (agentId, name) => {
+      fronted = await read();
+      const row = frontedFor(fronted, agentId).find((r) => r.extra?.env === name);
+      return row
+        ? { credentialKey: row.key, ...(row.agentId ? { agentId: row.agentId } : {}) }
+        : null;
+    },
     // every request said on stderr and kept in the egress table (`liquen log requests`)
     audit: (a) => {
       defaultAudit(a);
       const { agentId, ...made } = a;
-      void log.egress({
-        created_at: new Date().toISOString(),
-        ...(agentId !== undefined ? { agent_id: agentId } : {}),
-        ...made,
-      })
+      void log.egress({ created_at: new Date().toISOString(), agent_id: agentId, ...made })
         .catch((err) => console.error("[proxy] its request could not be recorded:", err));
     },
     terminates: (authority) => fronted.some((r) => hostAllowed(r.extra?.hosts, authority)),
@@ -362,13 +407,22 @@ async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
           typeof h === "string" && /:\d+$/.test(h) && hostAllowed([h], authority)
         )
       ),
-  });
+  };
+  // the port it held before, while nothing else does
+  let proxy: Proxy;
+  try {
+    proxy = startProxy(deps, { port: state.port });
+  } catch (err) {
+    if (!(err instanceof Deno.errors.AddrInUse)) throw err;
+    proxy = startProxy(deps);
+  }
+  if (state.port !== proxy.port) {
+    state.port = proxy.port;
+    await save();
+  }
   const bundle = await writeTrustBundle(dir, proxy.caPath);
-  const at = `http://127.0.0.1:${proxy.port}`;
   const base: Record<string, string> = {
-    HTTPS_PROXY: at,
-    HTTP_PROXY: at,
-    http_proxy: at,
+    NODE_USE_ENV_PROXY: "1", // node's own fetch and http read the proxy settings
     SSL_CERT_FILE: bundle, // OpenSSL-based tools: curl, git, wget, Go
     REQUESTS_CA_BUNDLE: bundle, // python requests, and pip through it
     PIP_CERT: bundle,
@@ -381,9 +435,21 @@ async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
   return {
     env: async (agentId) => {
       fronted = await read();
-      const env: Record<string, string> = { ...base };
+      if (!Object.hasOwn(state.nonces, agentId)) {
+        state.nonces[agentId] = crypto.randomUUID().replaceAll("-", "");
+        await save();
+      }
+      const at = `http://${encodeURIComponent(agentId)}:${
+        state.nonces[agentId]
+      }@127.0.0.1:${proxy.port}`;
+      const env: Record<string, string> = {
+        ...base,
+        HTTPS_PROXY: at,
+        HTTP_PROXY: at,
+        http_proxy: at,
+      };
       const mine = frontedFor(fronted, agentId);
-      for (const r of mine) env[r.extra!.env as string] = broker.issue(r.key, r.agentId);
+      for (const r of mine) env[r.extra!.env as string] = sentinelOf(r.extra!.env as string);
       const keys = mine.map((r) => r.key).join(", ");
       if (keys !== (said.get(agentId) ?? "")) {
         console.error(`[proxy] ${agentId} fronted: ${keys || "nothing"}`);

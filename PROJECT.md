@@ -6283,6 +6283,22 @@ tenth or less, and a read starts the hour again.
   such a line's `/y` settles no card (`principalsOf` on the mirror). `10-core.md` and
   `RENDER.md` say what `<agent>` is. An adopted room already stayed the agent's after it got
   an account (the alias view reads the record alone); DESIGN §4 now says so.
+- **The proxy knows the agent from the connection.** Shells get
+  `http://<agent>:<nonce>@127.0.0.1:<port>`; the proxy reads `Proxy-Authorization` on a
+  CONNECT and on each plain request, answers `407` with a Basic challenge without the
+  agent's own nonce, and audits every request with its agent. A fronted variable holds
+  `sentinel-<VAR>`, and `grantFor` (agent and variable, through `frontedFor`) picks its
+  grant; one the agent is not fronted answers `401`. The broker's handles stay inside the
+  harness (`resolve` is gone). The nonces and the port are kept in
+  `data/system/proxy.json` (600); the port is reused while free, since a kept nonce at a
+  new port would leave a surviving job unreachable all the same.
+  - **The client check**, through a recording proxy that challenged a bare request: curl,
+    wget, pip, Python's `urllib`, Go, Deno, Rust's `reqwest` and npm send the URL's
+    credentials up front; git sends them once challenged; Node's `fetch` uses the proxy
+    only under `NODE_USE_ENV_PROXY=1` (and went straight out before), which the shells
+    now carry.
+  - **Open**: a job started before this change holds the old proxy URL and a `mu-grant-…`
+    handle, so its requests are refused after the upgrade; it is restarted by hand.
 
 ### What is open (2026-10-20)
 

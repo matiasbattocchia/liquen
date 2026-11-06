@@ -47,8 +47,6 @@ Deno.test("issue: a handle is opaque, idempotent per key, and reveals no secret"
     const h = broker.issue(KEY, "ana");
     assert(h.startsWith("mu-grant-"));
     assertEquals(broker.issue(KEY, "ana"), h); // idempotent
-    assertEquals(broker.resolve(h), { credentialKey: KEY, agentId: "ana" });
-    assertEquals(broker.resolve("mu-grant-nope"), null);
     assertEquals(await broker.accessTokenFor("mu-grant-nope"), null); // opaque, unresolvable
   });
 });

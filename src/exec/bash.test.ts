@@ -115,16 +115,15 @@ Deno.test("bash: user space starts with an empty pocket — the harness env neve
 Deno.test("bash: the env hook issues extra vars into the spawn (the proxy handoff)", async () => {
   const dir = await Deno.makeTempDir();
   try {
-    let handle = "mu-grant-first";
-    const bash = bashTool({
-      workspace: dir,
-      env: () => Promise.resolve({ GOOGLE_WORKSPACE_CLI_TOKEN: handle }),
-    });
+    let fronted: Record<string, string> = {
+      GOOGLE_WORKSPACE_CLI_TOKEN: "sentinel-GOOGLE_WORKSPACE_CLI_TOKEN",
+    };
+    const bash = bashTool({ workspace: dir, env: () => Promise.resolve(fronted) });
     const run = async () =>
-      String(await bash.execute({ command: "echo $GOOGLE_WORKSPACE_CLI_TOKEN" }, live()));
-    assertStringIncludes(await run(), "mu-grant-first");
-    handle = "mu-grant-rotated"; // evaluated per call — a rotated placeholder is picked up
-    assertStringIncludes(await run(), "mu-grant-rotated");
+      String(await bash.execute({ command: "echo ${GOOGLE_WORKSPACE_CLI_TOKEN:-unset}" }, live()));
+    assertStringIncludes(await run(), "sentinel-GOOGLE_WORKSPACE_CLI_TOKEN");
+    fronted = {}; // evaluated per call — a grant taken back is gone from the next spawn
+    assertStringIncludes(await run(), "unset");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -410,9 +409,9 @@ Deno.test("binaries: fetch through bash — a loopback answer, pretty, and a 404
     await withPlane(async ({ run }) => {
       // the header rides as written: a $VAR the environment holds is the proxy's to swap
       const out = await run(
-        `export TOK=mu-grant-x; fetch -H "Authorization: Bearer $TOK" ${base}/ok`,
+        `export TOK=sentinel-TOK; fetch -H "Authorization: Bearer $TOK" ${base}/ok`,
       );
-      assertStringIncludes(out, '"got": "Bearer mu-grant-x"');
+      assertStringIncludes(out, '"got": "Bearer sentinel-TOK"');
       assertStringIncludes(out, '"method": "GET"');
       // a status outside 2xx is the command failing: the is_error path, body included
       await assertRejects(() => run(`fetch ${base}/miss`), Error, "HTTP 404\nnothing here");
