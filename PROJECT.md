@@ -6335,6 +6335,11 @@ The storage batch of `CHANGES.md`, a step at a time.
   with `-A`, did not show was missing.
 - **References keep an object.** `collect` lets go of an object no event references once
   it is older than `UNREFERENCED_KEEP_MS` (a day); main runs it hourly (`COLLECT_MS`).
+- **A bucket backend.** `deployment.storage` is `"filesystem"` or a bucket's URL,
+  path-style, `?region=` where wanted; `s3.ts` speaks the S3 API with SigV4 over `fetch`,
+  its keys `STORAGE_ACCESS_KEY_ID` and `STORAGE_SECRET_ACCESS_KEY`. Checked against MinIO
+  (`bitnamilegacy/minio`; Docker Hub and Quay no longer serve MinIO's own image): a round
+  trip, a listing, collection, and a forged secret refused. `LIQUEN_TEST_S3` runs it.
 
 ### What is open (2026-10-20)
 

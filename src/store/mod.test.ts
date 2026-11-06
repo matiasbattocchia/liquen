@@ -11,11 +11,13 @@ Deno.test("databaseOf: sqlite is SQLite under the data root; a URL is Postgres, 
     engine: "sqlite",
     dir: "/org/data",
     docs: "filesystem",
+    storage: "filesystem",
   });
-  assertEquals(databaseOf("/org/data", "sqlite", "database"), {
+  assertEquals(databaseOf("/org/data", "sqlite", "database", "https://x.r2.dev/org"), {
     engine: "sqlite",
     dir: "/org/data",
     docs: "database",
+    storage: "https://x.r2.dev/org",
   });
   assertEquals(databaseOf("/org/data", "postgres://liquen@db:5432/liquen?schema=acme"), {
     engine: "postgres",
@@ -23,6 +25,7 @@ Deno.test("databaseOf: sqlite is SQLite under the data root; a URL is Postgres, 
     schema: "acme",
     dir: "/org/data",
     docs: "filesystem",
+    storage: "filesystem",
   });
   assertEquals(
     databaseOf("/org/data", "postgres://liquen@db:5432/liquen?sslmode=require", "database"),
@@ -32,6 +35,7 @@ Deno.test("databaseOf: sqlite is SQLite under the data root; a URL is Postgres, 
       schema: "public",
       dir: "/org/data",
       docs: "database",
+      storage: "filesystem",
     },
   );
 });

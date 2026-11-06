@@ -557,6 +557,28 @@ Deno.test("deployment.docs: filesystem, or database — the docs table of the st
   });
 });
 
+Deno.test("deployment.storage: filesystem, or a bucket's https URL with no credential in it", async () => {
+  await withDir(async (root) => {
+    const write = (storage: unknown) =>
+      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ deployment: { storage } }));
+    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    assertEquals((await readConfig(root)).deployment.storage, "filesystem");
+    await write("https://acct.r2.cloudflarestorage.com/org");
+    assertEquals(
+      (await readConfig(root)).deployment.storage,
+      "https://acct.r2.cloudflarestorage.com/org",
+    );
+    await write("http://127.0.0.1:59000/org");
+    assertEquals((await readConfig(root)).deployment.storage, "http://127.0.0.1:59000/org");
+    for (const bad of ["s3", "http://acct.r2.cloudflarestorage.com/org", "https://x.io/", null]) {
+      await write(bad);
+      await assertRejects(() => readConfig(root), Error, "a bucket's https URL");
+    }
+    await write("https://key:secret@acct.r2.cloudflarestorage.com/org");
+    await assertRejects(() => readConfig(root), Error, "STORAGE_ACCESS_KEY_ID");
+  });
+});
+
 Deno.test("deployment.sandbox: null, or a gateway's https URL when the docs are in the database", async () => {
   await withDir(async (root) => {
     const write = (sandbox: unknown, docs = "database") =>

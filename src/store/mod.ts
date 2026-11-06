@@ -8,7 +8,8 @@
  * deployment starts on; a Postgres URL is a schema of that database, the same ports over a
  * server (`src/store/pg/`). The docs are files under the data root unless the catalog puts
  * them in the database's docs table, on either engine — a switch of its own, so an org whose log
- * moved keeps its docs where they are.
+ * moved keeps its docs where they are. The files the org keeps are under `data/storage`
+ * unless `deployment.storage` names a bucket, reached over the S3 API (`s3.ts`).
  *
  * The URL carries no password: the driver reads `PGPASSWORD`, libpq's own name, and the
  * catalog stays a declaration git can hold. A `schema` query parameter names the schema,
@@ -24,6 +25,7 @@ import { openPgCredentials } from "./pg/credentials.ts";
 import { openPgDocs } from "./pg/docs.ts";
 import { onFiles, type Relaybed } from "./seed.ts";
 import { fileStorage, type Storage } from "./storage.ts";
+import { s3AddressOf, s3Storage } from "./s3.ts";
 import { readConfig } from "../config.ts";
 
 /** The docs as a process opens them: the read port, the bed the seeds go in, and — where
@@ -48,13 +50,12 @@ export interface Store {
  *  rows live, and where the docs are. `dir` is the org's data root: the SQLite files are
  *  under it, and so are the docs when they are files. */
 export type Database =
-  | { engine: "sqlite"; dir: string; docs: "filesystem" | "database" }
-  | {
-    engine: "postgres";
-    url: string;
-    schema: string;
+  & ({ engine: "sqlite" } | { engine: "postgres"; url: string; schema: string })
+  & {
     dir: string;
     docs: "filesystem" | "database";
+    /** `deployment.storage`: `filesystem`, or a bucket's URL over the S3 API. */
+    storage?: string;
   };
 
 /** The address `database` names, with the files under `dir`. */
@@ -62,12 +63,13 @@ export function databaseOf(
   dir: string,
   database: string,
   docs: "filesystem" | "database" = "filesystem",
+  storage = "filesystem",
 ): Database {
-  if (database === "sqlite") return { engine: "sqlite", dir, docs };
+  if (database === "sqlite") return { engine: "sqlite", dir, docs, storage };
   const url = new URL(database);
   const schema = url.searchParams.get("schema") ?? "public";
   url.searchParams.delete("schema");
-  return { engine: "postgres", url: url.toString(), schema, dir, docs };
+  return { engine: "postgres", url: url.toString(), schema, dir, docs, storage };
 }
 
 /** The store at an address. */
@@ -81,7 +83,13 @@ export function storeAt(at: Database): Store {
     ...docs,
     bed: { laid: docs.laid, lay: docs.lay, text: docs.text, swap: docs.swap },
   });
-  const storage = () => fileStorage(at.dir);
+  // the object store, opened once and on first need: a bucket's keys are read then, so a
+  // process that keeps no file never asks for them
+  let kept: Storage | undefined;
+  const storage = () =>
+    kept ??= at.storage === undefined || at.storage === "filesystem"
+      ? fileStorage(at.dir)
+      : s3Storage(s3AddressOf(at.storage));
   if (at.engine === "sqlite") {
     return {
       log: (opts) => openLog(`${at.dir}/log`, opts),
@@ -102,5 +110,12 @@ export function storeAt(at: Database): Store {
 /** The store of the org at `root`: its catalog read, the address resolved. */
 export async function openStore(root: string): Promise<Store> {
   const catalog = await readConfig(root);
-  return storeAt(databaseOf(`${root}/data`, catalog.deployment.database, catalog.deployment.docs));
+  return storeAt(
+    databaseOf(
+      `${root}/data`,
+      catalog.deployment.database,
+      catalog.deployment.docs,
+      catalog.deployment.storage,
+    ),
+  );
 }

@@ -196,6 +196,7 @@ export interface OrgConfig {
   deployment: {
     database: string; // "sqlite" ⇒ SQLite in data/log; a Postgres URL ⇒ that database
     docs: "filesystem" | "database"; // where the docs live: files under data/, or the database's docs table
+    storage: string; // "filesystem" ⇒ data/storage; a bucket's URL ⇒ that bucket, over the S3 API
     sandbox: string | null; // null ⇒ shells on this machine; "bwrap" ⇒ in bubbles; a URL ⇒ that gateway's
     mounts: string[]; // more of this machine a bubble shows, read-only unless `:rw`
     sandboxSleepMinutes: number; // a gateway sandbox's life after its last bash call
@@ -298,6 +299,15 @@ const DEPLOYMENT: Entry[] = [
     doc: "where the docs live: filesystem ⇒ files under data/, which an agent reads and " +
       "writes from its shell; database ⇒ the docs table of the database above, SQLite or " +
       "Postgres, which an agent reaches through its read · write · edit tools",
+  },
+  {
+    key: "storage",
+    value: "filesystem",
+    doc: 'where the files the org receives and sends are kept: "filesystem" ⇒ under ' +
+      "data/storage; a bucket's URL, path-style (https://<account>.r2.cloudflarestorage.com" +
+      "/<bucket>, ?region= where the service wants one) ⇒ that bucket, over the S3 API (R2, " +
+      "S3, Supabase Storage), its keys read from STORAGE_ACCESS_KEY_ID and " +
+      "STORAGE_SECRET_ACCESS_KEY. An agent reads a file through its door, either way",
   },
   {
     key: "sandbox",
@@ -1110,6 +1120,12 @@ function validateOrg(cfg: OrgConfig, path: string): void {
   if (docs) {
     throw new Error(`${path}: deployment.docs ${docs} (got ${JSON.stringify(where.docs)})`);
   }
+  const storage = checkStorage(where.storage);
+  if (storage) {
+    throw new Error(
+      `${path}: deployment.storage ${storage} (got ${JSON.stringify(where.storage)})`,
+    );
+  }
   const sandbox = checkSandbox(where.sandbox, where.docs);
   if (sandbox) {
     throw new Error(
@@ -1175,6 +1191,32 @@ export function checkPublicUrl(v: unknown): string | null {
  *  store `deployment.database` names. A complaint, or null when the value is fine. */
 export function checkDocs(v: unknown): string | null {
   return v === "filesystem" || v === "database" ? null : 'must be "filesystem" or "database"';
+}
+
+/** What `deployment.storage` may hold: `filesystem`, or a bucket's URL over the S3 API,
+ *  https — plain http only toward this machine — with the bucket as its first path segment
+ *  and no credential in it. A complaint, or null when the value is fine. */
+export function checkStorage(v: unknown): string | null {
+  if (v === "filesystem") return null;
+  const shape = 'must be "filesystem" or a bucket\'s https URL (https://<endpoint>/<bucket>)';
+  let url: URL;
+  try {
+    url = new URL(String(v));
+  } catch {
+    return shape;
+  }
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  if (
+    typeof v !== "string" || !(url.protocol === "https:" || (local && url.protocol === "http:"))
+  ) {
+    return shape;
+  }
+  if (!url.pathname.split("/").some(Boolean)) return shape;
+  if (url.username || url.password) {
+    return "must not carry a credential — STORAGE_ACCESS_KEY_ID and STORAGE_SECRET_ACCESS_KEY " +
+      "in .env hold it";
+  }
+  return null;
 }
 
 /** What `deployment.sandbox` may hold: null, `"bwrap"`, or the https URL of a sandbox gateway —

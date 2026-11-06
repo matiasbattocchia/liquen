@@ -1603,7 +1603,9 @@ tolerated on input), `http(s)://` = an external link, passed through untouched â
 downloaded nor uploaded broker-side (`size` is unknowable there, hence nullable). No host
 path enters the log. Inbound uris are always kept â€” ingest downloads BROKER-side with the
 connection's credential into the object store (`storage://media/<hash>.<ext>`,
-`src/store/storage.ts`, behind one port: files under `data/storage/` for now). The hash
+`src/store/storage.ts`, behind one port): files under `data/storage/`, or a bucket over
+the S3 API when `deployment.storage` names one (`src/store/s3.ts`: R2, S3, Supabase
+Storage; SigV4 with the runtime's crypto, its keys in `.env`). The hash
 is the bytes' SHA-256 cut to 32 hex in one namespace for the org, so re-downloads, the
 dispatch echo and a file forwarded to three chats converge on one object; the extension
 is the bytes' own, sniffed when the wire labels them `application/octet-stream`. Platform

@@ -2,3 +2,5 @@
 # ANTHROPIC_API_KEY=
 # PGPASSWORD=            # the store's password, when deployment.database names Postgres
 # SANDBOX_API_KEY=       # the sandbox gateway's bearer token, when deployment.sandbox names one
+# STORAGE_ACCESS_KEY_ID=      # the bucket's keys, when deployment.storage names one
+# STORAGE_SECRET_ACCESS_KEY=

@@ -168,6 +168,7 @@ export async function start(
     dir,
     config.catalog?.deployment.database ?? "sqlite",
     config.catalog?.deployment.docs ?? "filesystem",
+    config.catalog?.deployment.storage ?? "filesystem",
   ));
   const log = await store.log();
   const docs = await store.docs(); // the doc cascade, files or the table (§8, §9)
