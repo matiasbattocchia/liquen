@@ -96,10 +96,10 @@ export async function resolveAgent(
  *  keep connecting until it binds; the daemon takes itself down (the linger) when the
  *  last attachment is gone. An observer (`raise: false`) raises nothing: a daemon's boot
  *  answers whatever the log owes, and watching must never be what made the agent work —
- *  so the refusal is its answer. */
+ *  so the refusal is its answer. `raised` hears when this client raised one. */
 export async function attach(
   a: Attached,
-  opts: { raise?: boolean } = {},
+  opts: { raise?: boolean; raised?: () => void } = {},
 ): Promise<Deno.UnixConn> {
   const path = `${a.dir}/agents/${a.target}/door.sock`;
   try {
@@ -120,6 +120,7 @@ export async function attach(
     stderr: "null",
   }).spawn();
   daemon.unref(); // its life is its attachments, never this process's exit
+  opts.raised?.();
   const deadline = Date.now() + ATTACH_TIMEOUT_MS;
   for (;;) {
     try {

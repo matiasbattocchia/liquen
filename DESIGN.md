@@ -2806,7 +2806,9 @@ remembers it remembers out of the log, never out of a file beside it. The daemon
 from the same connections:
 `liquen start`'s main runs regardless, while one an interface raised (`main.ts --ephemeral`)
 reaps itself after a linger with zero attachments — and "is one running?" is a
-`connect()`, never a `stat()`.
+`connect()`, never a `stat()`. That main runs alone, with no connectors, edge or tunnel,
+so the REPL that raised it says on entry that the world is not connected: a send waits in
+the log until the org is started.
 
 **Watching is a tail that says nothing.** `liquen log tail` is the door's plainest client: it
 opens the session's tail with `observe` and sends no other verb — no line, no verdict, no

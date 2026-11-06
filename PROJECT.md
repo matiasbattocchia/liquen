@@ -6274,6 +6274,9 @@ tenth or less, and a read starts the hour again.
   `--scopes` or `?scopes=` without the mail read scope, a revoke first on Google, whose
   consent keeps what was granted before, and no mail sent on Microsoft without
   `Mail.ReadWrite`.
+- **The REPL says when the world is not connected.** `attach` tells its caller when it
+  raised main (`raised`), and a REPL that did says so under its banner, naming `liquen
+  stop` then `liquen start -D`, since a start refuses while main runs alone.
 
 ### What is open (2026-10-20)
 

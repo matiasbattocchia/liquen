@@ -54,12 +54,6 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 Decided 6 Nov 2026.
 
-## 10. The REPL says when the world is not connected
-
-A REPL that raised main alone (`attach.ts:100`) says so on entry: no connectors, edge or
-tunnel run, a send waits in the log, and `liquen start -D` brings the org up. Main raised
-alone stays as it is, a desk that ends 30 seconds after its last client.
-
 ## 11. An agent's line in a steering room is an agent's
 
 A steering room stays a surface of the mind: its lines fan in and the mind's fan out, as

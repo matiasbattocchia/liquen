@@ -73,7 +73,9 @@ await entry(async () => {
   const a = await resolveAgent(args[0], org.dir, tune);
   const home = sessionAddress(a.target, session); // refuses a malformed session name
 
-  const conn = await attach(a);
+  // main raised here runs alone: the world reaches it only once the org is started
+  let alone = false;
+  const conn = await attach(a, { raised: () => alone = true });
   let leaving = false;
 
   // the screen owns the line being typed, so the transcript may print while it is typed;
@@ -187,6 +189,13 @@ await entry(async () => {
       a.paused ? " · PAUSED (mind: false — reads only)" : ""
     } · /y[once|conv|conn|always|all] [handle] /n /cancel /quit${RESET}\n`,
   );
+  if (alone) {
+    write(
+      `${DIM}the world is not connected: main runs alone, with no connectors, edge or ` +
+        "tunnel, and a send waits in the log; `liquen stop` then `liquen start -D` " +
+        `brings the org up${RESET}\n`,
+    );
+  }
   p.recap(recalled);
 
   for await (const line of screen.lines()) {
