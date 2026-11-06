@@ -6301,7 +6301,7 @@ tenth or less, and a read starts the hour again.
   - **Open**: a job started before this change holds the old proxy URL and a `mu-grant-…`
     handle, so its requests are refused after the upgrade; it is restarted by hand.
 
-### Media is kept in an object store (2026-11-06) — LANDING
+### Media is kept in an object store (2026-11-06) — LANDED
 
 The storage batch of `CHANGES.md`, a step at a time.
 
@@ -6342,7 +6342,10 @@ The storage batch of `CHANGES.md`, a step at a time.
   (`bitnamilegacy/minio`; Docker Hub and Quay no longer serve MinIO's own image): a round
   trip, a listing, collection, and a forged secret refused. `LIQUEN_TEST_S3` runs it.
   The same suite passes on R2, against a bucket of the Cloudflare account
-  (`https://<account>.r2.cloudflarestorage.com/<bucket>`, region `auto`).
+  (`https://<account>.r2.cloudflarestorage.com/<bucket>`, region `auto`). `new` ran on R2
+  for a while: a received picture landed in the bucket and nowhere on disk, the agent saw
+  it when asked, and a voice note was transcribed from the bucket's bytes. It went back to
+  `filesystem` after; what it kept meanwhile stays in the bucket.
 - **The policy on `storage.objects`.** On Postgres, `object_readable(uri)` is the agent's
   history law over `refs`, run as the store's owner so the agent role gets the answer and
   never the rows. Where the database keeps Supabase's bucket index, the log lays a policy
