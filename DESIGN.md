@@ -3166,8 +3166,8 @@ true for exec (kernel handles it), false for control (only harness/human authori
      live** (`src/proxy/`, mandatory at start): every shell, bare or in its bubble, is
      issued `HTTPS_PROXY` and `HTTP_PROXY` (both cases of the latter, since curl reads
      plain HTTP's only lowercase) with nothing left out of them, and a
-     trust file — the system's roots followed by the liquen CA, which ships with the source
-     (`src/proxy/ca.pem` + `ca.key`): nothing trusts it but the children we hand it to, so
+     trust file — the system's roots followed by the liquen CA, minted once per install
+     under `data/system/`: nothing trusts it but the children we hand it to, so
      it is plumbing that makes a tool accept our proxy, not a credential. The file is
      handed under every name the common clients read a bundle by (`SSL_CERT_FILE`,
      `REQUESTS_CA_BUNDLE`, `PIP_CERT`; `NODE_EXTRA_CA_CERTS` and `DENO_CERT` get the CA

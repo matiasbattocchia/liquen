@@ -58,6 +58,40 @@ Deno.test("openCA: the CA persists — reopening reuses the same root", async ()
   }
 });
 
+Deno.test("openCA: each install mints a root of its own, its key readable by the owner alone", async () => {
+  const [one, two] = [await Deno.makeTempDir(), await Deno.makeTempDir()];
+  try {
+    const [a, b] = [await openCA(one), await openCA(two)];
+    assert(await Deno.readTextFile(a.caPath) !== await Deno.readTextFile(b.caPath));
+    assertEquals((await Deno.stat(`${one}/system/ca.key`)).mode! & 0o777, 0o600);
+    const text = await certText(await Deno.readTextFile(a.caPath));
+    assert(text.includes("CA:TRUE"), "the root must be a CA");
+    // a leaf from one install does not verify against the other's root
+    assert(!(await verify(b.caPath, (await a.leafFor("api.github.com")).cert)).ok);
+  } finally {
+    await Deno.remove(one, { recursive: true });
+    await Deno.remove(two, { recursive: true });
+  }
+});
+
+Deno.test("openCA: a pair missing its key is minted anew", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const first = await openCA(dir);
+    const caPem = await Deno.readTextFile(first.caPath);
+    await Deno.remove(`${dir}/system/ca.key`);
+    const second = await openCA(dir);
+    assert(await Deno.readTextFile(second.caPath) !== caPem);
+    assert((await verify(second.caPath, (await second.leafFor("x.io")).cert)).ok);
+    assertEquals([...Deno.readDirSync(`${dir}/system`)].map((e) => e.name).sort(), [
+      "ca.key",
+      "ca.pem",
+    ]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("openCA: the same host is minted once (cached)", async () => {
   const dir = await Deno.makeTempDir();
   try {

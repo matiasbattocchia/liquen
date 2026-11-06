@@ -6246,6 +6246,10 @@ tenth or less, and a read starts the hour again.
   `backlogHours`, in place of a fixed day (`Clock.backlogHours`, `tick.ts`).
 - **Removing an account says where to finish.** `--remove` names where each service's side
   is revoked: Slack, Google, Microsoft, WhatsApp and GitHub (`REVOKE_AT`, `remove.ts`).
+- **The proxy's CA is minted per install.** `openCA` makes the pair with openssl where it
+  is not whole under `data/system/`; the package ships none. An org that has its pair keeps
+  it, so the orgs running today keep the root they were laid; a new key there is a delete
+  of both files and a restart.
 
 ### What is open (2026-10-20)
 

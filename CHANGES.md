@@ -54,12 +54,6 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 Decided 6 Nov 2026.
 
-## 3. The proxy's CA is minted per install
-
-`openCA` makes the key and the certificate with openssl where none is laid under
-`data/system/`, and the package ships neither (`src/proxy/ca.pem` and `ca.key` go). An org
-that has its pair keeps it.
-
 ## 4. Containers carry tzdata
 
 `src/scaffold/Dockerfile` and `sandbox/cloudflare/Dockerfile` install `tzdata`, so `date` in
