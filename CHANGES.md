@@ -54,13 +54,6 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 Decided 6 Nov 2026.
 
-## 2. Removing an account says where to finish
-
-`liquen connect --remove` names, per service, where the platform side is revoked, in place
-of the one line it prints for all (`remove.ts:56`): the workspace's installed apps for
-Slack, the account's third-party access for Google, the account's app permissions for
-Microsoft, the phone's linked devices for WhatsApp.
-
 ## 3. The proxy's CA is minted per install
 
 `openCA` makes the key and the certificate with openssl where none is laid under

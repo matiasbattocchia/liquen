@@ -42,7 +42,12 @@ Deno.test("a connection goes with its secret, and the service's section with its
     ["google:ana@x.io", "slack:T1:org", "media:sign"],
     ["google", "slack"],
   );
-  await removeConnection("google:ana@x.io", deps);
+  const said = await removeConnection("google:ana@x.io", deps);
+  assertEquals(
+    said.at(-1),
+    "google itself still holds the grant — revoke it in the account's third-party access " +
+      "(myaccount.google.com/connections) to end it",
+  );
   assertEquals(state.rows.map((r) => r.service), ["slack"]);
   assertEquals(state.keys, ["slack:T1:org", "media:sign"]);
   assertEquals(state.declared, ["slack"]);

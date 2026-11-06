@@ -312,8 +312,8 @@ row soft-deleted (the gate closes, the ingested history stays readable), its sec
 the vault unless another live connection shares it, and `connections.<service>` out of the
 catalog with the service's last connection. A token grant, which has no row, is removed by
 its vault key. The platform's side — the app install, the OAuth grant, the paired device —
-is revoked on the platform. `deno task start`
-runs every declared connection the same way: `src/connect/<name>/run.ts` if it ships,
+is revoked on the platform, and the door's last line says where. `deno task start` runs
+every declared connection the same way: `src/connect/<name>/run.ts` if it ships,
 else `<org>/connectors/<name>/run.ts`.
 
 ## 2. The split that decides everything: pushed content vs. bare change signal

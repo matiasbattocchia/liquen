@@ -14,11 +14,22 @@
  *                connection left, so `liquen start` spawns nothing for it.
  *
  * The platform's side stays as it is: the app install, the OAuth grant, the paired device
- * are the platform's to revoke.
+ * are the platform's to revoke, and the last line says where.
  */
 
 import type { Connections } from "../store/connections.ts";
 import type { Credentials } from "../store/credentials.ts";
+
+/** Where each service's side of a grant is revoked, as its owner finds it. */
+const REVOKE_AT: Record<string, string> = {
+  slack: "in the workspace's installed apps (Settings → Manage apps)",
+  google: "in the account's third-party access (myaccount.google.com/connections)",
+  microsoft: "in the account's app permissions (myapps.microsoft.com for a work account, " +
+    "account.microsoft.com/privacy/app-access for a personal one)",
+  whatsapp: "in the phone's linked devices (WhatsApp → Linked devices)",
+  github: "in the installed GitHub Apps of the org or account, and a member's leg in " +
+    "github.com/settings/apps/authorizations",
+};
 
 export interface RemoveDeps {
   store: Pick<Connections, "connections" | "deleteConnections">;
@@ -53,7 +64,8 @@ export async function removeConnection(target: string, deps: RemoveDeps): Promis
         );
       }
     }
-    said.push(`${row.service} itself still holds the grant — revoke it there to end it`);
+    const where = REVOKE_AT[row.service] ?? "there";
+    said.push(`${row.service} itself still holds the grant — revoke it ${where} to end it`);
     return said;
   }
   const owner = live.find((r) => r.credentialKey === target);

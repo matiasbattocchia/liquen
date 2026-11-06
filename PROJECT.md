@@ -6244,6 +6244,8 @@ tenth or less, and a read starts the hour again.
 
 - **A reminder's grace is the backlog.** The clock fires what came due within
   `backlogHours`, in place of a fixed day (`Clock.backlogHours`, `tick.ts`).
+- **Removing an account says where to finish.** `--remove` names where each service's side
+  is revoked: Slack, Google, Microsoft, WhatsApp and GitHub (`REVOKE_AT`, `remove.ts`).
 
 ### What is open (2026-10-20)
 
