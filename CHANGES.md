@@ -52,7 +52,7 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 # Then: small fixes
 
-Decided 6 Nov 2026, from the review of `OPEN.md`.
+Decided 6 Nov 2026.
 
 ## 1. A reminder's grace is the backlog
 
