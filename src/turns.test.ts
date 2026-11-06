@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { openedBy, price, readTurns, turnLine, turnsOf } from "./turns.ts";
+import { openedBy, price, readTurns, type Turn, turnLine, turnsOf, walkTurns } from "./turns.ts";
 import { openLog } from "./store/log.ts";
 import type { Draft, Event } from "./types.ts";
 
@@ -225,6 +225,60 @@ Deno.test("turnsOf: an error mid-act is not the end when a step follows; a trail
   // and with no end at all, the turn is still open
   const open = turnsOf([hi, ...s1], REF);
   assertEquals(open[0].end, "open");
+});
+
+Deno.test("walkTurns: a walk back a few rows at a time reads the turns a whole room does", async () => {
+  const rows: Event[] = [];
+  for (let n = 1; n <= 6; n++) {
+    const hi = said(`tarea ${n}`);
+    rows.push(hi);
+    // the fourth turn runs longer than any page below
+    for (let k = 1; k <= (n === 4 ? 6 : 1); k++) {
+      const s = step(`t${n}.${k}`, rows.at(-1)!.id, { calls: ["ls"], stop: "tool_use" });
+      rows.push(...s, result(s[1]));
+    }
+    rows.push(...step(`t${n}.end`, rows.at(-1)!.id, { text: "listo" }));
+    if (n === 2) {
+      // its checkpoint lands after the next turn's opener, before its first step
+      rows.push(said("tarea 3"), {
+        id: nextId(),
+        ts: at(),
+        type: "summary",
+        agent: self,
+        envelope: here(),
+        payload: { turn_id: "c2", covers: [hi.id, rows.at(-1)!.id] },
+        parts: [{ type: "text", kind: "text", text: "## Open" }],
+      } as Event);
+      n++;
+      const s = step(`t3.1`, rows.at(-2)!.id, { text: "hecho" });
+      rows.push(...s);
+    }
+  }
+  const room: Parameters<typeof walkTurns>[0] = {
+    read: (q = {}) => {
+      const older = rows.filter((e) => q.beforeId === undefined || e.id < q.beforeId);
+      return Promise.resolve(older.slice(Math.max(0, older.length - (q.limit ?? older.length))));
+    },
+    spend: () => Promise.resolve([]),
+  };
+  const shape = (t: Turn) => [t.id, t.steps.length, t.opener.id, t.checkpoint?.id, t.end];
+  const whole = turnsOf(rows, REF).map(shape);
+  assertEquals(whole.length, 6);
+  assertEquals(typeof whole[1][3], "string"); // the second turn's checkpoint
+  for (const page of [3, 5, 7, 1_000]) {
+    const walked: Turn[] = [];
+    for await (const t of walkTurns(room, REF, { page })) walked.push(t);
+    assertEquals(walked.toReversed().map(shape), whole, `page ${page}`);
+  }
+  // a reader stops the walk where it wants: the last two, or back to a time
+  const two = await readTurns(room, REF, 2, 3);
+  assertEquals(two.map((t) => t.id), ["t5.1", "t6.1"]);
+  const since = turnsOf(rows, REF)[3].ended;
+  assertEquals((await readTurns(room, REF, undefined, 4, { since })).map((t) => t.id), [
+    "t4.1",
+    "t5.1",
+    "t6.1",
+  ]);
 });
 
 Deno.test("readTurns: off the store — priced from usage, an opener outside the room looked up by id", async () => {

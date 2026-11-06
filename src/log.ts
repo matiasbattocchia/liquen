@@ -16,7 +16,7 @@ import { entry } from "./entry.ts";
 import { hhmm } from "./render.ts";
 import { MIND, sessionAddress } from "./session.ts";
 import { count, defaultAgent, readTurns, type Turn, turnLine, turnsOf } from "./turns.ts";
-import { exportSessions, exportTurn, findTurn, readAll, sessionsIn } from "./export.ts";
+import { exportSessions, exportTurn, readAll, seekTurn, sessionsIn } from "./export.ts";
 import { renderMarkdown } from "./md.ts";
 import { runTail, USAGE as TAIL_USAGE } from "./tail.ts";
 import { dollars } from "./prices.ts";
@@ -237,8 +237,7 @@ interface Ctx {
 async function namedTurn(c: Ctx): Promise<Turn> {
   const agentId = c.args.agent ?? defaultAgent(Object.keys(c.catalog.agents));
   const ref = { agentId, id: c.args.session ?? MIND };
-  const turns = await readTurns(c.log, ref, undefined, undefined, { pages: 50 });
-  const t = findTurn(turns, c.args.turn!);
+  const t = await seekTurn(c.log, ref, c.args.turn!);
   if (!t) {
     throw new Error(
       `no turn "${c.args.turn}" in ${sessionAddress(ref.agentId, ref.id)} — ` +
@@ -284,7 +283,7 @@ async function turnsView(c: Ctx): Promise<void> {
   for (const agentId of c.agents) {
     const turns = await readTurns(c.log, { agentId, id: session }, limit, undefined, {
       prices: c.catalog.system.prices,
-      ...(c.args.since ? { pages: 50 } : {}),
+      since: c.args.since,
     });
     all.push(...turns);
   }
@@ -446,14 +445,11 @@ async function requestsView(c: Ctx): Promise<void> {
   // the turns the requests were made in: each agent's turns in the window
   const turns: Turn[] = [];
   for (const agentId of new Set(rows.flatMap((q) => q.agent_id ? [q.agent_id] : []))) {
-    const all = await readTurns(
-      c.log,
-      { agentId, id: c.args.session ?? MIND },
-      undefined,
-      undefined,
-      { pages: 50 },
+    turns.push(
+      ...await readTurns(c.log, { agentId, id: c.args.session ?? MIND }, undefined, undefined, {
+        since: window.after,
+      }),
     );
-    turns.push(...all.filter((t) => !window.after || t.ended >= window.after));
   }
   const of = turnsOfRequests(rows, turns);
   const shown = rows.map((q, i) => ({ ...q, turn: of[i] })).filter((q) =>

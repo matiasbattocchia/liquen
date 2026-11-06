@@ -22,12 +22,12 @@ import {
   openedBy,
   openerOf,
   price,
-  readTurns,
   rowById,
   took,
   type Turn,
   type TurnReader,
   turnsOf,
+  walkTurns,
 } from "./turns.ts";
 import { jsonRecap } from "./tail.ts";
 import type { Price } from "./prices.ts";
@@ -41,6 +41,16 @@ export function findTurn(turns: Turn[], key: string): Turn | undefined {
   return turns.findLast((t) =>
     is(t.id) || t.steps.some(is) || (key >= t.span.from && key <= t.span.to)
   );
+}
+
+/** The turn `key` names in a session, walking back from the newest until it is found. */
+export async function seekTurn(
+  log: TurnReader,
+  ref: SessionRef,
+  key: string,
+  prices?: Price[],
+): Promise<Turn | undefined> {
+  for await (const t of walkTurns(log, ref, { prices })) if (findTurn([t], key)) return t;
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -194,9 +204,6 @@ export function transcript(
   return out.join("\n") + "\n";
 }
 
-/** How many of a turn's rows one export reads at most. */
-const ROWS = 20_000;
-
 /** How many rows one page of a read is. */
 const PAGE = 2_000;
 
@@ -215,6 +222,24 @@ export async function readAll(
     });
     rows = [...older, ...rows];
     if (older.length < PAGE) return rows;
+  }
+}
+
+/** A room's rows from `from` through `to`, oldest first, read back a page at a time. */
+async function spanRows(
+  log: Pick<TurnReader, "read">,
+  conversation: string,
+  from: string,
+  to: string,
+): Promise<Event[]> {
+  let rows: Event[] = [];
+  let before = `${to}0`; // ids are one length: only `to` itself sorts between it and this
+  for (;;) {
+    const older = await log.read({ conversation, beforeId: before, limit: PAGE });
+    const inside = older.filter((e) => e.id >= from);
+    rows = [...inside, ...rows];
+    if (older.length < PAGE || inside.length < older.length) return rows;
+    before = older[0].id;
   }
 }
 
@@ -338,7 +363,7 @@ function isTurn(t: Turn, key: string): boolean {
   return findTurn([t], key) === t;
 }
 
-/** One turn as markdown, found by `key` through `readTurns`. */
+/** One turn as markdown, found by `key` through `seekTurn`. */
 export async function exportTurn(
   log: TurnReader,
   ref: { agentId: string; id: string },
@@ -346,8 +371,7 @@ export async function exportTurn(
   zone?: string,
   prices?: Price[],
 ): Promise<string> {
-  const turns = await readTurns(log, ref, undefined, undefined, { prices });
-  const turn = findTurn(turns, key);
+  const turn = await seekTurn(log, ref, key, prices);
   if (!turn) {
     throw new Error(
       `no turn "${key}" in ${
@@ -356,8 +380,7 @@ export async function exportTurn(
     );
   }
   const conversation = sessionAddress(ref.agentId, ref.id);
-  const rows = (await log.read({ conversation, beforeId: `${turn.span.to}0`, limit: ROWS }))
-    .filter((e) => e.id >= turn.span.from);
+  const rows = await spanRows(log, conversation, turn.span.from, turn.span.to);
   if (turn.opener.id && !rows.some((e) => e.id === turn.opener.id)) {
     const opener = await rowById(log, turn.opener.id);
     if (opener) rows.unshift(opener);

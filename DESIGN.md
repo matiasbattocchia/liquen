@@ -2826,7 +2826,10 @@ look that opened it to the closing, terminal error or cut that ended it, its ope
 news its first step read last (`extra.consumed`), its cost the spend its steps metered.
 That one reading is main's line in the run log when a session falls from busy to idle,
 `liquen log turns` over history, the turns `liquen status` reports beside the lease, and the
-document `liquen log export` writes of one.
+document `liquen log export` writes of one. The room is walked back by id, and each turn is
+emitted once the rows before it are read and let go once emitted, so a read reaches as far
+back as the room goes and holds one turn: the reader stops it at a count, a time or the
+turn it names.
 
 **What a turn read is a hash per input, stamped when it changes.** A step's request is
 made of documents, tool specs, the programs on PATH, the agent's settings and the package;

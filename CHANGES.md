@@ -54,13 +54,6 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 Decided 6 Nov 2026.
 
-## 7. `log turns` walks a cursor
-
-`readTurns` (`turns.ts:368`) walks back by id, keeps only the turn it is assembling, and
-emits each one it finishes; it stops at the limit, at `--since`, or at the turn asked for.
-`PAGES` and the `pages: 50` of the views go, as does `ROWS` in `export.ts`: no window bounds
-what a read reaches, and memory holds one turn.
-
 ## 8. One run log, bounded
 
 Whatever runs the org writes `data/run/liquen.log`, through one function: the supervisor

@@ -6259,6 +6259,10 @@ tenth or less, and a read starts the hour again.
   **Open**: the running bridge takes it at its next build and restart.
 - **A connector never heard reads as down.** `downOn` reads a row with no `heard_at`, linked
   `SILENT_AFTER_MS` ago or more, as `connector down, never heard` since `connected_at`.
+- **`log turns` walks a cursor.** `walkTurns` reads the room back by id and yields each
+  turn once the rows before it are read, letting its rows go; `readTurns` and `seekTurn`
+  stop it at a count, `--since` or the turn named. `PAGES`, the views' `pages: 50` and
+  export's `ROWS` are gone: a turn's transcript reads its span whole (`spanRows`).
 
 ### What is open (2026-10-20)
 

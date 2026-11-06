@@ -357,40 +357,55 @@ export interface TurnReader {
 
 /** How many rows one page of the session's room is. */
 const PAGE = 2_000;
-/** How many pages a read walks back before it settles for what it has. */
-const PAGES = 10;
 
 /**
- * A session's last `want` turns (all of them when `want` is omitted, as far back as the
- * walk reaches), priced, their openers looked up where the room does not hold them. The
- * session's own room is read a page at a time, newest first; a turn the oldest page
- * starts in the middle of is left out, since its first steps are on a page not read.
+ * A session's turns, newest first, priced, their openers looked up where the room does not
+ * hold them. The room is read back by id a page at a time, and a turn is emitted once the
+ * rows before it are read: the oldest turn in hand may have begun on a page not read yet,
+ * so it waits for the next. The rows of the turns emitted are let go from the first step
+ * of the oldest of them on, which keeps every row the turns before it are read off (a
+ * checkpoint lands before the next turn's first step). What a walk holds is the turn
+ * being assembled and a page; it reaches as far back as the room goes, and the caller
+ * stops it by stopping to ask.
  */
-export async function readTurns(
+export async function* walkTurns(
   log: TurnReader,
   ref: SessionRef,
-  want?: number,
-  page = PAGE,
-  opts: { prices?: Price[]; pages?: number } = {},
-): Promise<Turn[]> {
+  opts: { page?: number; prices?: Price[] } = {},
+): AsyncGenerator<Turn> {
   const conversation = sessionAddress(ref.agentId, ref.id);
-  let rows: Event[] = [];
-  let whole = false;
-  let turns: Turn[] = [];
-  for (let n = 0; n < (opts.pages ?? PAGES); n++) {
+  const page = opts.page ?? PAGE;
+  let rows: Event[] = []; // the rows in hand, oldest first
+  let before: EventId | undefined; // the oldest row read
+  for (;;) {
     const older = await log.read({
       conversation,
       limit: page,
-      ...(rows.length ? { beforeId: rows[0].id } : {}),
+      ...(before ? { beforeId: before } : {}),
     });
+    if (older.length) before = older[0].id;
     rows = [...older, ...rows];
-    whole = older.length < page;
-    turns = turnsOf(rows, ref);
-    if (whole) break;
-    turns = turns.slice(1); // the oldest may have begun on a page not read
-    if (want !== undefined && turns.length >= want) break;
+    const whole = older.length < page;
+    const turns = turnsOf(rows, ref);
+    const done = whole ? turns : turns.slice(1);
+    if (done.length) {
+      await settle(log, ref, done, opts.prices);
+      for (const t of done.toReversed()) yield t;
+      const first = done[0];
+      const at = rows.findIndex((e) => e.id === first.id || stepOf(e, ref) === first.steps[0]);
+      rows = rows.slice(0, Math.max(0, at));
+    }
+    if (whole) return;
   }
-  if (want !== undefined) turns = turns.slice(Math.max(0, turns.length - want));
+}
+
+/** Openers the room does not hold, looked up by id; then the turns priced in one read. */
+async function settle(
+  log: TurnReader,
+  ref: SessionRef,
+  turns: Turn[],
+  prices?: Price[],
+): Promise<void> {
   for (const t of turns) {
     if (t.opener.kind !== "unknown" || t.opener.id === undefined) continue;
     const seen = await rowById(log, t.opener.id);
@@ -405,8 +420,28 @@ export async function readTurns(
     ...t.steps,
     ...(t.checkpoint?.turn_id ? [t.checkpoint.turn_id] : []),
   ]);
-  if (keys.length === 0) return turns;
-  return price(turns, await log.spend({ agentId: ref.agentId, turns: keys }), opts.prices);
+  if (keys.length) price(turns, await log.spend({ agentId: ref.agentId, turns: keys }), prices);
+}
+
+/**
+ * A session's last `want` turns, oldest first (all of them when `want` is omitted), back to
+ * the first that ended before `since` when one is given.
+ */
+export async function readTurns(
+  log: TurnReader,
+  ref: SessionRef,
+  want?: number,
+  page = PAGE,
+  opts: { prices?: Price[]; since?: string } = {},
+): Promise<Turn[]> {
+  const turns: Turn[] = [];
+  if (want === 0) return turns;
+  for await (const t of walkTurns(log, ref, { page, prices: opts.prices })) {
+    if (opts.since !== undefined && t.ended < opts.since) break;
+    turns.unshift(t);
+    if (want !== undefined && turns.length >= want) break;
+  }
+  return turns;
 }
 
 /** One row by its id, through the reader's law: the newest row at or below it — ids are
