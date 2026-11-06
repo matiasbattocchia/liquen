@@ -7,8 +7,10 @@
 # living state and stays on the volume.
 FROM denoland/deno:latest
 
+# openssl mints the egress proxy's CA and its leaves; tzdata lets `date` in a shell honor
+# the org's TZ
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates git curl jq acl && \
+    apt-get install -y --no-install-recommends ca-certificates git curl jq acl openssl tzdata && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -4,7 +4,7 @@
 FROM docker.io/cloudflare/sandbox:0.12.10
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tar git curl wget ripgrep fd-find jq procps sed gawk ca-certificates \
+    tar git curl wget ripgrep fd-find jq procps sed gawk ca-certificates tzdata \
     && ln -s "$(command -v fdfind)" /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 

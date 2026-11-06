@@ -54,11 +54,6 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 Decided 6 Nov 2026.
 
-## 4. Containers carry tzdata
-
-`src/scaffold/Dockerfile` and `sandbox/cloudflare/Dockerfile` install `tzdata`, so `date` in
-a shell honors the org's `TZ`.
-
 ## 5. The bridge unescapes incoming cards
 
 `parseVcard` in `open-bsp-whatsmeow` (outside this repo) reverses the escaping of `\`, `,`,

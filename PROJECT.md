@@ -6250,6 +6250,10 @@ tenth or less, and a read starts the hour again.
   is not whole under `data/system/`; the package ships none. An org that has its pair keeps
   it, so the orgs running today keep the root they were laid; a new key there is a delete
   of both files and a restart.
+- **The containers name tzdata.** Both Dockerfiles install it. Their bases (Debian trixie
+  under `denoland/deno`, and the Sandbox SDK's) already carry it, so `date` honored `TZ`
+  before; the line keeps it so when a base changes. The scaffold's image also gains
+  `openssl`, which its base lacks and the proxy needs for its CA and its leaves.
 
 ### What is open (2026-10-20)
 
