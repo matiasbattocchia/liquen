@@ -4,7 +4,8 @@
  */
 
 export const USAGE: Record<string, string> = {
-  aread: "aread <path> [offset] [limit] [maxBytes]",
+  aread: "aread <path|storage://uri> [offset] [limit] [maxBytes]; aread <storage://uri> --to " +
+    "<path> lands its bytes",
   awrite: "awrite <path>, the content on stdin",
   aedit: "aedit <path>, conflict-marker blocks on stdin, each marker on a line of its own: " +
     "<<<<<<<, the old text, =======, the new text, >>>>>>>",

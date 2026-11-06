@@ -583,6 +583,7 @@ export async function start(
           stand: (session, path) => sandbox.forAgent(a.config.agentId).session(session).stand(path),
           tune: (session, settings) => tune(a.config.agentId, session, settings),
           spend: (turns) => log.spend({ agentId: a.config.agentId, turns }),
+          storage,
         };
       }
       // a PAUSED agent (`mind: false`, §4): the door still opens on its rooms — a tail reads
@@ -593,6 +594,7 @@ export async function start(
         paused: true,
         port: (sessionId: string) => Promise.resolve(scoped(log, policyOf(p.agentId, sessionId))),
         spend: (turns) => log.spend({ agentId: p.agentId, turns }),
+        storage,
       };
     }),
   );

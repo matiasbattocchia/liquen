@@ -21,6 +21,8 @@ import { wire } from "./attach.ts";
 import { bind, type Mu } from "./script.ts";
 import { openLog } from "./store/log.ts";
 import { openFileDocs } from "./store/docs.ts";
+import { fileStorage } from "./store/storage.ts";
+import { kindOf, saveMedia } from "./store/media.ts";
 import { NOTHING, scoped } from "./policy.ts";
 import { type AgentConfig, answerCall, type Gate, relevant } from "./xi.ts";
 import { scripted } from "./testing.ts";
@@ -496,6 +498,76 @@ Deno.test({
       client.conn.close();
     } finally {
       await down();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "door: aread reads a kept object through it — only one an event the agent can read references",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
+    const log = await openLog(`${dir}/log`);
+    const storage = fileStorage(dir);
+    const mine = { sql: "events.conversation_address = $c", params: { c: "wa:mine" } };
+    const doors = await installDoors(dir, [{
+      ...AGENT,
+      port: () => Promise.resolve(scoped(log, { using: mine })),
+      storage,
+    }]);
+    const keep = async (bytes: Uint8Array, mime: string, room: string) => {
+      const file = await saveMedia(storage, bytes, { mime_type: mime });
+      await log.publish({
+        ...msg(room, ""),
+        parts: [{ type: "file", kind: kindOf(mime), file }],
+      } as Draft<MessageEvent>);
+      return file.uri;
+    };
+    const aread = async (...args: string[]) => {
+      const out = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "-A",
+          import.meta.resolve("./bin/afs.ts"),
+          "--door",
+          `${dir}/agents/ana/door.sock`,
+          "read",
+          ...args,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const said = new TextDecoder().decode(out.success ? out.stdout : out.stderr);
+      return said.trimEnd();
+    };
+    try {
+      const csv = await keep(new TextEncoder().encode("a,b\n1,2\n"), "text/csv", "wa:mine");
+      const png = await keep(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 9]), "image/png", "wa:mine");
+      const theirs = await keep(new TextEncoder().encode("secret"), "text/plain", "wa:theirs");
+      assertEquals(await aread(csv), "a,b\n1,2");
+      assertEquals(await aread(csv, "2"), "1,2");
+      // bytes the model sees ride as an attachment, by the uri itself
+      assertEquals(await aread(png), `[media image/png · 5 bytes]\n__MU_MEDIA__:${png}`);
+      // a program that needs a file gets one
+      assertEquals(
+        await aread(png, "--to", `${dir}/out/p.png`),
+        `${png} → ${dir}/out/p.png (5 bytes)`,
+      );
+      assertEquals([...await Deno.readFile(`${dir}/out/p.png`)], [0x89, 0x50, 0x4e, 0x47, 9]);
+      // an object no event the agent can read references is none of its business
+      assertStringIncludes(await aread(theirs), "no such file in storage, or not yours to read");
+      // and a shell with no door says so
+      const bare = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", import.meta.resolve("./bin/afs.ts"), "read", csv],
+        stderr: "piped",
+      }).output();
+      assertStringIncludes(new TextDecoder().decode(bare.stderr), "reaches no door to the store");
+    } finally {
+      await doors.close();
+      await log.close();
+      await Deno.remove(dir, { recursive: true });
     }
   },
 });

@@ -41,6 +41,11 @@
  *                                                          typed: `cancel`
  *                                                          cuts the session's running turn
  *                                                          (§2) → {ok, id}
+ *   object               {op, uri, session?}             → a kept object's bytes (§8), when
+ *                                                          an event the session can read
+ *                                                          references it → {ok, mime, data}
+ *                                                          (base64): what `aread` reads a
+ *                                                          `storage://` uri through
  *   tail          {op, from?, session?, cwd?, recall?,
  *                  model?, effort?, provider?,
  *                  observe?}                     → {ok, recalled?, spend?} — then the
@@ -90,6 +95,9 @@ import type {
 } from "./types.ts";
 import type { Log, UsageRow } from "./store/log.ts";
 import { newId } from "./store/id.ts";
+import { isStored, keyOf, type Storage } from "./store/storage.ts";
+import { mimeOf, sniffMime } from "./store/media.ts";
+import { encodeBase64 } from "@std/encoding/base64";
 import { LOCAL_CONNECTION, sessionAddress } from "./session.ts";
 import { silent } from "./render.ts";
 import { answer, isRefusal, refusalText, settle } from "./verdict.ts";
@@ -125,6 +133,9 @@ export interface DoorAgent {
   /** The agent's spend on these steps (`turn_id`s) — what an observing tail's recall is
    *  paid with. Absent: an observer's recall carries none. */
   spend?(turns: string[]): Promise<UsageRow[]>;
+  /** The object store (§8): what an `object` request reads, once the session's port says
+   *  an event it can read references the object. Absent: the door keeps none. */
+  storage?: Storage;
 }
 
 /** A session's model settings as an attachment names them — each one optional, the
@@ -535,6 +546,18 @@ async function handle(
       } satisfies Draft<ControlEvent>,
     );
     return { ok: true, id: row!.id };
+  }
+  if (req.op === "object") {
+    // a read, ruled by the law every read of the session's is: an event it can read
+    // references the object, or the object is not its to read
+    const uri = req.uri;
+    if (typeof uri !== "string" || !isStored(uri)) throw new Error("object needs a storage:// uri");
+    const bytes = agent.storage && (await port.read({ uri, limit: 1 })).length > 0
+      ? await agent.storage.get(keyOf(uri))
+      : null;
+    if (!bytes) throw new Error(`${uri}: no such file in storage, or not yours to read`);
+    const mime = mimeOf(keyOf(uri)) ?? sniffMime(bytes) ?? "application/octet-stream";
+    return { ok: true, mime, data: encodeBase64(bytes) };
   }
   if (req.op === "tail") {
     // where the client stands is where the session's shell starts (§9) — tried before the

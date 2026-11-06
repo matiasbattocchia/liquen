@@ -24,6 +24,8 @@ import { resolve } from "node:path";
 import { applyEdits, parseEdits } from "../exec/edit.ts";
 import { truncateHead } from "../exec/truncate.ts";
 import { isBytes, looksBinary, MEDIA_MARK, mimeOf, sniffMime } from "../store/media.ts";
+import { isStored } from "../store/storage.ts";
+import { decodeBase64 } from "@std/encoding/base64";
 import { report } from "../entry.ts";
 import { USAGE } from "./usage.ts";
 
@@ -79,7 +81,18 @@ async function read(
     const size = (await Deno.stat(path)).size;
     return `[media ${mime} · ${size} bytes]\n${MEDIA_MARK}${resolve(path)}`;
   }
-  const content = await Deno.readTextFile(path);
+  return page(await Deno.readTextFile(path), path, offset, limit, maxBytes);
+}
+
+/** Text as one read shows it: from `offset`, `limit` lines, head-truncated, with the line
+ *  that continues it named after `name`. */
+function page(
+  content: string,
+  name: string,
+  offset?: number,
+  limit?: number,
+  maxBytes?: number,
+): string {
   const lines = content === "" ? [] : content.split("\n");
   if (content.endsWith("\n")) lines.pop();
   const start = offset ? Math.max(0, offset - 1) : 0;
@@ -90,15 +103,71 @@ async function read(
   const t = truncateHead(window.join("\n"), { maxBytes, maxLines: limit });
   if (t.shownLines === 0 && window.length > 0) {
     return `[line ${start + 1} alone exceeds the byte cap (${maxBytes} bytes) — raise maxBytes: ` +
-      `aread ${path} ${start + 1} ${limit ?? ""}`.trimEnd() + " <bytes>]";
+      `aread ${name} ${start + 1} ${limit ?? ""}`.trimEnd() + " <bytes>]";
   }
   const shownEnd = start + t.shownLines;
   const footer = shownEnd < lines.length
-    ? `\n\n[showing lines ${start + 1}-${shownEnd} of ${lines.length} — continue: aread ${path} ${
+    ? `\n\n[showing lines ${start + 1}-${shownEnd} of ${lines.length} — continue: aread ${name} ${
       shownEnd + 1
     }]`
     : "";
   return t.text + footer;
+}
+
+/** A kept object, asked of the agent's door (`object`, door.ts): the door reads it only
+ *  when an event the agent can read references it. */
+async function fetchObject(door: string | undefined, uri: string): Promise<Uint8Array> {
+  if (!door) {
+    throw new Error(`${uri}: this shell reaches no door to the store`);
+  }
+  const conn = await Deno.connect({ transport: "unix", path: door });
+  try {
+    const ask = new TextEncoder().encode(JSON.stringify({ op: "object", uri }) + "\n");
+    for (let at = 0; at < ask.length;) at += await conn.write(ask.subarray(at));
+    let line = "";
+    const decoder = new TextDecoder();
+    const buf = new Uint8Array(64 * 1024);
+    while (!line.includes("\n")) {
+      const n = await conn.read(buf);
+      if (n === null) break;
+      line += decoder.decode(buf.subarray(0, n), { stream: true });
+    }
+    const reply = JSON.parse(line.slice(0, line.indexOf("\n"))) as {
+      ok?: boolean;
+      error?: string;
+      data?: string;
+    };
+    if (!reply.ok || reply.data === undefined) throw new Error(reply.error ?? `${uri}: no answer`);
+    return decodeBase64(reply.data);
+  } finally {
+    conn.close();
+  }
+}
+
+/** A kept object read as a file is: its text, a media mark for bytes the model sees as an
+ *  attachment, or — with `to` — its bytes landed at a path, for a program that needs a
+ *  file. */
+async function readObject(
+  door: string | undefined,
+  uri: string,
+  to: string | undefined,
+  offset?: number,
+  limit?: number,
+  maxBytes?: number,
+): Promise<string> {
+  const bytes = await fetchObject(door, uri);
+  if (to !== undefined) {
+    const dir = to.replace(/\/[^/]*$/, "");
+    if (dir && dir !== to) await Deno.mkdir(dir, { recursive: true });
+    await Deno.writeFile(to, bytes);
+    return `${uri} → ${to} (${bytes.length} bytes)`;
+  }
+  const mime = mimeOf(uri) ?? sniffMime(bytes.subarray(0, 1024));
+  if (mime && isBytes(mime)) return `[media ${mime} · ${bytes.length} bytes]\n${MEDIA_MARK}${uri}`;
+  if (!mime && looksBinary(bytes.subarray(0, 1024))) {
+    return `[binary · ${bytes.length} bytes — not a text file; aread ${uri} --to <path> lands it]`;
+  }
+  return page(new TextDecoder().decode(bytes), uri, offset, limit, maxBytes);
 }
 
 async function write(path: string): Promise<string> {
@@ -171,14 +240,31 @@ async function commit(path: string, content: string): Promise<void> {
   }
 }
 
-/** Entry for the shipped shims (`aread`/`awrite`/`aedit` dispatch here). */
-export async function run(args: string[]): Promise<number> {
-  const [cmd, path, ...rest] = args;
+/** A flag and its value, spliced out of `args`. */
+function flag(args: string[], name: string): string | undefined {
+  const at = args.indexOf(name);
+  if (at < 0) return undefined;
+  const [, value] = args.splice(at, 2);
+  if (value === undefined) throw new Error(`${name} needs a value`);
+  return value;
+}
+
+/** Entry for the shipped shims (`aread`/`awrite`/`aedit` dispatch here). An agent's shim
+ *  names the door of the agent its folder is laid for (`--door`, exec/bash.ts). */
+export async function run(given: string[]): Promise<number> {
+  const args = [...given];
   try {
+    const door = flag(args, "--door");
+    const to = flag(args, "--to");
+    const [cmd, path, ...rest] = args;
     if (!path) throw new Error(`usage: ${USAGE[`a${cmd}`] ?? "afs read|write|edit <path> [args]"}`);
     if (cmd === "read") {
       const [offset, limit, maxBytes] = rest.map((n) => n === undefined ? undefined : Number(n));
-      console.log(await read(path, offset, limit, maxBytes));
+      if (isStored(path)) {
+        console.log(await readObject(door, path, to, offset, limit, maxBytes));
+      } else if (to !== undefined) {
+        throw new Error(`--to lands a storage:// file; ${path} is one already`);
+      } else console.log(await read(path, offset, limit, maxBytes));
     } else if (cmd === "write") console.log(await write(path));
     else if (cmd === "edit") console.log(await edit(path));
     else throw new Error(`unknown command: ${cmd}`);

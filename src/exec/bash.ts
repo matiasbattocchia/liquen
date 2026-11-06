@@ -896,9 +896,12 @@ export function denoDir(): Promise<string> {
 }
 
 /** The harness's own tools, on disk where a shell can exec them: `aread`/`awrite`/`aedit`
- *  under `<dir>/system/bin`, each a shim running `bin/afs.ts` by the URL this package
- *  resolves it at, and `fetch` running `bin/fetch.ts` the same way. Laid on every boot —
- *  the shims are the package's, not the org's, and a package upgrade must reach them.
+ *  under `<dir>/system/bin/<agent>`, each a shim running `bin/afs.ts` by the URL this
+ *  package resolves it at, and `fetch` running `bin/fetch.ts` the same way. Laid on every
+ *  boot — the shims are the package's, not the org's, and a package upgrade must reach
+ *  them. The folder is the agent's own because `aread` names its door: a `storage://` uri
+ *  is read through the door of the agent the folder is laid for, so the shim's location is
+ *  the whole of its addressing, as a script's is.
  *
  *  A shim runs as the agent's uid, which has no module cache of its own and no way to fill
  *  one (the egress proxy does not front the registry, §9), so it reads THIS process's cache
@@ -909,9 +912,10 @@ export function denoDir(): Promise<string> {
  *  agent's own deno, with its own cache and the proxy's network. `fetch` dials the world
  *  through the proxy the environment names, trusting the liquen CA the same environment
  *  names as `DENO_CERT`. Returns the directory. */
-async function layShims(dir: string): Promise<string> {
-  const bin = `${dir}/system/bin`;
+async function layShims(dir: string, agentId: string): Promise<string> {
+  const bin = `${dir}/system/bin/${agentId}`;
   await Deno.mkdir(bin, { recursive: true });
+  const door = `${dir}/agents/${agentId}/door.sock`;
   const afs = import.meta.resolve("../bin/afs.ts");
   const http = import.meta.resolve("../bin/fetch.ts");
   const warmed = (url: string) =>
@@ -930,9 +934,10 @@ async function layShims(dir: string): Promise<string> {
     await Deno.chmod(path, 0o755);
   };
   for (const [name, verb] of [["aread", "read"], ["awrite", "write"], ["aedit", "edit"]]) {
+    const named = verb === "read" ? ` --door '${door}'` : "";
     await shim(
       name,
-      `exec env DENO_DIR='${cache}' deno run --cached-only --allow-read --allow-write '${afs}' ${verb} "$@"`,
+      `exec env DENO_DIR='${cache}' deno run --cached-only --allow-read --allow-write '${afs}'${named} ${verb} "$@"`,
     );
   }
   await shim(
@@ -983,7 +988,7 @@ export function shippedAt(dir: string): BinDir {
  *  already stands, so writing one is `awrite memories/x.md`, not a path it must be told.
  *  PATH is the doc cascade in binary form — the same widening scopes, narrowest FIRST so
  *  nothing below can shadow a contract the layer above must keep:
- *    `<dir>/system/bin`       the harness's own — `aread`/`awrite`/`aedit`/`fetch`, shims
+ *    `<dir>/system/bin/<id>`  the harness's own — `aread`/`awrite`/`aedit`/`fetch`, shims
  *                             every boot lays, each running the package's `bin/afs.ts` or
  *                             `bin/fetch.ts` where the package is (a checkout's file, the
  *                             registry's URL) out of the harness's own module cache, so the
@@ -1006,7 +1011,7 @@ export async function installExecGround(
   openBubble?: () => Promise<Bubble>,
 ): Promise<ExecGround> {
   const workspace = `${dir}/agents/${agentId}`;
-  const shipped = await layShims(dir);
+  const shipped = await layShims(dir, agentId);
   const binDirs = [shipped, `${dir}/shared/bin`, `${workspace}/bin`];
   const binPath = binDirs.join(":");
   await Deno.mkdir(workspace, { recursive: true });

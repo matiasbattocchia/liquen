@@ -43,7 +43,9 @@ their habitual counterparts; reach for them first.
 - aread, over cat/head/sed -n: it shows a file from its TOP with a footer naming the offset to
   continue from, where a cat through this tool keeps only its start and end and a long file
   loses its middle; on an image or PDF it attaches the file itself, so you see it, and a
-  binary answers with its size, not mojibake.
+  binary answers with its size, not mojibake. A file someone sent you is a storage:// path
+  it reads the same way; aread <storage://…> --to <path> puts it in your folder for a
+  program that needs a file there.
 - awrite, over cat >/echo >: it creates parent dirs and replaces the file atomically, keeping
   its mode.
 - aedit, over sed -i/perl -pi: the old text is literal, never a regex, and an edit whose old

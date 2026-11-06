@@ -6319,6 +6319,13 @@ The storage batch of `CHANGES.md`, a step at a time.
   agent's read law (`reads`), and a draft naming an object the agent cannot read is
   refused unless nothing references it yet: the agent's own upload is told apart by that
   alone, with no table of who uploaded what.
+- **`aread` reads a kept object through the agent's door.** The door's `object` verb reads
+  the uri's rows through the session's port and answers the bytes only if one is there.
+  The shims are laid per agent in `system/bin/<agent>/`, and the `aread` shim names that
+  agent's door (`--door`), so the folder addresses it as a script's location does, bare
+  shells included. `aread <uri>` prints text or the media mark (the uri itself, which
+  attaches through the Files port); `--to <path>` lands the bytes. **Open**: a Cloudflare
+  sandbox reaches no door, so `aread storage://…` there says so.
 
 ### What is open (2026-10-20)
 
