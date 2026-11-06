@@ -16,6 +16,9 @@ never heard from is findable too; a book that could not be asked is said in a li
 An `in` or `from` that one of a doc's `keywords` holds finds that doc, which stands first as a
 `<doc>` line with its `handle` and the `conversations` it names, and those conversations are
 searched as if named: "el Juancho" reaches his chat through his profile.
+A page of one conversation that reaches its newest line opens on the docs that name it,
+each whole under its `[handle]`: what you keep of the people there. That page is the
+reading `send` asks for, so a send into that conversation goes the first time.
 An `in` or `from` that is a number (or other address) with no messages here and nobody saved
 at it is asked of the accounts whose service can tell: a `<profile>` line under the account's
 `<conn>` says whether that address is an account there (`exists`) and the `name` it shows, if

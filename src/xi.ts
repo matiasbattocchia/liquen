@@ -2960,10 +2960,10 @@ async function unreachable(
 
 /**
  * A send into a conversation the window holds nothing of (§8): no line of it since the
- * checkpoint, and no page that showed it. The answer is that reading — the room's last
- * lines, which say how the principal writes there, and the profiles that name it — and it
- * stands in the window, so the send made again finds the room read. A room with no line
- * at all has nothing to read.
+ * checkpoint, and no page that showed its newest line. The answer is that reading — the
+ * room's last lines, which say how the principal writes there, and the profiles that name
+ * it — and it stands in the window, so the send made again finds the room read. A room
+ * with no line at all has nothing to read.
  */
 async function unreadOf(
   use: ToolUseEvent,
@@ -2976,14 +2976,6 @@ async function unreadOf(
   const target = await targetOf(use, self, ports);
   const address = target?.conversation;
   if (address === undefined) return undefined;
-  const shown = new RegExp(
-    `<conv [^>]*address="${address.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`,
-  );
-  const read = window.some((e) =>
-    (e.type === "message" && e.envelope.conversation.address === address) ||
-    (e.type === "tool_result" && shown.test(String(e.parts[0].data.output ?? "")))
-  );
-  if (read) return undefined;
   const rows = await (ports.history ?? ports.log).read({
     conversation: address,
     ...(target!.service ? { service: target!.service } : {}),
@@ -2992,25 +2984,49 @@ async function unreadOf(
     limit: BEFORE_LINES,
   }) as MessageEvent[];
   if (rows.length === 0) return undefined;
+  const read = window.some((e) =>
+    (e.type === "message" && e.envelope.conversation.address === address) ||
+    (e.type === "tool_result" && showsNewest(String(e.parts[0].data.output ?? ""), rows.at(-1)!))
+  );
+  if (read) return undefined;
   const view = await searchView(config, ports);
   const page = renderHits(rows, view.session, view.roster, view.zone, view.connections, {
     seen: await view.seen!(rows),
   });
-  const cascade = { agent: config.agentId };
-  const profiles = await Promise.all(
-    (await ports.docs.list(cascade)).filter(({ header: h }) =>
-      h.kind !== "tool" &&
-      (h.conversations ?? []).some((c) => c.service === target!.service && c.address === address)
-    ).map(async (d) =>
-      `[${d.header.handle}]\n${d.body ?? await ports.docs.read(cascade, d.header) ?? ""}`
-    ),
-  );
   const to = String((use.parts[0].data.input as { to?: unknown }).to);
   return [
     `not sent: read ${to} first, then send again. Its last lines, and what your docs keep of it:`,
     page,
-    ...profiles,
+    ...(await roomDocs(ports, config.agentId, target!.service, address)).map((d) => d.text),
   ].join("\n\n");
+}
+
+/** Whether a page shows a room's newest line: the room's `<conv>`, and in it that line's
+ *  id. A page of older hits shows the room without its last word. */
+function showsNewest(output: string, newest: MessageEvent): boolean {
+  const address = newest.envelope.conversation.address.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`<conv [^>]*address="${address}"`).test(output) &&
+    output.includes(`id="${shortId(newest.id)}"`);
+}
+
+/** The docs that name a room (§8), whole: a profile is what the agent keeps of the people
+ *  there. Each text opens on its handle. */
+async function roomDocs(
+  ports: XiPorts,
+  agentId: string,
+  service: string | undefined,
+  address: string,
+): Promise<{ handle: string; text: string }[]> {
+  const cascade = { agent: agentId };
+  return await Promise.all(
+    (await ports.docs.list(cascade)).filter(({ header: h }) =>
+      h.kind !== "tool" &&
+      (h.conversations ?? []).some((c) => c.service === service && c.address === address)
+    ).map(async (d) => ({
+      handle: d.header.handle,
+      text: `[${d.header.handle}]\n${d.body ?? await ports.docs.read(cascade, d.header) ?? ""}`,
+    })),
+  );
 }
 
 /** Where a call LANDS (§9): a send's destination — the same anchoring read, name
@@ -4145,6 +4161,20 @@ async function search(
     const rest = page.filter((e) => e.ts !== rows[0].ts);
     if (rest.length > 0) page = rest;
   }
+  // a page that reaches one room's newest line is a reading of that room, the one a send
+  // asks for (`unreadOf`): it carries the docs that name the room, whole
+  const [newest] = conversations?.length === 1 && page.length > 0
+    ? await log.read({
+      conversation: conversations[0],
+      ...(account ? { service: account.service, connection: account.address } : {}),
+      types: ["message"],
+      copies: false,
+      limit: 1,
+    }) as MessageEvent[]
+    : [];
+  const kept = newest && page.some((e) => e.id === newest.id)
+    ? await roomDocs(ports, self.id, newest.envelope.service, conversations![0])
+    : [];
   const { lines, opts } = around > 0
     ? await surround(log, page, around)
     : { lines: page, opts: {} };
@@ -4161,7 +4191,8 @@ async function search(
     ? [`— older matches not shown — search again with before="${page[0].ts}" to read on —`]
     : [];
   const out = [
-    ...docs.map(docEl),
+    ...kept.map((d) => d.text),
+    ...docs.filter((d) => !kept.some((k) => k.handle === d.handle)).map(docEl),
     ...books,
     ...profileLines(mine, profiles),
     ...lines_,

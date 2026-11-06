@@ -2236,10 +2236,13 @@ through a profile. Profiles live in the agent's scope, one per person or group, 
 principal's own loads always (`80-people`).
 
 **The model reads before it writes.** A model's `send` into a conversation the window holds
-nothing of, no line since the checkpoint and no page that showed it, is answered before
-the gate: `not sent: read … first`, with the room's last lines and the profiles that name
-it. The answer stands in the window, so the send made again goes. A script's send is
-exempt: it carries its author's words. A room with no line at all has nothing to read.
+nothing of, no line since the checkpoint and no page that showed its newest line, is
+answered before the gate: `not sent: read … first`, with the room's last lines and the
+profiles that name it. The answer stands in the window, so the send made again goes. A
+`search` page that reaches one room's newest line is the same reading: it carries the docs
+that name the room, whole, and the send after it goes the first time. A page of older hits
+shows the room without its last word, so it reads nothing. A script's send is exempt: it
+carries its author's words. A room with no line at all has nothing to read.
 
 **One discovery rule, every scope** (2026-08-04): walk the scope directory recursively; a
 file is a doc **iff it is `.md` and opens with YAML frontmatter** — *a doc declares
