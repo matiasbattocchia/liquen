@@ -293,23 +293,22 @@ export function warmth(
     left: number,
     of: number,
   ) => {
-    timer = setTimeout(async () => {
+    timer = setTimeout(() => {
       timer = undefined;
       const start = now();
-      try {
-        await transport(
-          { ...params, max_tokens: 0 },
-          undefined,
-          { kind: "keepalive" },
-          quit.signal,
+      void transport({ ...params, max_tokens: 0 }, undefined, { kind: "keepalive" }, quit.signal)
+        .then(
+          () => {
+            if (of === call && left > 1) arm(transport, params, start, left - 1, of);
+          },
+          (err) => {
+            if (!quit.signal.aborted) {
+              console.error(
+                `keep-alive failed, the cache left to lapse: ${(err as Error).message}`,
+              );
+            }
+          },
         );
-      } catch (err) {
-        if (!quit.signal.aborted) {
-          console.error(`keep-alive failed, the cache left to lapse: ${(err as Error).message}`);
-        }
-        return;
-      }
-      if (of === call && left > 1) arm(transport, params, start, left - 1, of);
     }, Math.max(0, started + everyMs - now()));
   };
   return {
