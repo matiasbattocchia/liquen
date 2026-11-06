@@ -159,6 +159,28 @@ Deno.test("the request states what a mismatched thinking block does, under the b
   assertEquals(seen.params?.tools, [{ ...bash, eager_input_streaming: true }]);
 });
 
+Deno.test("a keep-alive goes out unstreamed, the request otherwise the one it replays", async () => {
+  const seen: { created?: Record<string, unknown>; streamed: number } = { streamed: 0 };
+  const client = {
+    messages: {
+      stream: () => {
+        seen.streamed++;
+        throw new Error("a keep-alive must not stream");
+      },
+      create: (params: Record<string, unknown>) => {
+        seen.created = params;
+        return Promise.resolve({ content: [], stop_reason: "max_tokens" });
+      },
+    },
+  } as unknown as Anthropic;
+  const bash = { name: "bash", input_schema: { type: "object" as const } };
+  const message = await anthropicTransport(client)({ ...REQUEST, max_tokens: 0, tools: [bash] });
+  assertEquals(message.stop_reason, "max_tokens");
+  assertEquals(seen.streamed, 0);
+  assertEquals(seen.created?.max_tokens, 0);
+  assertEquals(seen.created?.tools, [{ ...bash, eager_input_streaming: true }]);
+});
+
 // Offline: a local server answers as the Messages API does — the event stream of one tool
 // call. Held, it sends the call's first half and then nothing more.
 const TOOL_CALL = [

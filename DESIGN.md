@@ -1576,6 +1576,17 @@ before plus new rows, until a checkpoint moves the floor:
   refreshes every entry the request's marks reach; an entry no request reaches dies an hour
   after its last read. A tail that closes on the anchor carries its mark on the text inside
   the `mid_conv_system` block, so the next request reads the anchor back too.
+- **A quiet mind keeps its cache.** A lapsed cache is written again whole at 2× input,
+  where a read costs a tenth of input or less. So each mind has a keeper: a turn's call
+  arms a replay of itself at `max_tokens: 0` 55 minutes after its start, which reads every
+  entry the call's marks reach, answers nothing and starts the hour again. Each replay arms
+  the next, twenty in a row at most, some eighteen hours: the list prices put a write at 20
+  to 80 reads, so a run that never meets a turn costs at most one write more than the
+  lapse. The night is the gap it pays most across: the morning's first turn reads what the
+  evening's last one wrote. Any call the mind makes takes the timer over, and a checkpoint
+  arms none, since the next turn renders past it. A named session has none: its work ends,
+  and the next brief may be days away. Only an Anthropic transport is kept, and a replay is
+  metered as `keepalive`.
 
 ### Media (kept like the rest, until the checkpoint)
 

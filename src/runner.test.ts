@@ -99,6 +99,40 @@ Deno.test("runner: a host with a reach into the docs table gives the session the
   }
 });
 
+Deno.test("runner: a mind has a keeper, kept where its provider is Anthropic; a named session none", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(`${dir}/log`);
+  const made: { kept: (boolean | undefined)[]; stopped: number }[] = [];
+  try {
+    const transport = {} as ModelTransport;
+    const host: Host = {
+      log,
+      docs: openFileDocs(dir),
+      policy: () => ({ using: NOTHING }),
+      transport: () => transport,
+      warmth: () => {
+        const w = { kept: [] as (boolean | undefined)[], stopped: 0 };
+        made.push(w);
+        return {
+          through: (t, kept) => (w.kept.push(kept), t),
+          stop: () => w.stopped++,
+        };
+      },
+    };
+    const mind = runnerFor(host, row, "mind");
+    const gemini = runnerFor(host, { ...row, agentId: "bo", provider: "google" }, "mind");
+    const build = runnerFor(host, row, "build");
+    assertEquals(made.map((w) => w.kept), [[true], [false]]);
+    assert(mind.warmth !== gemini.warmth);
+    assertEquals(build.warmth, undefined);
+    assertEquals(mind.ports.transport, transport);
+    assertEquals(build.ports.transport, transport);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("configOf: a row without settings or model is one no session runs on", () => {
   assertThrows(() => configOf({ ...row, settings: undefined }, "mind"), Error, "no settings");
   assertThrows(() => configOf({ ...row, model: undefined }, "mind"), Error, "no settings");

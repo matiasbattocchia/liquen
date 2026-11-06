@@ -246,3 +246,86 @@ export function metered(
     return message;
   };
 }
+
+/** How long after the start of the call that last read a session's cache the keeper reads
+ *  it again: the hour every cache mark asks for (render), less the margin a ping needs to
+ *  land inside it. The hour runs from a request's start, so this does too. */
+export const WARM_MS = 55 * 60_000;
+
+/** The most keep-alives in a row with no call of the session's between them. A ping reads
+ *  the prefix at the cache-read rate and a lapsed cache writes it again at the hour's write
+ *  rate, which the list prices put at 20 to 80 reads: a run this long that never meets a
+ *  turn costs at most one write more than letting the cache lapse. Twenty hold it some
+ *  eighteen hours, a night and a quiet day. */
+export const WARM_PINGS = 20;
+
+/** A session's keeper: its transport passes `through` it, and `stop` ends it for good. A
+ *  transport that is not `kept` (a provider with no hour cache) still takes the timer over,
+ *  so a ping never outlives the session's move to it. */
+export interface Warmth {
+  through(transport: ModelTransport, kept?: boolean): ModelTransport;
+  stop(): void;
+}
+
+/**
+ * Keep a quiet session's cache warm (§5). A turn's call (`think`) arms a ping `everyMs`
+ * after its start: the same request with `max_tokens: 0`, which reads the whole prefix,
+ * answers nothing and starts the hour again. It goes through the transport the call went
+ * through, metered as `keepalive`, and arms the next, up to `pings` in a row. Every call
+ * the session makes takes the timer over, and a checkpoint arms none, since the next turn
+ * renders past it. A failed ping ends the run: the next turn writes the prefix, as it
+ * would have with no keeper.
+ */
+export function warmth(
+  { everyMs = WARM_MS, pings = WARM_PINGS, now = Date.now }: {
+    everyMs?: number;
+    pings?: number;
+    now?: () => number;
+  } = {},
+): Warmth {
+  const quit = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let call = 0; // the session's latest call: a ping armed for an older one stands down
+  const arm = (
+    transport: ModelTransport,
+    params: Parameters<ModelTransport>[0],
+    started: number,
+    left: number,
+    of: number,
+  ) => {
+    timer = setTimeout(async () => {
+      timer = undefined;
+      const start = now();
+      try {
+        await transport(
+          { ...params, max_tokens: 0 },
+          undefined,
+          { kind: "keepalive" },
+          quit.signal,
+        );
+      } catch (err) {
+        if (!quit.signal.aborted) {
+          console.error(`keep-alive failed, the cache left to lapse: ${(err as Error).message}`);
+        }
+        return;
+      }
+      if (of === call && left > 1) arm(transport, params, start, left - 1, of);
+    }, Math.max(0, started + everyMs - now()));
+  };
+  return {
+    through: (transport, kept = true) => async (params, emit, meta, signal) => {
+      const of = ++call;
+      clearTimeout(timer);
+      const start = now();
+      const message = await transport(params, emit, meta, signal);
+      if (kept && of === call && meta?.kind === "think" && !quit.signal.aborted) {
+        arm(transport, params, start, pings, of);
+      }
+      return message;
+    },
+    stop() {
+      quit.abort();
+      clearTimeout(timer);
+    },
+  };
+}

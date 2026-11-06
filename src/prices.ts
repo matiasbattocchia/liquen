@@ -41,7 +41,8 @@ export interface Price extends Rates {
  * The providers' list prices, standard tier. Each model's first row starts on the day the
  * provider made it generally available where the provider dates that; otherwise on the day
  * the row was read off the provider's page, so earlier calls read as unpriced rather than
- * at a rate nobody stated. Anthropic's `cache_write` is its 5-minute write rate.
+ * at a rate nobody stated. Anthropic's `cache_write` is its 1-hour write rate, twice input:
+ * every cache mark the harness sets asks for the hour.
  */
 export const PRICES: Price[] = [
   // Google — ai.google.dev/gemini-api/docs/pricing
@@ -97,7 +98,7 @@ export const PRICES: Price[] = [
     input: 10,
     output: 50,
     cache_read: 0.25,
-    cache_write: 12.5,
+    cache_write: 20,
   },
   {
     model: "claude-opus-5-5",
@@ -105,7 +106,7 @@ export const PRICES: Price[] = [
     input: 4,
     output: 20,
     cache_read: 0.2,
-    cache_write: 5,
+    cache_write: 8,
   },
   {
     model: "claude-opus-5",
@@ -113,7 +114,7 @@ export const PRICES: Price[] = [
     input: 5,
     output: 25,
     cache_read: 0.5,
-    cache_write: 6.25,
+    cache_write: 10,
   },
   {
     model: "claude-sonnet-5-5",
@@ -121,7 +122,7 @@ export const PRICES: Price[] = [
     input: 2,
     output: 10,
     cache_read: 0.1,
-    cache_write: 2.5,
+    cache_write: 4,
   },
   {
     model: "claude-sonnet-5",
@@ -129,7 +130,7 @@ export const PRICES: Price[] = [
     input: 2,
     output: 10,
     cache_read: 0.2,
-    cache_write: 2.5,
+    cache_write: 4,
   },
   {
     model: "claude-haiku-5-5",
@@ -137,13 +138,13 @@ export const PRICES: Price[] = [
     input: 0.1,
     output: 0.5,
     cache_read: 0.01,
-    cache_write: 0.125,
+    cache_write: 0.2,
     tiers: [{
       above_context: 100_000,
       input: 0.5,
       output: 2.5,
       cache_read: 0.05,
-      cache_write: 0.625,
+      cache_write: 1,
     }],
   },
   {
@@ -152,7 +153,7 @@ export const PRICES: Price[] = [
     input: 1,
     output: 5,
     cache_read: 0.1,
-    cache_write: 1.25,
+    cache_write: 2,
   },
 ];
 

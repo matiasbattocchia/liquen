@@ -44,7 +44,14 @@ import {
 import { ownComplex } from "./render.ts";
 import { LOCAL_CONNECTION, MIND, sessionAddress } from "./session.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
-import { configOf, type Host, type Runner, runnerFor, type Seams } from "./runner.ts";
+import {
+  configOf,
+  type Host,
+  type Runner,
+  runnerFor,
+  type Seams,
+  thinkingThrough,
+} from "./runner.ts";
 import type { Log, UsageRow } from "./store/log.ts";
 import { databaseOf, storeAt } from "./store/mod.ts";
 import { type Clock, tick } from "./tick.ts";
@@ -60,6 +67,8 @@ import {
   providerOf,
   transports,
   vaultKeys,
+  type Warmth,
+  warmth,
 } from "./transport/mod.ts";
 import { openCloudflareSandbox, openLocalSandbox, type SessionUpdate } from "./sandbox.ts";
 import { whatsappContact } from "./connect/whatsapp/contact.ts";
@@ -387,6 +396,8 @@ export async function start(
       agentId,
     );
   const stock = new Map(principals.map((p) => [p.agentId, meter(p.agentId, transportFor(p))]));
+  // each mind's keeper (§5), every one of them stopped with the org
+  const keepers = new Set<Warmth>();
   // the runner (§4): one builder for the mind and every named session, over the store,
   // the row and these ports — the process's own part is the fan-outs and the transports
   const host: Host = {
@@ -400,6 +411,11 @@ export async function start(
     // same map, keyed on the agent. Explicit principals search their own view
     ...(derived ? { history: historyFor } : {}),
     transport: (agentId) => stock.get(agentId)!,
+    warmth: () => {
+      const w = warmth();
+      keepers.add(w);
+      return w;
+    },
     sandbox,
     ...(contact ? { contact } : {}),
     ...(rooms ? { rooms } : {}),
@@ -526,9 +542,13 @@ export async function start(
     checkProvider({ agentId, provider, model, effort });
     r.config.model = model;
     r.config.effort = effort;
-    r.ports.transport = provider === p.provider
-      ? stock.get(agentId)!
-      : meter(agentId, overrides.transport ?? transportOf(providerOf(provider), agentId));
+    r.ports.transport = thinkingThrough(
+      r,
+      provider,
+      provider === p.provider
+        ? stock.get(agentId)!
+        : meter(agentId, overrides.transport ?? transportOf(providerOf(provider), agentId)),
+    );
   };
 
   // the door (§9): a script's syscalls, as gated tool_use events in the caller's name. The
@@ -706,6 +726,7 @@ export async function start(
       clearInterval(ticker);
       for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
       settling.clear();
+      for (const w of keepers) w.stop();
       for (const unsub of unsubs) unsub();
       await doors.close(); // stop taking syscalls before the log goes away
       // Bound the settle. A turn wedged on a hung model connection (e.g. a network

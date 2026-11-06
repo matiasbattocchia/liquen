@@ -39,11 +39,17 @@ export function anthropicTransport(
         }
         : {}),
     } as Anthropic.MessageStreamParams;
+    const options = { headers: { "anthropic-beta": BINDING_BETA }, ...(signal ? { signal } : {}) };
+    // a keep-alive (`max_tokens: 0`) reads the prefix and answers nothing, and the API takes
+    // it only unstreamed; the stream is a transport option, outside the cached prefix
+    if (bound.max_tokens === 0) {
+      return await client.messages.create(
+        bound as Anthropic.MessageCreateParamsNonStreaming,
+        options,
+      );
+    }
     // the turn's interrupt reaches the request: an abort closes the stream mid-flight
-    const stream = client.messages.stream(bound, {
-      headers: { "anthropic-beta": BINDING_BETA },
-      ...(signal ? { signal } : {}),
-    });
+    const stream = client.messages.stream(bound, options);
     // Always attach listeners: they no-op when `emit` is absent, and an attached `error`
     // listener keeps a stream error from surfacing as an unhandled event (it still rejects
     // `finalMessage()`, which is the path mu catches).

@@ -9,6 +9,7 @@ import {
   silenced,
   transports,
   vaultKeys,
+  warmth,
 } from "./mod.ts";
 import { openCredentials } from "../store/credentials.ts";
 import { retryable } from "../nu.ts";
@@ -208,4 +209,85 @@ Deno.test("transports: an explicit anthropic key wins, and no vault is the SDK's
   assertEquals(await answer(transports({ anthropic: "given", keyOf }, make)(ANTHROPIC)), "given");
   assertEquals(await answer(transports({ anthropic: "given", keyOf }, make)(GOOGLE)), "vault-key");
   assertEquals(await answer(transports({}, make)(GOOGLE, "ana")), "env");
+});
+
+/** A transport that answers at once and keeps every call: its max_tokens and kind. Each
+ *  call in `failing` (by index) rejects instead. */
+function calls(failing: number[] = []) {
+  const seen: { max_tokens: number; kind?: string; model: string }[] = [];
+  const t: ModelTransport = (params, _e, meta) => {
+    seen.push({ max_tokens: params.max_tokens, kind: meta?.kind, model: params.model });
+    return failing.includes(seen.length - 1)
+      ? Promise.reject(new Error("overloaded"))
+      : Promise.resolve(DONE);
+  };
+  return { seen, t };
+}
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+Deno.test("warmth: a turn's call is replayed at max_tokens 0, as keepalive, up to the run's end", async () => {
+  const w = warmth({ everyMs: 20, pings: 3 });
+  const { seen, t } = calls();
+  try {
+    await w.through(t)(REQUEST, undefined, { kind: "think", turn_id: "t1" });
+    await wait(150);
+    assertEquals(seen, [
+      { max_tokens: 100, kind: "think", model: "m" },
+      { max_tokens: 0, kind: "keepalive", model: "m" },
+      { max_tokens: 0, kind: "keepalive", model: "m" },
+      { max_tokens: 0, kind: "keepalive", model: "m" },
+    ]);
+  } finally {
+    w.stop();
+  }
+});
+
+Deno.test("warmth: a checkpoint arms nothing, and a later call takes the timer over", async () => {
+  const w = warmth({ everyMs: 40, pings: 5 });
+  const { seen, t } = calls();
+  try {
+    await w.through(t)(REQUEST, undefined, { kind: "think" });
+    await w.through(t)(REQUEST, undefined, { kind: "checkpoint" });
+    await wait(100);
+    assertEquals(seen.map((c) => c.kind), ["think", "checkpoint"]);
+  } finally {
+    w.stop();
+  }
+});
+
+Deno.test("warmth: a provider not kept arms nothing and stands the armed ping down", async () => {
+  const w = warmth({ everyMs: 40, pings: 5 });
+  const anthropic = calls();
+  const google = calls();
+  try {
+    await w.through(anthropic.t)(REQUEST, undefined, { kind: "think" });
+    await w.through(google.t, false)({ ...REQUEST, model: "g" }, undefined, { kind: "think" });
+    await wait(100);
+    assertEquals(anthropic.seen.map((c) => c.kind), ["think"]);
+    assertEquals(google.seen.map((c) => c.kind), ["think"]);
+  } finally {
+    w.stop();
+  }
+});
+
+Deno.test("warmth: a failed ping ends the run, and stop ends it for good", async () => {
+  const failed = warmth({ everyMs: 20, pings: 5 });
+  const flaky = calls([1]);
+  const stopped = warmth({ everyMs: 20, pings: 5 });
+  const quiet = calls();
+  const error = console.error;
+  const said: string[] = [];
+  console.error = (s: string) => said.push(s);
+  try {
+    await failed.through(flaky.t)(REQUEST, undefined, { kind: "think" });
+    await stopped.through(quiet.t)(REQUEST, undefined, { kind: "think" });
+    stopped.stop();
+    await wait(100);
+    assertEquals(flaky.seen.map((c) => c.kind), ["think", "keepalive"]);
+    assertEquals(said, ["keep-alive failed, the cache left to lapse: overloaded"]);
+    assertEquals(quiet.seen.map((c) => c.kind), ["think"]);
+  } finally {
+    console.error = error;
+    failed.stop();
+  }
 });
