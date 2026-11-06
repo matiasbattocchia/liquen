@@ -11,9 +11,5 @@ view. On SQLite and files the door's own check stands.
 
 ## 2. A trial on R2
 
-An org runs on R2 for a while, `deployment.storage` naming the bucket.
-
-## 3. Shims per agent
-
-The shims sit in `system/bin/<agent>/` so that `aread` names its agent's door. Decide whether
-they stay, or go back to one `system/bin/` with the door found another way.
+An org runs on R2 for a while, `deployment.storage` naming the bucket. First the S3 suite
+against a bucket made with wrangler or the Cloudflare account (`LIQUEN_TEST_S3`).

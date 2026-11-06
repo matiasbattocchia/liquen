@@ -23,6 +23,7 @@ import { openLog } from "./store/log.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { fileStorage } from "./store/storage.ts";
 import { kindOf, saveMedia } from "./store/media.ts";
+import { installExecGround } from "./exec/bash.ts";
 import { NOTHING, scoped } from "./policy.ts";
 import { type AgentConfig, answerCall, type Gate, relevant } from "./xi.ts";
 import { scripted } from "./testing.ts";
@@ -571,6 +572,58 @@ Deno.test({
       await doors.close();
       await log.close();
       await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "door: a bare shell's aread finds its door off its PATH, wherever it stands",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const org = await Deno.realPath(await Deno.makeTempDir({ prefix: "mu-door-" }));
+    const dir = `${org}/data`;
+    await Deno.writeTextFile(`${org}/config.jsonc`, "{}\n");
+    const log = await openLog(`${dir}/log`);
+    const storage = fileStorage(dir);
+    const doors = await installDoors(dir, [{
+      ...AGENT,
+      port: () => Promise.resolve(log),
+      storage,
+    }]);
+    const ground = await installExecGround(dir, "ana");
+    const shell = ground.shell();
+    const run = async (command: string) => {
+      const out = await shell.exec.bash.execute({ command }, new AbortController().signal)
+        .catch((err: Error) => err.message);
+      return String(typeof out === "object" && out !== null && "output" in out ? out.output : out);
+    };
+    try {
+      const file = await saveMedia(storage, new TextEncoder().encode("hola\n"), {
+        mime_type: "text/plain",
+      });
+      await log.publish(
+        { ...msg("wa:x", ""), parts: [{ type: "file", kind: "document", file }] } as Draft<
+          MessageEvent
+        >,
+      );
+      // HOME is the operator's: the agent's own bin/ on its PATH names the door, wherever
+      // the shell stands
+      assertEquals(await run(`mkdir -p notes && cd notes && aread ${file.uri}`), "hola");
+      assertEquals(await run(`cd /tmp && aread ${file.uri}`), "hola");
+      // a PATH that no longer holds it names no door
+      assertStringIncludes(
+        await run(
+          `PATH=${dir}/system/bin:$(dirname "$(command -v deno)"):/usr/bin:/bin aread ${file.uri}`,
+        ),
+        "reaches no door",
+      );
+    } finally {
+      await shell.reap();
+      await ground.close("end");
+      await doors.close();
+      await log.close();
+      await Deno.remove(org, { recursive: true });
     }
   },
 });

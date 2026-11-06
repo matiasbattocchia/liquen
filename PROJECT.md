@@ -6322,11 +6322,11 @@ The storage batch of `CHANGES.md`, a step at a time.
   alone, with no table of who uploaded what.
 - **`aread` reads a kept object through the agent's door.** The door's `object` verb reads
   the uri's rows through the session's port and answers the bytes only if one is there.
-  The shims are laid per agent in `system/bin/<agent>/`, and the `aread` shim names that
-  agent's door (`--door`), so the folder addresses it as a script's location does, bare
-  shells included. `aread <uri>` prints text or the media mark (the uri itself, which
-  attaches through the Files port); `--to <path>` lands the bytes. **Open**: a Cloudflare
-  sandbox reaches no door, so `aread storage://…` there says so.
+  The `aread` shim finds the door itself: `$HOME/door.sock` in a bubble or a container,
+  else beside the agent's own `bin/` on its PATH, so a bare shell finds it wherever it
+  stands; it grants Deno that one socket. `aread <uri>` prints text or the media mark (the
+  uri itself, which attaches through the Files port); `--to <path>` lands the bytes. A
+  Cloudflare sandbox reaches no door; that waits beside its proxy (DESIGN §10).
 - **A forwarded note is heard once.** The transcriber asks `refs` for another message
   carrying the same object and takes its transcript, in place of the sidecar.
 - **No mounts.** A bubble binds no `conversations/` and sees no `storage/`, and the Files

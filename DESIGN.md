@@ -2636,7 +2636,7 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   stand in the same place — returning to the workspace when it hangs up. A place the
   shell cannot stand in (gone, or closed to its uid) is said once and the next call starts
   from the workspace. The `.out` spool stays in the workspace wherever the shell stands, so
-  a spill never lands in a repo the agent walked into. PATH is prefixed with the scope cascade in binary form — `{dir}/system/bin/<id>` · `{dir}/org/bin` ·
+  a spill never lands in a repo the agent walked into. PATH is prefixed with the scope cascade in binary form — `{dir}/system/bin` · `{dir}/org/bin` ·
   `{dir}/agents/<id>/bin` — ahead of the process's inherited PATH. stdout+stderr
   merged in arrival order. **Default wait 120s**: the turn holds its lock that long at
   most, and a command still running then answers async and runs on as a job (§9,
@@ -2706,17 +2706,18 @@ truncation discipline and edit engine, Claude Code's timeout and workspace disci
   Gates are for outward effects (`send`, §9 gating); the workspace is the agent's own.
   (Both references promote file-ops to dedicated tools chiefly to gate/schedule them —
   a need we've explicitly declined for the exec plane.)
-- Shims: every boot lays `aread`/`awrite`/`aedit` and `fetch` under `{dir}/system/bin/<id>` as
+- Shims: every boot lays `aread`/`awrite`/`aedit` and `fetch` under `{dir}/system/bin` as
   `deno run` shims of the package's `bin/afs.ts` and `bin/fetch.ts`, addressed where the package is — a checkout's file or
   the registry's URL — so the tool an agent runs answers for the version that booted. A shim
   runs as the agent's uid out of the harness's own module cache (`DENO_DIR` pinned in the
   shim line, `--cached-only`, the cache warmed at boot): the agent's uid has no cache of its
   own and no road to the registry, and the pin stays in the shim so the agent's own deno is
-  untouched. The folder is the agent's because `aread` names its door: a `storage://` uri
-  is read through the door of the agent the folder is laid for (`object`, door.ts), which
-  answers only when an event the agent can read references the object, and `--to <path>`
-  lands the bytes for a program that needs a file. The shim's location is the whole of its
-  addressing, as a script's is. PATH widens by scope — `{dir}/system/bin/<id>` (the harness's),
+  untouched. `aread` reads a `storage://` uri through the agent's door (`object`,
+  door.ts), which answers only when an event the agent can read references the object,
+  and `--to <path>` lands the bytes for a program that needs a file. The shim finds the
+  door where the shell is: `$HOME/door.sock` in a bubble or a container, whose HOME is the
+  agent's folder, else beside the agent's own `bin/` on the PATH every spawn is issued,
+  wherever the shell stands. PATH widens by scope — `{dir}/system/bin` (the harness's),
   `{dir}/shared/bin` (the org's, `gws`), `{dir}/agents/<id>/bin` (the agent's own), then the
   system's — narrowest first, so a wider layer is reachable but cannot shadow a harness
   contract, exactly as the doc cascade resolves. The binaries'

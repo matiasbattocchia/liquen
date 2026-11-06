@@ -50,17 +50,17 @@ Deno.test("bash: PATH widens by scope — the agent's own bin cannot shadow the 
     assertEquals(await run("whose"), `${dir}/shared/bin`);
     assertEquals(
       await run("command -v aread"),
-      `${dir}/system/bin/a1/aread`,
+      `${dir}/system/bin/aread`,
     );
     // the shim reads the harness's cache and never fetches: the agent's uid has no cache
     // of its own and no road to the registry
-    const shim = await Deno.readTextFile(`${dir}/system/bin/a1/aread`);
+    const shim = await Deno.readTextFile(`${dir}/system/bin/aread`);
     assertStringIncludes(shim, "env DENO_DIR='");
     assertStringIncludes(shim, "--cached-only");
-    // and it names the door of the agent its folder is laid for
-    assertStringIncludes(shim, ` --door '${wsOf(dir)}/door.sock' read "$@"`);
+    // and it finds the agent's door where the shell is, reaching that socket alone
+    assertStringIncludes(shim, '--allow-net="unix:$door"');
     // fetch is laid the same way; the liquen CA it trusts rides the environment
-    const http = await Deno.readTextFile(`${dir}/system/bin/a1/fetch`);
+    const http = await Deno.readTextFile(`${dir}/system/bin/fetch`);
     assertStringIncludes(http, "--cached-only --allow-net");
     const path = (await run("echo $PATH")).split(":");
     assert(
@@ -77,10 +77,10 @@ Deno.test("bash: bins lists each PATH directory's executables in PATH order", as
     await Deno.writeTextFile(`${dir}/shared/bin/gws`, "#!/bin/sh\n");
     await Deno.chmod(`${dir}/shared/bin/gws`, 0o755);
     // a plain file is not a program, and the agent's empty bin is left out
-    await Deno.writeTextFile(`${dir}/system/bin/a1/log.db`, "");
+    await Deno.writeTextFile(`${dir}/system/bin/log.db`, "");
     assertEquals(await plane.bins!(), [
       // the harness's own carry their usage from the source; nothing is run to learn it
-      shippedAt(`${dir}/system/bin/a1`),
+      shippedAt(`${dir}/system/bin`),
       { dir: `${dir}/shared/bin`, programs: [{ name: "gws" }] },
     ]);
     assertEquals(shippedAt("/b").programs.map((p) => p.name), [
