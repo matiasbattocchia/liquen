@@ -6257,6 +6257,8 @@ tenth or less, and a read starts the hour again.
 - **The bridge unescapes incoming cards** (`open-bsp-whatsmeow` d6742ef, `vcardUnescape`):
   `FN` and `TEL` are read back as `vcardText` writes them, so "Pérez, Juan" arrives whole.
   **Open**: the running bridge takes it at its next build and restart.
+- **A connector never heard reads as down.** `downOn` reads a row with no `heard_at`, linked
+  `SILENT_AFTER_MS` ago or more, as `connector down, never heard` since `connected_at`.
 
 ### What is open (2026-10-20)
 

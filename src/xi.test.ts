@@ -88,6 +88,18 @@ Deno.test("downOn: one shape for every reason, and a connector gone silent outra
       },
       // beating, and up: not listed
       { service: "github", address: "github", extra: { heard_at: "2026-10-20T14:29:40Z" } },
+      // linked at 11:00 and never heard: its connector died before its first beat
+      {
+        service: "google",
+        address: "bo@x.io",
+        extra: { state: "connected", connected_at: "2026-10-20T11:00:00Z" },
+      },
+      // linked a minute ago: its first beat is not due yet
+      {
+        service: "google",
+        address: "cy@x.io",
+        extra: { state: "connected", connected_at: "2026-10-20T14:29:00Z" },
+      },
       // beating, but the path Graph pushes over is not answering: that, not its own word
       {
         service: "microsoft",
@@ -105,10 +117,11 @@ Deno.test("downOn: one shape for every reason, and a connector gone silent outra
     now,
   );
   assertEquals(lines, [
-    "down — 4 connections:",
+    "down — 5 connections:",
     "· Ana — whatsapp, bridge down since 20 Oct 1:19",
     "· ana@x.io — google, signed out since 18 Oct 9:12",
     "· acme — slack, connector down since 20 Oct 13:55",
+    "· bo@x.io — google, connector down, never heard since 20 Oct 11:00",
     "· bo@x.io — microsoft, tunnel down since 20 Oct 14:02",
   ]);
   assertEquals(downOn([{ service: "github", address: "github" }], "UTC", now), []);

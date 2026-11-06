@@ -54,12 +54,6 @@ object store, as `config.jsonc` names. It holds blobs, never docs.
 
 Decided 6 Nov 2026.
 
-## 6. A connector never heard reads as down
-
-`downOn` (`xi.ts:1582`) reads a row with no `heard_at`, whose `connected_at` is older than
-`SILENT_AFTER_MS`, as `connector down, never heard`. A connector that crashes before its
-first beat then shows down as one that stopped beating does. The read side alone changes.
-
 ## 7. `log turns` walks a cursor
 
 `readTurns` (`turns.ts:368`) walks back by id, keeps only the turn it is assembling, and

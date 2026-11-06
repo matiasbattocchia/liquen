@@ -1574,31 +1574,43 @@ async function company(
 /** Surfaces that are down (§5): a connector recorded a state other than `connected` on the
  *  row (`extra.state`, stamped `<state>_at`), or the connector itself stopped beating on it
  *  (`extra.heard_at` older than `SILENT_AFTER_MS`) — `connector down` since the last beat,
- *  which outranks the row's own word: nobody is there to keep that one true. Silence means
+ *  which outranks the row's own word: nobody is there to keep that one true. A row never
+ *  stamped whose door linked it (`connected_at`) longer ago than that reads `connector down,
+ *  never heard` since the link: its connector died before its first beat. Silence means
  *  every surface is up. No handle — nothing in the model's hands acts on it; the principal
  *  re-pairs or re-grants. Named the way every line is: the account's name, its address only
  *  when it has none — the prefix's `connections:` line is where the address and whose
  *  voice it is are stated. */
 export function downOn(surfaces: ConnectionRow[], zone?: string, now = Date.now()): string[] {
+  const words = (state: string) => state.replaceAll("_", " ");
   const down = surfaces.flatMap((c) => {
     const heard = c.extra?.heard_at;
     if (typeof heard === "string" && now - Date.parse(heard) > SILENT_AFTER_MS) {
-      return [{ c, state: "connector_down", since: heard }];
+      return [{ c, said: words("connector_down"), since: heard }];
+    }
+    const linked = c.extra?.connected_at;
+    if (
+      heard === undefined && typeof linked === "string" &&
+      now - Date.parse(linked) > SILENT_AFTER_MS
+    ) {
+      return [{ c, said: `${words("connector_down")}, never heard`, since: linked }];
     }
     // the path the service pushes over is down: the account's own word waits behind it
     const inbound = c.extra?.inbound;
-    if (typeof inbound === "string") return [{ c, state: inbound, since: c.extra?.inbound_at }];
+    if (typeof inbound === "string") {
+      return [{ c, said: words(inbound), since: c.extra?.inbound_at }];
+    }
     const state = c.extra?.state;
     if (typeof state !== "string" || state === "connected") return [];
-    return [{ c, state, since: c.extra?.[`${state}_at`] }];
+    return [{ c, said: words(state), since: c.extra?.[`${state}_at`] }];
   });
   if (down.length === 0) return [];
   return [
     `down — ${down.length} connection${down.length === 1 ? "" : "s"}:`,
-    ...down.map(({ c, state, since }) => {
+    ...down.map(({ c, said, since }) => {
       const when = typeof since === "string" ? ` since ${hhmm(since, zone)}` : "";
       const name = typeof c.extra?.name === "string" && c.extra.name ? c.extra.name : c.address;
-      return `· ${name} — ${c.service}, ${state.replaceAll("_", " ")}${when}`;
+      return `· ${name} — ${c.service}, ${said}${when}`;
     }),
   ];
 }

@@ -155,7 +155,7 @@ goes with its words. Each skill the system describes is one file under
 | `## Connections` `… (yours)` / `(org)` | ✗ | |
 | `## Processors` with its note | ✗ | |
 | `# Programs` with its note | ✗ | The helpers: `bash.md` |
-| `down — N connections:` `· … — whatsapp, logged out since 14:02` | ✗ | |
+| `down — N connections:` `· … — whatsapp, logged out since 14:02` | ✗ | A connector never heard: `connector down, never heard since …` |
 
 ## Recall
 

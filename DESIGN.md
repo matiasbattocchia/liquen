@@ -1789,8 +1789,11 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   marks it back. Over all of them stands `connector_down`, which no row stores: a running
   connector stamps `extra.heard_at` on its rows every 30s, and a row unstamped for two
   minutes reads as its connector stopped, since the last stamp — the supervisor never
-  opens the log and a dead process says nothing, so the silence is the signal. It
-  outranks the row's own word, which nobody is there to keep true. Next comes the path a
+  opens the log and a dead process says nothing, so the silence is the signal. A row its
+  door linked (`connected_at`) two minutes ago or more, and never stamped, reads
+  `connector down, never heard` since the link: a connector that dies before its first
+  beat shows as one that stopped beating does. It outranks the row's own word, which
+  nobody is there to keep true. Next comes the path a
   pushed service dials (GitHub's webhooks, Graph's Teams notifications): its connector
   fetches its own public ingest each beat, and three misses in a row put `tunnel_down` on
   its rows, or `edge_down` when this machine's edge does not answer either
