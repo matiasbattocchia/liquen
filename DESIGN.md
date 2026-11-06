@@ -1527,7 +1527,9 @@ before plus new rows, until a checkpoint moves the floor:
   checkpoint waits for the turn to end for the same reason (Compaction, below). The
   Anthropic transport sets the binding explicitly (`prefix_mismatch_behavior: drop_block`,
   under the controls beta) and logs every block the API reports dropped — each one is an
-  edit to a prefix that should not have moved.
+  edit to a prefix that should not have moved. Such edits come from upgrades: main
+  restarting on code that renders an old line anew drops the blocks signed over it, turn
+  after turn, until the next checkpoint folds that line in.
 - **The anchor is an event** (`anchor`), written by nu with a step's first row when its text
   differs from the last the window holds, `now` to the minute: the state the step's request
   ended on. It renders where it was written, as a `mid_conv_system` block, showing the
@@ -3680,7 +3682,10 @@ the account alone, whether the org hears its own removal from a group; Slack: wh
 and archive events reach the bot) · **compaction's refinements** (the principal's
 corrections kept verbatim, a stale checkpoint's age, each denial kept with its draft and
 reason) · **model routing** · **wire facts that land late** (Teams' kind lookup retried,
-an `external_id` for conversations).
+an `external_id` for conversations) · **a script's call made whole** (the door writes the
+call's row before it answers, and main answers at boot any it finds unanswered, so a crash
+between the answer and the row leaves no sent message without its call; worth it once
+scripts see real use).
 
 ## 11. Reference landscape (what we took from each)
 

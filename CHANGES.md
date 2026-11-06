@@ -83,3 +83,32 @@ a shell honors the org's `TZ`.
 `parseVcard` in `open-bsp-whatsmeow` (outside this repo) reverses the escaping of `\`, `,`,
 `;` and line breaks in `FN` and `TEL`, as the writer escapes them, so "Pérez, Juan" arrives
 whole.
+
+## 6. A connector never heard reads as down
+
+`downOn` (`xi.ts:1582`) reads a row with no `heard_at`, whose `connected_at` is older than
+`SILENT_AFTER_MS`, as `connector down, never heard`. A connector that crashes before its
+first beat then shows down as one that stopped beating does. The read side alone changes.
+
+## 7. `log turns` walks a cursor
+
+`readTurns` (`turns.ts:368`) walks back by id, keeps only the turn it is assembling, and
+emits each one it finishes; it stops at the limit, at `--since`, or at the turn asked for.
+`PAGES` and the `pages: 50` of the views go, as does `ROWS` in `export.ts`: no window bounds
+what a read reaches, and memory holds one turn.
+
+## 8. One run log, bounded
+
+Whatever runs the org writes `data/run/liquen.log`, through one function: the supervisor
+attached or detached, and main raised alone by the REPL or the CLI. Each line is stamped
+`HH:MM:SS [name]`; attached, the same lines print to the terminal too. The append redirect
+in `detach` goes. The file is bounded as a background job's output is: past a cap, a hole is
+punched up to the newer half's first line (`readLog` in `exec/bash.ts`, `fallocate
+--punch-hole`), so the offsets stay and a `tail -f` reads on. The cap is a named constant.
+
+## 9. A member's sign-in can leave mail out
+
+`CONNECTORS.md`, beside `listen`, says how one account stays out of an ingest the service
+runs: its sign-in link carries `?scopes=` without the mail scope (`gmail.readonly`,
+`Mail.ReadWrite`), so its mailbox is neither polled nor readable on demand, while the org's
+mailbox is.

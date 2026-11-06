@@ -1,133 +1,84 @@
 # What is open
 
-The items still under discussion, grounded against main at `51764a0` (2026-11-06). Each says
+The items still under discussion, grounded against main at `f297308` (2026-11-06). Each says
 what holds, shows it, and ends on the options and the one recommended. What is decided lives
 in `CHANGES.md`, what is parked in `DESIGN.md` §10.
 
 ## Agents and surfaces
 
-- [ ] **A steering room outlives the agent's own account.** A steering room is a Slack
-  channel or Teams group chat named like an agent: whoever writes there steers the agent's
-  mind, `/y` settles its cards, and every line of the mind is copied out to it. The org bot
-  adopts it only for an agent that owns no account, and checks that once, at adoption.
-  *Example:* `sonar` runs with no account, and #sonar becomes its steering room. Later Pablo
-  runs `liquen connect slack bot --agent sonar` and declares `principals: ["pablo"]`, meaning
-  to steer sonar only by DM. Anyone in #sonar can still steer it and `/y` its cards, and
-  Pablo's DMs to sonar are copied into #sonar for the whole channel to read.
-  **Options:** (a) the view's rooms branch asks, every time, that the agent own no account,
-  as adoption does once: nothing written, and removing the account brings the room back;
-  (b) connecting an account releases the agent's rooms and says so; (c) leave it.
-  **Recommended:** (a).
-- [ ] **A connector that dies at boot never reads as down.** The supervisor sees every
-  exit and restarts with backoff, but writes only to stderr. "Down" is a `heard_at` older
-  than 120 seconds, so a connector that beat once and then crash-loops does show down; one
-  that never beat has no `heard_at` at all.
-  *Example:* a new Slack connector crashes 10 seconds after every start. The agent never
-  sees "connector down", and its sends just wait.
-  **Options:** (a) beat at boot: backfires, since a process that restarts within the window
-  keeps itself fresh; (b) the supervisor stamps the exit and its code on the service's rows,
-  which gives the reason but has the supervisor open the store; (c) a row with no
-  `heard_at` whose `connected_at` is over 120 seconds old reads "connector down, never
-  heard", a few lines on the read side. **Recommended:** (c), and (b) later if the reason
-  turns out to matter.
-
-## The run log
-
-- [ ] **`liquen.log` has one writer, and nothing trims it.** It is the detached
-  supervisor's terminal kept on disk: its own lines, and every child's output stamped
-  `HH:MM:SS [name]` (the roster, the edge, connector failures, the proxy's audit, a line per
-  turn). A foreground `liquen start` prints and writes nothing. A daemon the REPL or CLI
-  raises runs with its output discarded, a crash at boot included. The truncation commits
-  are about tool output and job spools; the file only grows.
-  *Example:* `new`'s file holds 9 MB after 42 hours, 45,381 of its 61,865 lines a Teams
-  subscription poll failing with its stack trace. Opened from the REPL with no org running,
-  the same org writes nothing there while `liquen log turns` lists every turn.
-  **Options:** who writes: (a) the REPL's daemon appends to the same file through the
-  helper `start -D` uses; (b) as (a), and main stamps its own lines when it runs alone, so
-  the file reads one format. Trimming: (c) roll it at `start -D`, no help to a long run;
-  (d) the supervisor copies it to `liquen.log.1` past a cap (10 MB, a named constant) and
-  truncates in place, the append redirect writing on; (e) logrotate, outside the product.
-  **Recommended:** (b) and (d). The Teams failure is worth a look of its own.
-- [ ] **`log turns` reads back a bounded window, for no recorded reason.** Plain
-  `log turns` and a one-turn export walk back 20,000 rows; `--since`, `--turn` and
-  `requests` 100,000. The likely reasons: each page reassembles every turn gathered so far,
-  so the cost grows quadratically, and every row sits in memory with its payload. The full
-  export already reads without bound.
-  *Example:* after a flood of 30,000 photo rows, `log turns` shows nothing older than the
-  last 20,000.
-  **Options:** (a) raise the caps; (b) an `--all`; (c) walk an id cursor, keep only the turn
-  being assembled, emit each finished one, stop at the limit, the `--since` or the turn
-  asked for; (d) a query for turn boundaries alone. **Recommended:** (c): it makes the bound
-  needless rather than larger.
+- [ ] **A steering room's writers all steer, principals or not.** A steering room is a
+  Slack channel or Teams group chat named like an agent, on the org's bot. Its lines fan in
+  to the mind signed by the wire's sender, and render as `<principal name="…">` whoever
+  wrote them; `principals` does not reach it (DESIGN §4). The mind's lines fan out to it as
+  to every surface. Another agent's line there comes in the same way, as a principal's,
+  where in any other shared room it is a world line in the WUM. The org bot adopts a room
+  only for an agent that owns no account, and the view never checks that again.
+  *Example:* #sonar steers `sonar`. Pablo gives sonar a bot of its own and declares
+  `principals: ["pablo"]`. In #sonar, Lucía writes "pausá el informe" and it reads as
+  `<principal name="Lucía">`; `scout`'s bot posts "listo el scraping" and it reads as
+  `<principal name="scout">`. Pablo's DMs to sonar, and sonar's answers, are copied into
+  #sonar for all three to read.
+  **The proposal:** the room stays, and `principals`, once declared, narrows who steers
+  there. A writer the roster knows as one of them (by the email on their profile, as a DM
+  resolves its member) steers; anyone else's line is a world line in the room's `<conv>`,
+  in the WUM, which the agent answers with `send` as in any room. Declared nowhere, every
+  writer steers, as today.
+  **What it leaves open, fan-out:** (a) every mind line still goes to the room, Pablo's DMs
+  included; (b) the room hears the turns its own steering lines opened, and the DMs keep
+  theirs; (c) a room with declared principals gets no fan-out, only what the agent sends
+  there. **Recommended:** the proposal, with (b): a principal who steers in the room reads
+  the answer there, and what Pablo says in a DM stays in the DM.
+- [ ] **A client raises main alone.** `liquen repl` or `liquen cli`, finding no agent's door
+  answering, raises `main.ts --ephemeral` (`attach.ts:100`): main without the supervisor, so
+  no connectors, edge or tunnel, ending 30 seconds after its last client. Only `liquen
+  start`, attached or `-D`, runs the whole org.
+  *Example:* with nothing running, you open the REPL and talk to `dubiku`. It answers, but
+  Slack and WhatsApp stay silent, and a send to Ana waits in the log until a `liquen
+  start`.
+  **Options:** (a) keep it: a REPL is a desk, and the world comes in only when the org is
+  started; (b) a client raises the supervisor, the whole org, detached as `-D` does;
+  (c) as (b), asked first. **Recommended:** (a), with the REPL saying on entry that the
+  world is not connected.
 
 ## Search
 
-- [ ] **Search returns a call's answer, never what came of it later.** `calls: true`
-  returns the agent's own calls, failed answers marked `—`. A late word is left out: a send
-  that failed to arrive still reads "sent", an asked call reads `pending_approval` whatever
-  the principal said. Failed sends show in message search as `status="failed"`, and no
-  filter selects them. `error` events (a provider down, a checkpoint that failed) are
-  searchable nowhere.
-  *Example:* the agent searches its calls of yesterday and reads
-  `send to Ana "call at 6" → sent`, though the send failed for good an hour later.
-  **Options:** (a) a call's line carries its latest late word (`· later: not delivered:
-  not_in_channel`); (b) a `failed: true` filter for calls; (c) `errors: true` over `error`
-  events. **Recommended:** (a), with (b) if wanted; `error` events wait for a trace tool,
-  since the agent can rarely act on them.
-
-## Scripts calling tools
-
-- [ ] **A script's call runs to the end once it starts.** The door answers with a signal
-  nothing aborts, and writes the call's row after the answer. A send's work is one row in
-  the log, so a call lasts milliseconds: Ctrl-C finishes at most the call already sent, and
-  a crash must land between two local writes. The message still goes and shows in search;
-  only its call row is missing. Nothing retries a door call, so nothing sends twice.
-  *Example:* you Ctrl-C a script in a loop of ten sends during the fourth. The fourth
-  still goes, the last six do not.
-  **Options:** (a) the door writes the call row first, and main answers at boot any it
-  finds unanswered; (b) a lock per call, worth it only once xi runs off main; (c) park
-  until scripts see real use. **Recommended:** (c).
-
-## The model's window
-
-- [ ] **Thinking drops come from upgrades, not from a long day.** A replayed thinking block
-  is tied to every byte before it; when one renders differently, the API drops the block,
-  and stderr logs a line. On `new` from 4 to 6 November, 57 drops over 70 mind turns sat
-  at five positions. Each streak began at the first turn after a restart onto new code, and
-  each ended at the next unload or checkpoint; none started mid-run.
-  *Example:* main restarts on a commit that changes how an old line renders. The next turns
-  answer without their earlier reasoning until the checkpoint folds that line.
-  **Options:** (a) close it and record the finding in `DESIGN.md`; (b) a drop count on the
-  turn's line; (c) a `liquen log` view of drops; (d) a checkpoint on upgrade.
-  **Recommended:** (a), the stderr line kept as the canary; (d) if upgrades grow frequent.
-
-## Config and accounts
-
-- [ ] **Listening switches a whole service on, every account under it.** `listen` sits on
-  `connections.google` or `connections.microsoft`, and each ingest it names runs for every
-  grant there: the org's mailbox and each member's alike. The Gmail poll reads the whole
-  inbox and sent folder of every grant that consented to read mail, and the default scopes
-  include it.
-  *Example:* the org signs in `info@acme.com`, and Ana signs in `ana@acme.com` only so her
-  agent sees her calendar. Every message of both mailboxes lands in the log; Ana's stays
-  visible only to her agent, but all of it is stored. There is no way to say "mail for
-  info@, calendar alone for Ana", nor "only the threads the agent took part in".
-  **Options:** (a) document the route that exists: Ana's sign-in link carries `?scopes=`
-  without `gmail.readonly`, so her mailbox is never polled, nor readable on demand; (b) a
-  `listen` per grant, set at sign-in; (c) a filter to the agent's threads, costly.
-  **Recommended:** (a) now, (b) when a member asks.
+- [ ] **Search returns a call's answer, never what came of it later.** `calls: true` pairs
+  each call with its first answer; a late word (a send's delivery failing, an approved call's
+  result, a refusal, a lapse) is a `tool_result` flagged `update` or `gated`, which search
+  skips. A failed send shows in message search as `status="failed"`, and no filter selects
+  failures. `error` events are searchable nowhere.
+  *Today*, the agent searches yesterday's calls:
+  ```
+  <call id="a1b2c3" at="5 Nov 2026 18:02" seen="checkpoint">send(to: Ana, text: call at 6) → sent · id d4e5f6 — the service delivers it; you are told only if it doesn't arrive</call>
+  <call id="b7c8d9" at="5 Nov 2026 18:10" seen="checkpoint">send(to: Pablo, text: el presupuesto) → {"status":"pending_approval","id":"b7c8d9","note":"your principal was asked and has not answered yet — the call has NOT run. …</call>
+  ```
+  though the first never arrived and the second went out at 18:14. Message search shows the
+  first as `<msg id="d4e5f6" self at="5 Nov 2026 18:02" status="failed" error="not_in_channel">call at 6</msg>`.
+  *With (a)*, each line ends on its latest word:
+  ```
+  <call id="a1b2c3" at="5 Nov 2026 18:02" seen="checkpoint">send(to: Ana, text: call at 6) → sent · id d4e5f6 — the service delivers it; you are told only if it doesn't arrive · 19:05 — not delivered: not_in_channel</call>
+  <call id="b7c8d9" at="5 Nov 2026 18:10" seen="checkpoint">send(to: Pablo, text: el presupuesto) → {"status":"pending_approval",…} · 18:14 → sent · id e1f2a3 — the service delivers it; you are told only if it doesn't arrive</call>
+  ```
+  *With (b)*, `search(calls: true, failed: true)` returns the first line alone: a call whose
+  answer or latest word is an error.
+  **Options:** (a) the latest late word on the call's line; (b) a `failed: true` filter;
+  (c) `errors: true` over `error` events. **Recommended:** (a), with (b) if wanted; `error`
+  events wait for a trace tool, since the agent can rarely act on them.
 
 ## Infrastructure
 
-- [ ] **The proxy names no agent on a blind tunnel, nor on an org-wide grant.** Every shell
-  dials one proxy port. For a host a grant fronts, the proxy opens TLS, swaps the
-  placeholder token for the real one, and learns the agent from the placeholder. Any other
-  host it only pipes, and logs `CONNECT host` with no one behind it. A grant the whole org
-  shares carries no agent either.
+- [ ] **The proxy names no agent on a blind tunnel, nor on an org-wide grant.** For a host a
+  grant fronts, the proxy learns the agent from the placeholder it swaps: an agent's own
+  grant names it, an org grant names nobody. Any other host it only pipes, and logs
+  `CONNECT host` with no one behind it. An agent's own grant works today:
+  `liquen connect token parallel --env PARALLEL_API_KEY --hosts api.parallel.ai --agent
+  sonar` gives sonar a placeholder of its own, and its egress rows read `agent_id=sonar`.
+  Two agents may each hold one for the same host; an org grant on the same variable
+  outranks both, so it goes first.
   *Example:* `[proxy] - CONNECT pypi.org:443 → 200` does not say who installed what. On
-  `new`, all 98 rows of the egress table name no agent, the 21 swapped ones included, since
+  `new`, all 98 egress rows name no agent, the 21 swapped ones included, since
   `token:parallel` is the org's.
   **Options:** (a) the agent rides in the proxy URL, `http://<agent>:<nonce>@127.0.0.1:port`,
   which curl, pip, git, npm, Go and node send on every request and tunnel; (b) a port per
-  agent; (c) leave it. **Recommended:** (a): the agent comes from the connection, not the
-  token.
+  agent; (c) leave tunnels blind, and give an agent its own grant where a key's use must
+  be traced. **Recommended:** (a): the agent comes from the connection, whatever the host.
