@@ -636,6 +636,71 @@ Deno.test("send: a room the window holds nothing of is read first, and the send 
   }
 });
 
+Deno.test("send: a room whose last row is a reaction or a transcript is read by the line before it", async () => {
+  const leaves: Record<string, Part> = {
+    reaction: { type: "data", kind: "reaction", data: { name: "👍", unicode: "👍" } },
+    transcript: { type: "text", kind: "transcript", text: "¿a qué hora?" },
+  };
+  for (const [leaf, part] of Object.entries(leaves)) {
+    const dir = await Deno.makeTempDir();
+    const log = await openLog(dir);
+    await seedOrg(onFiles(`${dir}/docs`));
+    await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+    await log.upsertConnections([
+      { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+    ]);
+    const room = { address: "5492610000001", kind: "direct" as const, name: "Juan P" };
+    await log.publish({
+      ts: new Date(Date.now() - 41 * 3_600_000).toISOString(),
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "5491100000000",
+        conversation: room,
+        sender: { address: room.address, name: room.name },
+        external_id: "wa:j1",
+      },
+      parts: [{ type: "text", kind: "text", text: "qué onda, venís el sábado?" }],
+    });
+    // the room's last row wears no id: nothing on any page can name it
+    await log.publish({
+      ts: new Date(Date.now() - 40 * 3_600_000).toISOString(),
+      type: "message",
+      envelope: { service: "whatsapp", connection_address: "5491100000000", conversation: room },
+      payload: { action: "add", ref_external_id: "wa:j1" },
+      parts: [part],
+    });
+    const send = {
+      kind: "tool_use" as const,
+      name: "send",
+      input: { to: room.address, text: "dale" },
+    };
+    const { transport } = scripted([
+      ok([send]),
+      ok([send]),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ]);
+    const config: AgentConfig = {
+      ...CONFIG,
+      since: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+      gate: () => "allow",
+    };
+    const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+    try {
+      await log.publish(principalMsg("decile al Juancho que sí"));
+      for (let i = 0; i < 8; i++) await xi(config, ports);
+      const outputs = (await log.read({ types: ["tool_result"] })).map((r) =>
+        String((r.parts[0] as { data: { output: string } }).data.output)
+      );
+      assertStringIncludes(outputs[0], "not sent: read 5492610000001 first", leaf);
+      assert(!outputs[1].includes("not sent"), `${leaf}: the refusal's page read the room`);
+    } finally {
+      await log.close();
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});
+
 Deno.test("search: a page that reaches a room's newest line reads it, profile whole; an older hit does not", async () => {
   for (const asked of [{ text: "asado" }, {}] as Record<string, string>[]) {
     const dir = await Deno.makeTempDir();

@@ -125,6 +125,7 @@ import {
   hhmm,
   type HitsOpts,
   isLate,
+  isLeaf,
   isUpdate,
   type Member,
   namedRoom,
@@ -2997,9 +2998,11 @@ async function unreadOf(
     limit: BEFORE_LINES,
   }) as MessageEvent[];
   if (rows.length === 0) return undefined;
+  const newest = rows.findLast((e) => !isLeaf(e));
   const read = window.some((e) =>
     (e.type === "message" && e.envelope.conversation.address === address) ||
-    (e.type === "tool_result" && showsNewest(String(e.parts[0].data.output ?? ""), rows.at(-1)!))
+    (e.type === "tool_result" &&
+      showsNewest(String(e.parts[0].data.output ?? ""), address, newest))
   );
   if (read) return undefined;
   const view = await searchView(config, ports);
@@ -3014,12 +3017,14 @@ async function unreadOf(
   ].join("\n\n");
 }
 
-/** Whether a page shows a room's newest line: the room's `<conv>`, and in it that line's
- *  id. A page of older hits shows the room without its last word. */
-function showsNewest(output: string, newest: MessageEvent): boolean {
-  const address = newest.envelope.conversation.address.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`<conv [^>]*address="${address}"`).test(output) &&
-    output.includes(`id="${shortId(newest.id)}"`);
+/** Whether a page shows a room's newest line: the room's `<conv>`, and in it the id of the
+ *  newest line that wears one. A reaction or a transcript wears none, so the line before it
+ *  stands for the room's last word; a room of leaves alone is read by its `<conv>`. A page
+ *  of older hits shows the room without its last word. */
+function showsNewest(output: string, address: string, newest?: MessageEvent): boolean {
+  const escaped = address.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`<conv [^>]*address="${escaped}"`).test(output) &&
+    (newest === undefined || output.includes(`id="${shortId(newest.id)}"`));
 }
 
 /** The docs that name a room (§8), whole: a profile is what the agent keeps of the people

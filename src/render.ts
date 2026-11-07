@@ -2051,6 +2051,13 @@ interface LineOpts {
 /** The states of a message that went out. */
 const OUT = new Set(["dispatched", "delivered", "read"]);
 
+/** Whether a line wears no `id`: an add or a remove (a reaction, a transcript) is a leaf,
+ *  and nothing in the vocabulary points back at one. */
+export function isLeaf(e: MessageEvent): boolean {
+  const action = e.payload?.action;
+  return action === "add" || action === "remove";
+}
+
 function msgLine(
   e: MessageEvent,
   session: SessionRef,
@@ -2080,7 +2087,7 @@ function msgLine(
     const body = ref.target && !ref.shown ? escText(textOf(ref.target)) : "";
     return `<msg ${head}${re} action="delete">${body}</msg>`;
   }
-  if (action === "add" || action === "remove") {
+  if (isLeaf(e)) {
     // agnostic over WHAT was added — the part names itself (§3). A transcript is the
     // harness's derived words for the audio its `re` points at: no `id` (nothing in the
     // vocabulary points at one), and it wears the AUTHOR OF THAT AUDIO — the words are the
