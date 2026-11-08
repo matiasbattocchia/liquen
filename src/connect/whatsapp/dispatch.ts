@@ -10,7 +10,7 @@
  *
  * Media rides the `media_url` leg: the bridge GETs the url and uploads the bytes to
  * WhatsApp itself (encrypt + CDN push are ITS job — the multi-device protocol has no
- * send-by-link, so whoever sends must hold the plaintext). A local `file://` part needs
+ * send-by-link, so whoever sends must hold the plaintext). A kept `storage://` part needs
  * a url the bridge can reach: the `mediaUrl` seam mints a RELATIVE signed path
  * (`/m/<payload>.<mac>`, `store/media.ts`) which the bridge resolves against the
  * session's receiver — our ingest, registered at pairing — and fetches there. An external `http(s)` part passes
@@ -297,7 +297,7 @@ export function bridgeSend(
  *  Returns stop: unsubscribe, settle the posts in flight, release the handles. */
 export async function runDispatch(): Promise<() => Promise<void>> {
   const { openStore } = await import("../../store/mod.ts");
-  const { bytesOf, mediaSecret, saveMedia, signMediaPath } = await import(
+  const { mediaSecret, signMediaPath } = await import(
     "../../store/media.ts"
   );
   const { isStored } = await import("../../store/storage.ts");
@@ -312,18 +312,11 @@ export async function runDispatch(): Promise<() => Promise<void>> {
 
   // The bytes leave by being FETCHED: a signed, expiring path rides `media_url`, the
   // bridge resolves it against the address it already delivers to and GETs it there —
-  // the INGEST serves it (one door in, §4), out of the object store. A file of the
-  // agent's workspace is kept there first, so the path names an object. The file never
+  // the INGEST serves it (one door in, §4), out of the object store. The file never
   // rides the log or the agent's context (§9), and a retry re-fetches.
-  const storage = store.storage();
   const mediaUrl: WAMediaUrl = async (f) => {
-    let uri = f.file.uri;
-    if (!isStored(uri)) {
-      const bytes = await bytesOf(storage, uri);
-      if (!bytes) throw new DispatchError(`${uri}: the file is gone`, 400);
-      uri = (await saveMedia(storage, bytes, f.file)).uri;
-    }
-    return signMediaPath(uri, await mediaSecret(creds));
+    if (!isStored(f.file.uri)) throw new DispatchError(`${f.file.uri}: not a kept file`, 400);
+    return signMediaPath(f.file.uri, await mediaSecret(creds));
   };
 
   const send = bridgeSend(base, token);

@@ -20,6 +20,7 @@ import type { Draft, Envelope, Event, Session, ToolUseEvent } from "./types.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { estTokens } from "./render.ts";
 import { localFiles } from "./store/media.ts";
+import { fileStorage } from "./store/storage.ts";
 import { parseDirect } from "./session.ts";
 
 const MIND = "mind@a1"; // the session's own conversation (§4)
@@ -1212,26 +1213,23 @@ Deno.test("windowOf: a late-stamped row is inside by where it landed — positio
   });
 });
 
-/* ── attachmentsOf: a tool's picture is pinned the moment it is attached (§5) ── */
+/* ── attachmentsOf: a tool's picture is kept the moment it is attached (§5) ── */
 
-Deno.test("attachmentsOf: the bytes ride on the result — a rewrite of the path leaves the earlier read its picture", async () => {
-  const root = await Deno.makeTempDir();
+Deno.test("attachmentsOf: each read is kept as it was — a rewrite of the path leaves the earlier read its picture", async () => {
+  const root = await Deno.realPath(await Deno.makeTempDir());
   try {
+    const files = localFiles({ home: root, roots: [root] }, fileStorage(`${root}/data`));
     const shot = `${root}/shot.png`;
     await Deno.writeFile(shot, new Uint8Array([1, 2, 3]));
-    const first = await attachmentsOf([shot], localFiles());
+    const first = await attachmentsOf([shot], files);
     await Deno.writeFile(shot, new Uint8Array([9, 9, 9])); // the fix: same path, new bytes
-    const second = await attachmentsOf([shot], localFiles());
-    const uri = first.parts[0].file.uri;
-    assertEquals(second.parts[0].file.uri, uri); // one path, one uri…
-    assertEquals(first.pinned[uri].data, "AQID"); // …two pictures, each the one it saw
-    assertEquals(second.pinned[uri].data, "CQkJ");
-    // what can't inline pins nothing, and a vanished path is no attachment at all
-    await Deno.writeTextFile(`${root}/notes.txt`, "hola");
-    const text = await attachmentsOf([`${root}/notes.txt`, `${root}/gone.png`], localFiles());
-    assertEquals(text.parts.length, 1);
-    assertEquals(text.pinned, {});
-    assertEquals(text.refused, []);
+    const second = await attachmentsOf([shot], files);
+    const [a, b] = [first.parts[0].file.uri, second.parts[0].file.uri];
+    assert(a !== b); // one path, two objects, each the picture it saw
+    assertEquals([first.paths, second.paths], [{ [a]: "shot.png" }, { [b]: "shot.png" }]);
+    // a vanished path is no attachment at all, and no refusal
+    const gone = await attachmentsOf([`${root}/gone.png`], files);
+    assertEquals([gone.parts, gone.refused], [[], []]);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

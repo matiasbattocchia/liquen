@@ -593,40 +593,6 @@ export function logSuite(s: Substrate): void {
     });
   });
 
-  Deno.test("publish with shed: a session's pinned bytes up to the bound go, the rest of the row, later rows and other sessions' stay (§5)", async () => {
-    await withLog(async (log) => {
-      const result = (id: string, session_id: string, extra: Record<string, unknown>): Draft => ({
-        id,
-        ts: `2026-07-16T00:00:${id}Z`,
-        type: "tool_result",
-        agent: { id: "a1", session_id },
-        envelope: {
-          service: "local",
-          connection_address: "default",
-          conversation: { address: "mind@a1" },
-        },
-        payload: { turn_id: "t1", ref_id: "u1" },
-        parts: [{ type: "data", kind: "tool_result", data: { output: "ok" } }],
-        extra,
-      });
-      const block = { media_type: "image/png", data: "AQID" };
-      await log.publish(result("01", "s1", { media: { "file:///w/a.png": block }, note: "kept" }));
-      await log.publish(result("02", "s2", { media: { "file:///w/b.png": block } }));
-      await log.publish(result("03", "s1", { note: "no pins" }));
-      await log.publish(result("04", "s1", { media: { "file:///w/c.png": block } }));
-      const checkpoint = await log.publish(
-        { ...msg("05", "mind@a1", "done"), agent: { id: "a1", session_id: "s1" } },
-        { shed: { agentId: "a1", sessionId: "s1", through: "03" } },
-      );
-      assertEquals(checkpoint?.id, "05");
-      const by = Object.fromEntries((await log.read()).map((e) => [e.id, e.extra]));
-      assertEquals(by["01"], { note: "kept" }); // the bytes went, the sidecar stayed
-      assertEquals(by["02"], { media: { "file:///w/b.png": block } }); // another session's
-      assertEquals(by["03"], { note: "no pins" });
-      assertEquals(by["04"], { media: { "file:///w/c.png": block } }); // past what it covers
-    });
-  });
-
   Deno.test("events.extra: wire sidecar round-trips and MERGES on the external-id upsert (§3)", async () => {
     await withLog(async (log) => {
       const e = msg("01", "C1", "hola");

@@ -356,14 +356,14 @@ cases("a file the agent attaches is kept in the object store", async (shell, pla
     await run(shell, { command: "printf '\\x89PNG\\r\\n\\x1a\\nrest' > pic.png" });
     const storage = fileStorage(dataDir);
     const files = gatewayFiles(place.gateway, { home: place.workspace, storage });
-    const part = await files.resolve("pic.png");
+    const { part, named } = await files.resolve("pic.png");
+    assertEquals(named, "pic.png");
     assertEquals(part.kind, "image");
     assertEquals(part.file.mime_type, "image/png");
     assertEquals(part.file.name, "pic.png");
     assert(/^storage:\/\/media\/[0-9a-f]{32}\.png$/.test(part.file.uri), part.file.uri);
     // a kept object passes through as it is
-    assertEquals((await files.resolve(part.file.uri)).file.uri, part.file.uri);
-    assertEquals((await files.snapshot(part))?.media_type, "image/png");
+    assertEquals((await files.resolve(part.file.uri)).part.file.uri, part.file.uri);
     await assertRejects(() => files.resolve("gone.png"), Error, "no such file");
     await assertRejects(() => files.resolve("/etc/passwd"), Error, "outside your files");
     // with the shell's cwd, a relative reference is from where the shell stands
@@ -374,7 +374,7 @@ cases("a file the agent attaches is kept in the object store", async (shell, pla
       cwd: shell.cwd,
       storage,
     });
-    assertEquals((await standing.resolve("b.png")).file.name, "b.png");
+    assertEquals((await standing.resolve("b.png")).named, "shots/b.png");
     await assertRejects(() => standing.resolve("../../etc/passwd"), Error, "outside your files");
   } finally {
     await Deno.remove(dataDir, { recursive: true });

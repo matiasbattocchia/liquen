@@ -22,19 +22,8 @@
  */
 
 import { encodeBase32 } from "@std/encoding";
-import { posix } from "node:path";
-import {
-  filePartOf,
-  type Files,
-  isExternal,
-  kindOf,
-  loadMediaBlock,
-  mimeOf,
-  pathOf,
-  saveMedia,
-  sniffMime,
-} from "../store/media.ts";
-import { isStored, type Storage } from "../store/storage.ts";
+import { type Files, groundFiles } from "../store/media.ts";
+import type { Storage } from "../store/storage.ts";
 import type { CallRef, ExecFacts, ExecOutcome, ExecTool } from "../xi.ts";
 import type { Json } from "../types.ts";
 import { newId } from "../store/id.ts";
@@ -167,34 +156,18 @@ export function parseExecStream(text: string): GatewayExec {
   throw new Error("sandbox gateway: the exec stream ended without an exit");
 }
 
-/** The files port over a remote sandbox (§9): a reference is a path in the agent's folder
- *  there — relative to where the shell stands (`cwd`, else the folder), or absolute, and
- *  either way under the folder — and resolving one moves its bytes into the object store,
- *  content-named, so the part it answers is an object every reader already takes and the
- *  snapshot is of bytes that never change. A kept object and a link pass through as they
- *  are. */
+/** The files port over a remote sandbox (§9): the ground is the agent's folder there, a
+ *  path resolved where the shell stands (`cwd`, else the folder) and read through the
+ *  gateway, and the folder the one root it may lie in. */
 export function gatewayFiles(
   gateway: Gateway,
   { home, cwd, storage }: { home: string; cwd?: () => string; storage: Storage },
 ): Files {
-  return {
-    async resolve(ref) {
-      if (isExternal(ref) || isStored(ref)) return filePartOf(ref, undefined, storage);
-      const path = posix.resolve(cwd?.() ?? home, pathOf(ref));
-      if (path !== home && !path.startsWith(`${home}/`)) {
-        throw new Error(`${ref}: outside your files — attach from your folder`);
-      }
-      const bytes = await gateway.read(path);
-      if (bytes === null) throw new Error(`${ref}: no such file in your folder`);
-      const named = mimeOf(path) ?? sniffMime(bytes) ?? undefined;
-      const file = await saveMedia(storage, bytes, {
-        name: posix.basename(path),
-        ...(named ? { mime_type: named } : {}),
-      });
-      return { type: "file", kind: kindOf(file.mime_type), file };
-    },
-    snapshot: (part) => loadMediaBlock(part.file.uri, storage),
-  };
+  return groundFiles(
+    { real: (path) => Promise.resolve(path), read: (path) => gateway.read(path) },
+    { home, ...(cwd ? { cwd } : {}), roots: [home] },
+    storage,
+  );
 }
 
 /** Where a remote shell stands and what it is issued. */

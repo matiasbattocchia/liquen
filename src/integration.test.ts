@@ -26,6 +26,7 @@ import { MONTHS } from "./moment.ts";
 import type { AgentRow } from "./store/agents.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { localFiles } from "./store/media.ts";
+import { fileStorage } from "./store/storage.ts";
 import { onFiles, seedOrg } from "./store/seed.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
@@ -328,6 +329,57 @@ Deno.test("send: directed message + sent result, both cause-linked", async () =>
       assertEquals((directed[0] as Event).payload?.ref_id, use.id);
     },
   );
+});
+
+Deno.test("send: a file is kept when it is sent — the part names the object, the path the agent named rides extra", async () => {
+  const ground = await Deno.realPath(await Deno.makeTempDir());
+  const home = `${ground}/agents/a1`;
+  await Deno.mkdir(`${home}/out`, { recursive: true });
+  await Deno.writeTextFile(`${home}/out/report.pdf`, "%PDF-1.7 informe");
+  const storage = fileStorage(`${ground}/data`);
+  try {
+    await scenario(
+      [
+        ok(
+          [{
+            kind: "tool_use",
+            name: "send",
+            input: {
+              to: "wa:mariana",
+              text: "el informe",
+              files: ["out/report.pdf"],
+              connection: "wa",
+            },
+          }],
+          "tool_use",
+        ),
+        ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+      ],
+      async ({ publish, read }) => {
+        await publish(principalMsg("mandale el informe a mariana"));
+        await waitFor(async () => (await read("tool_result")).length === 1);
+        const [sent] = (await read("message")).filter((e) =>
+          e.envelope.conversation.address === "wa:mariana"
+        ) as MessageEvent[];
+        const file = sent.parts.find((p) => p.type === "file")!;
+        assert(
+          file.type === "file" && /^storage:\/\/media\/[0-9a-f]{32}\.pdf$/.test(file.file.uri),
+        );
+        assertEquals(file.file.name, "report.pdf");
+        assertEquals(sent.extra?.paths, { [file.file.uri]: "out/report.pdf" });
+        // what the history shows stays what was sent, whatever the path holds next
+        await Deno.writeTextFile(`${home}/out/report.pdf`, "%PDF-1.7 otro");
+        const kept = await storage.get(file.file.uri.slice("storage://".length));
+        assertEquals(new TextDecoder().decode(kept!), "%PDF-1.7 informe");
+        assert(!JSON.stringify(sent).includes(ground)); // no host path in the row
+      },
+      {},
+      [],
+      { files: localFiles({ home, roots: [home] }, storage) },
+    );
+  } finally {
+    await Deno.remove(ground, { recursive: true });
+  }
 });
 
 /** The log keys on addresses and the model reads names — `search` hands it both and the
@@ -4467,14 +4519,21 @@ Deno.test("a tool's attachment outside the agent's ground is refused, and the re
         await publish(principalMsg("look at both"));
         await waitFor(async () => (await read("tool_result")).length === 1);
         const [result] = await read("tool_result") as ToolResultEvent[];
-        // the agent's own file rides; the substrate's does not, and the refusal is in the output
-        assertEquals(result.parts.filter((p) => p.type === "file").length, 1);
+        // the agent's own file rides, kept, named by its path; the substrate's does not, and
+        // the refusal is in the output
+        const kept = result.parts.filter((p) => p.type === "file");
+        assertEquals(kept.length, 1);
+        assert(kept[0].file.uri.startsWith("storage://media/"));
+        assertEquals(result.extra?.paths, { [kept[0].file.uri]: "mine.png" });
         assertStringIncludes(String(result.parts[0].data.output), "attachment refused");
         assertStringIncludes(String(result.parts[0].data.output), "log.db");
       },
       {},
       [],
-      { exec: { attach }, files: localFiles({ home, roots: [home] }) },
+      {
+        exec: { attach },
+        files: localFiles({ home, roots: [home] }, fileStorage(`${ground}/data`)),
+      },
     );
   } finally {
     await Deno.remove(ground, { recursive: true });

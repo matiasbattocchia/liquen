@@ -89,7 +89,7 @@ import { momentOf } from "./moment.ts";
 import { calendarEntries, dayOf, daySection, docEntries, docName, nextDay } from "./agenda.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import type { Sweeper } from "./store/sweep.ts";
-import { type Files, localFiles, type MediaBlock, type MediaLoader } from "./store/media.ts";
+import type { Files, MediaBlock, MediaLoader } from "./store/media.ts";
 import { isStored } from "./store/storage.ts";
 import type {
   BinDir,
@@ -133,7 +133,6 @@ import {
   ownComplex,
   ownSide,
   ownVoice,
-  pinnedMedia,
   profileEl,
   renderHits,
   roomKey,
@@ -1276,22 +1275,7 @@ export async function xi(
     throw err;
   }
   try {
-    // a checkpoint takes what it covers out of every later request (§5), so the bytes the
-    // results it covers pinned are shed in the same transaction
-    const summary = (last as Event[]).find((e) => e.type === "summary");
-    const landed = await ports.log.publishAndRelease(
-      last,
-      lock.lease(),
-      summary?.type === "summary"
-        ? {
-          shed: {
-            agentId: session.agentId,
-            sessionId: session.id,
-            through: summary.payload.covers[1],
-          },
-        }
-        : undefined,
-    );
+    const landed = await ports.log.publishAndRelease(last, lock.lease());
     // the verdict the turn's own end implies, disclosed here: a closing message pokes the
     // next invocation, which discloses again, but a terminal error or a cancel wakes
     // nothing on purpose (`relevant`), and the idle they leave would otherwise go unsaid
@@ -1479,43 +1463,58 @@ async function mediaFor(
 ): Promise<Map<string, MediaBlock>> {
   const table = new Map<string, MediaBlock>();
   if (!load) return table;
-  // a tool's attachment carries its own bytes (`pinnedMedia`, §5): render reads them off
-  // the event, so the port is not asked — and could not answer for what the path held then
-  const pinned = new Set(events.flatMap((e) => Object.keys(pinnedMedia(e))));
   for (const uri of wantedMedia(events, session, compactAt)) {
-    if (pinned.has(uri)) continue;
     const b = await load(uri);
     if (b) table.set(uri, b);
   }
   return table;
 }
 
+/** File references resolved through the files port (§9): the parts they send as, each
+ *  kept the moment it is named, and the paths the agent named them by, per uri — what
+ *  `extra.paths` keeps. */
+export async function attached(
+  refs: string[],
+  port: Files,
+): Promise<{ parts: FilePart[]; paths: Record<string, string> }> {
+  const parts: FilePart[] = [];
+  const paths: Record<string, string> = {};
+  for (const ref of refs) {
+    const { part, named } = await port.resolve(ref);
+    parts.push(part);
+    if (named !== undefined) paths[part.file.uri] = named;
+  }
+  return { parts, paths };
+}
+
 /** A tool outcome's attachments (§5 media), resolved through the files port: the parts
- *  the result carries, the bytes PINNED per uri for the inlineable ones — read now, while
- *  the file is what the tool just made, since the next step may rewrite the path — and
- *  the refusals. A path that vanished mid-turn drops; one outside the agent's ground is
- *  refused, and the refusal is SAID in the output, because the model asked for bytes and
- *  must learn why none came. */
+ *  the result carries, the paths they were named by, and the refusals. A path that
+ *  vanished mid-turn drops; one outside the agent's ground is refused, and the refusal is
+ *  SAID in the output, because the model asked for bytes and must learn why none came. */
 export async function attachmentsOf(
   files: string[],
   port: Files,
-): Promise<{ parts: FilePart[]; pinned: Record<string, MediaBlock>; refused: string[] }> {
+): Promise<{ parts: FilePart[]; paths: Record<string, string>; refused: string[] }> {
   const parts: FilePart[] = [];
-  const pinned: Record<string, MediaBlock> = {};
+  const paths: Record<string, string> = {};
   const refused: string[] = [];
   for (const f of files) {
     try {
-      const part = await port.resolve(f);
-      parts.push(part);
-      const block = await port.snapshot(part);
-      if (block) pinned[part.file.uri] = block;
+      const one = await attached([f], port);
+      parts.push(...one.parts);
+      Object.assign(paths, one.paths);
     } catch (err) {
       if (err instanceof Deno.errors.NotFound) continue;
       refused.push(err instanceof Error ? err.message : String(err));
     }
   }
-  return { parts, pinned, refused };
+  return { parts, paths, refused };
 }
+
+/** Without a files port (a test), a reference has nowhere to resolve. */
+const NO_FILES: Files = {
+  resolve: (ref) => Promise.reject(new Error(`${ref}: no files to attach here`)),
+};
 
 /** The anchor's standing lists (§5): what is still in the air — background jobs, surfaces
  *  down, open approvals, unanswered conversations — one grammar, so the model reads them
@@ -1878,7 +1877,7 @@ async function answerer(
     const { output: raw, files, async, is_error, quiet } = isOutcome(outcome)
       ? outcome
       : { output: outcome, files: [], async: undefined, is_error: undefined, quiet: undefined };
-    const { parts, pinned, refused } = await attachmentsOf(files, ports.files ?? localFiles());
+    const { parts, paths, refused } = await attachmentsOf(files, ports.files ?? NO_FILES);
     const output = refused.length && typeof raw === "string"
       ? `${raw}${raw ? "\n" : ""}${refused.map((r) => `[attachment refused: ${r}]`).join("\n")}`
       : raw;
@@ -1891,7 +1890,7 @@ async function answerer(
     // nobody. What is said of it later is the mind's, and wakes it like any late word.
     const bash = call === undefined ? use.extra?.bash : undefined;
     const extra = {
-      ...(Object.keys(pinned).length ? { media: pinned } : {}),
+      ...(Object.keys(paths).length ? { paths } : {}),
       ...(exec ? { exec } : {}),
       ...(typeof bash === "string" ? { bash } : {}),
     };
@@ -3434,11 +3433,11 @@ async function execute(
         conversation,
       }
       : { service: "local" as const, connection_address: LOCAL_CONNECTION, conversation };
-    // attachments (§5 media): paths → FileParts, statted and classified broker-side; a
-    // missing path throws here and the tool_result carries the error back to the model
-    const files = Array.isArray(args.files)
-      ? await Promise.all(args.files.map((f) => (ports.files ?? localFiles()).resolve(String(f))))
-      : [];
+    // attachments (§5 media): each kept as it is named, through the files port; a missing
+    // path throws here and the tool_result carries the error back to the model
+    const { parts: files, paths } = Array.isArray(args.files)
+      ? await attached(args.files.map(String), ports.files ?? NO_FILES)
+      : { parts: [], paths: {} };
     const body = args.text === undefined ? "" : String(args.text);
     const glyph = args.react === undefined ? "" : String(args.react);
     // a pin and a contact card each ride the wire as a message of its own kind (§5 parts):
@@ -3522,6 +3521,8 @@ async function execute(
           ...(location ? [location] : []),
           ...(contacts ? [contacts] : []),
         ],
+      // the paths the files were named by, per uri: the parts name what was sent
+      ...(Object.keys(paths).length ? { extra: { paths } } : {}),
     };
     const sent = await ports.log.publish(msg); // a full draft (parts present) always stores
     // The answer in words (`SendResult`): the word the instructions use, the line's handle,

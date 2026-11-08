@@ -6,9 +6,9 @@
  * retry, the dispatch echo and a file forwarded to three chats all converge on one object
  * (the same idempotence the log gets from `external_id`).
  *
- * A uri has three schemes: `storage://` for what the harness keeps, `file://` for the
- * agent's workspace (a file about to go out), `https://` for an outside link. The uri IS
- * the durable handle: a `FilePart.uri` holds it, render shows it in a kind marker
+ * A part's uri has two schemes: `storage://` for what the harness keeps, received or sent
+ * (a file of the agent's workspace is kept the moment it is named, `Files`), and
+ * `https://` for an outside link. The uri IS the durable handle: a `FilePart.uri` holds it, render shows it in a kind marker
  * (`<image/>`, `<audio/>`…) the agent can re-read any time (`aread`), and `mediaLoader`
  * turns it into a real Messages-API base64 block beside it, until the checkpoint covers it
  * or the window's media budget is spent (§5).
@@ -16,8 +16,8 @@
 
 import { encodeBase64 } from "@std/encoding/base64";
 import { decodeBase64Url, encodeBase64Url } from "@std/encoding/base64url";
-import { basename, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { basename, posix } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FilePart, MediaKind } from "../types.ts";
 import type { Credentials } from "./credentials.ts";
 import { isStored, keyOf, plainKey, type Storage, uriOf } from "./storage.ts";
@@ -345,50 +345,102 @@ const encode = (s: string): BufferSource => new TextEncoder().encode(s) as Buffe
 /** Where an agent's file references may point (§9 data classification): a relative path
  *  is from `cwd` — where the session's shell stands, the anchor's `cwd:` line — else from
  *  `home`, the agent's own folder; `roots` are the directories a reference may resolve
- *  INTO, symlinks followed first, so a link is judged by where it points. The same ground
- *  the agent's uid can read; the harness reads no further. */
+ *  INTO, judged by where the path really leads. The same ground the agent's uid can read;
+ *  the harness reads no further. */
 export interface FileScope {
   home: string;
   cwd?: () => string;
   roots: string[];
 }
 
-/** The files port (§9): a file reference → the `FilePart` it sends as. `send({files})`
- *  and a tool's attachments both go through it, so where a reference may point and what
- *  it takes to read one is the adapter's whole say. The local adapter is `localFiles`; a
- *  remote sandbox's (`gatewayFiles`) moves the bytes onto the media shelf and answers with
- *  their uri there. */
-export interface Files {
-  /** Throws when the reference does not exist or points outside what the agent may
-   *  attach — the tool_result carries that back as the error it is. */
-  resolve(ref: string): Promise<FilePart>;
-  /** The bytes a just-resolved part holds NOW, as the block it inlines as — null when it
-   *  can't inline (kind, cap, gone). A tool's attachment is a snapshot of a file the agent
-   *  keeps rewriting, so its result PINS this (§5): what the model saw stays what it saw,
-   *  whatever the path holds by the next step. */
-  snapshot(part: FilePart): Promise<MediaBlock | null>;
+/** The ground a files adapter reads: where a path really leads (links followed, where the
+ *  ground has them; throws `NotFound` when nothing is there) and the bytes it holds, null
+ *  when none. */
+export interface FileGround {
+  real(path: string): Promise<string>;
+  read(path: string): Promise<Uint8Array | null>;
 }
 
-/** The local adapter: this filesystem, under a scope — or, without one, whatever the
- *  process can read. */
-export const localFiles = (scope?: FileScope, storage?: Storage): Files => ({
-  resolve: (ref) => filePartOf(ref, scope, storage),
-  snapshot: (part) => loadMediaBlock(part.file.uri, storage),
-});
+/** A reference resolved (§9): the part it sends as, and, for a file of the agent's ground,
+ *  the path the agent named, relative to its folder, or headed by the folder it lies in
+ *  (`shared/plan.pdf`). No host path: the log keeps this and the object. */
+export interface Attached {
+  part: FilePart;
+  named?: string;
+}
 
-/** A file reference → a `FilePart` (the send side). A local path (bare or `file://`)
- *  is statted and classified — throws when it doesn't exist or, under a `scope`, when it
- *  resolves outside the scope's roots. A `storage://` uri names an object already kept,
- *  read for its size and kind. An `http(s)` link passes through UNTOUCHED (no fetch, no
- *  size — mime guessed from the URL's extension): the platforms that take links send it
- *  as-is. */
-export async function filePartOf(
-  ref: string,
-  scope?: FileScope,
-  storage?: Storage,
-): Promise<FilePart> {
+/** The files port (§9): a file reference → what it sends as. `send({files})` and a tool's
+ *  attachments both go through it. A file of the agent's ground is kept the moment it is
+ *  named, so the part names an object (`storage://`): a connector on any host sends what
+ *  was sent, and a later write to the path changes nothing the history shows. */
+export interface Files {
+  /** Throws when the reference does not exist (`NotFound`) or points outside what the
+   *  agent may attach: the tool_result carries that back as the error it is. */
+  resolve(ref: string): Promise<Attached>;
+}
+
+/** The files port over a ground, under a scope: a kept object and a link pass through
+ *  (`filePartOf`); a path is resolved from where the shell stands, judged by where it
+ *  really leads, read, and kept, content-named. The local adapter (`localFiles`) and a
+ *  remote sandbox's (`gatewayFiles`) differ only in the ground and the roots. */
+export function groundFiles(ground: FileGround, scope: FileScope, storage: Storage): Files {
+  const within = (root: string, path: string) => path === root || path.startsWith(`${root}/`);
+  return {
+    async resolve(ref) {
+      if (isStored(ref) || isExternal(ref)) return { part: await filePartOf(ref, storage) };
+      const asked = posix.resolve(scope.cwd?.() ?? scope.home, pathOf(ref));
+      const abs = await ground.real(asked).catch((err) => {
+        throw err instanceof Deno.errors.NotFound
+          ? new Deno.errors.NotFound(`${ref}: no such file`)
+          : err;
+      });
+      if (!scope.roots.some((root) => within(root, abs))) {
+        throw new Error(
+          `${ref}: outside your files — attach from your folder or the org's, or a storage:// file`,
+        );
+      }
+      const bytes = await ground.read(abs);
+      if (!bytes) throw new Deno.errors.NotFound(`${ref}: no such file`);
+      const declared = mimeOf(abs);
+      const file = await saveMedia(storage, bytes, {
+        name: posix.basename(abs),
+        ...(declared ? { mime_type: declared } : {}),
+      });
+      // the path as the agent knows it: from its folder, else from the folder it lies in
+      const shown = scope.roots.some((root) => within(root, asked)) ? asked : abs;
+      const root = within(scope.home, shown)
+        ? scope.home
+        : scope.roots.find((r) => within(r, shown))!;
+      const rel = posix.relative(root, shown);
+      return {
+        part: { type: "file", kind: kindOf(file.mime_type), file },
+        named: root === scope.home ? rel : posix.join(posix.basename(root), rel),
+      };
+    },
+  };
+}
+
+/** The local ground: this filesystem, symlinks followed. */
+const localGround: FileGround = {
+  real: (path) => Deno.realPath(path),
+  read: (path) =>
+    Deno.readFile(path).catch((err) => {
+      if (err instanceof Deno.errors.NotFound) return null;
+      throw err;
+    }),
+};
+
+/** The local adapter: this filesystem, under a scope. */
+export const localFiles = (scope: FileScope, storage: Storage): Files =>
+  groundFiles(localGround, scope, storage);
+
+/** A kept object or an outside link → its `FilePart`. A `storage://` uri names an object
+ *  already kept, read for its size and kind; an `http(s)` link passes through UNTOUCHED
+ *  (no fetch, no size; mime guessed from the URL's extension): the platforms that take
+ *  links send it as-is. */
+export async function filePartOf(ref: string, storage: Storage): Promise<FilePart> {
   if (isStored(ref)) {
-    const bytes = storage ? await storage.get(keyOf(ref)) : null;
+    const bytes = await storage.get(keyOf(ref));
     if (!bytes) throw new Error(`${ref}: no such file in storage`);
     const mime = mimeOf(ref) ?? sniffMime(bytes) ?? "application/octet-stream";
     return {
@@ -403,37 +455,14 @@ export async function filePartOf(
       },
     };
   }
-  if (isExternal(ref)) {
-    const path = new URL(ref).pathname;
-    const mime = mimeOf(path) ?? "application/octet-stream";
-    const name = basename(path);
-    return {
-      type: "file",
-      kind: kindOf(mime),
-      file: { mime_type: mime, uri: ref, ...(name && name !== "/" ? { name } : {}) },
-    };
-  }
-  const abs = scope
-    ? await Deno.realPath(resolve(scope.cwd?.() ?? scope.home, pathOf(ref)))
-    : resolve(pathOf(ref));
-  if (scope && !scope.roots.some((root) => abs === root || abs.startsWith(`${root}/`))) {
-    throw new Error(
-      `${ref}: outside your files — attach from your folder or the org's, or a storage:// file`,
-    );
-  }
-  const size = (await Deno.stat(abs)).size;
-  const mime = mimeOf(abs) ?? sniffMime(await head(abs)) ?? "application/octet-stream";
-  const uri = pathToFileURL(abs).toString();
+  if (!isExternal(ref)) throw new Error(`${ref}: neither a kept file nor a link`);
+  const path = new URL(ref).pathname;
+  const mime = mimeOf(path) ?? "application/octet-stream";
+  const name = posix.basename(path);
   return {
     type: "file",
     kind: kindOf(mime),
-    file: {
-      mime_type: mime,
-      uri,
-      name: basename(abs),
-      size,
-      ...(mime.startsWith("image/") ? imageSize(await head(abs, SIZE_HEAD)) : {}),
-    },
+    file: { mime_type: mime, uri: ref, ...(name && name !== "/" ? { name } : {}) },
   };
 }
 
@@ -474,10 +503,8 @@ export interface MediaBlock {
  *  an adapter over a blob store answers the same question under its own uri scheme. */
 export type MediaLoader = (uri: string) => Promise<MediaBlock | null>;
 
-/** A loader remembered across calls: a RECEIVED file is content-named, so what its uri
- *  holds never changes, and a tool loop renders the same trailing attachments on every
- *  step. A tool's attachment is a workspace path that does change — its bytes ride on the
- *  result (`extra.media`, pinned by `Files.snapshot`), so no loader is asked for them.
+/** A loader remembered across calls: a kept file is content-named, so what its uri holds
+ *  never changes, and a tool loop renders the same trailing attachments on every step.
  *  Bounded by the raw bytes held — the oldest entry goes first. A miss is not remembered:
  *  the file may still be on its way. */
 export function memoizedLoader(load: MediaLoader, capBytes = MEDIA_MEMO_BYTES): MediaLoader {

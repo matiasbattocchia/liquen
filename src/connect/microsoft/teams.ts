@@ -53,7 +53,7 @@
  * its glyph, a hosted image (a pasted screenshot) its bytes on the media shelf, and the
  * rest reads as words. A file is a reference to a OneDrive or SharePoint item: its bytes
  * come through `/shares/<encoded url>/driveItem/content` onto the shelf, and a file the
- * grant cannot read stays a link in the words. Outbound, a local file goes to the
+ * grant cannot read stays a link in the words. Outbound, a kept file goes to the
  * channel's own folder, or to the account's OneDrive under `liquen/` with an
  * organization-wide view link, and rides the message as a `reference` attachment.
  */
@@ -1666,7 +1666,7 @@ export function teamsWire(deps: TeamsWireDeps): TeamsWire {
   return {
     async post(grant, place, message, root) {
       const graph = await tokenFor(grant);
-      // a local file is uploaded and rides as a reference; an external link joins the words
+      // a kept file is uploaded and rides as a reference; an external link joins the words
       const local = message.files.filter((f) => !isExternal(f.file.uri));
       const links = message.files.filter((f) => isExternal(f.file.uri)).map((f) => f.file.uri);
       const attachments: {

@@ -1599,8 +1599,7 @@ before plus new rows, until a checkpoint moves the floor:
 ### Media (kept like the rest, until the checkpoint)
 
 `FilePart.uri` is a real URI, and the SCHEME is the whole distinction: `storage://` = an
-object the harness keeps, `file://` = a file of the agent's workspace (bare paths
-tolerated on input), `http(s)://` = an external link, passed through untouched — never
+object the harness keeps, received or sent, `http(s)://` = an external link, passed through untouched — never
 downloaded nor uploaded broker-side (`size` is unknowable there, hence nullable). No host
 path enters the log. Inbound uris are always kept — ingest downloads BROKER-side with the
 connection's credential into the object store (`storage://media/<hash>.<ext>`,
@@ -1645,24 +1644,20 @@ The checkpoint weighs the pictures with the rows (`mediaTokens`), so a window he
 them reaches `compactAt` sooner, at the API's own rates: an image a token per 28×28 patch,
 capped at 4,784 on the high-resolution tier, a PDF page its text and an image of the page.
 An image's part carries its pixels (`file.width`, `file.height`), read off its header when
-the bytes land: `saveMedia` reads the bytes it stores, `filePartOf` the file it attaches, and
+the bytes land: `saveMedia` reads the bytes it stores, `filePartOf` the object it names, and
 the WhatsApp webhook the files the bridge landed through `/media` before their batch. A
 sticker without them weighs WhatsApp's 512×512, any other image the cap. A part carries no
 page count, so a PDF's pages are guessed from its size.
 
-A tool's attachment is not a received file: its uri is a workspace path the agent keeps
-rewriting (`aread shot.png` after every fix), so the path cannot stand for the bytes the
-model saw. The result PINS them — `Files.snapshot` reads the file the moment it is
-attached, and the block rides on the event (`extra.media`, keyed by uri). Render takes a
-result's picture off the result itself, never from a loader; two reads of one path in
-one cycle each keep their own picture, and a step re-sends exactly what the earlier step
-sent (the prefix holds, the cache holds, the evidence holds). The checkpoint that covers
-them sheds the bytes in the same transaction (`PublishOptions.shed`, up to `covers[1]`):
-the rows keep their markers, and nothing renders them again. Received
-media stays content-named on the shelf, where a uri IS its bytes and a loader may be
-memoized.
+A file the agent sends or a tool attaches is kept the moment it is named (`Files`, §9):
+the part names the object, and the path the agent named, relative to its folder, rides
+`extra.paths` keyed by uri. The agent keeps rewriting a workspace path (`aread shot.png`
+after every fix), and each read is its own object, so two reads of one path keep their own
+pictures, a step re-sends exactly what the earlier step sent (the prefix holds, the cache
+holds, the evidence holds), and a connector on any host sends what was sent. Every part's
+uri IS its bytes, so the loader is memoized.
 
-Dispatch is per-connector capability: Slack uploads local files via the `files.uploadV2`
+Dispatch is per-connector capability: Slack uploads kept files via the `files.uploadV2`
 flow with the text as the share comment, and external links join the text as lines
 (Slack's own idiom — the client unfurls them); WhatsApp (future) passes links natively.
 
@@ -3123,9 +3118,11 @@ module** (`runnerFor`, `src/runner.ts`): a session is built from the store, the 
 row and a `Host` — the ports a host wires once — so main and an edge function build the
 same session from the same three things, and what main keeps of its own is the `Host`.
 **Files are a port** (`Files`, `src/store/media.ts`): `resolve(ref)` is the `FilePart`
-a reference sends as, and the sandbox session carries the port because what an agent
-may attach is the ground it stands on — a remote sandbox answers it by moving the bytes
-into the object store.
+a reference sends as, the file kept in the object store as it is named, and the path the
+agent named it by. The sandbox session carries the port because what an agent may attach
+is the ground it stands on: one resolve (`groundFiles`) over the ground's reader and the
+roots it allows, this filesystem with links followed locally, the gateway's reads in a
+remote sandbox.
 
 **A doc is a row with a handle** (`DocHeader`, `src/store/docs.ts`): the `docs` table's
 columns and the adapter's address for the doc, which render prints and the agent's read

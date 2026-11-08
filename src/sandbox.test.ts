@@ -26,8 +26,8 @@ Deno.test("a session's shell is its own and kept: where one stands, its sibling 
     // the files port is the ground's: the agent's folder rides, the substrate is refused;
     // a relative reference is from where the session's own shell stands
     await Deno.writeTextFile(`${dir}/agents/a1/note.md`, "mine");
-    assertEquals((await mind.files.resolve("note.md")).file.name, "note.md");
-    assertEquals((await build.files.resolve("../agents/a1/note.md")).file.name, "note.md");
+    assertEquals((await mind.files.resolve("note.md")).named, "note.md");
+    assertEquals((await build.files.resolve("../agents/a1/note.md")).named, "note.md");
     await Deno.writeTextFile(`${dir}/log/log.db`, "x");
     await assertRejects(() => build.files.resolve(`${dir}/log/log.db`), Error, "outside");
     assertThrows(() => sandbox.forAgent("nobody"), Error, "no ground prepared");

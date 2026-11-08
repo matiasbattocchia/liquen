@@ -309,12 +309,6 @@ export async function openPgLog(
       (await rows(db, UNREFERENCED, [uri])).length === 0;
   };
 
-  // the pinned attachment bytes of a session's tool results (`PublishOptions.shed`, §5):
-  // the key alone goes, the row stays what it was
-  const SHED = `UPDATE events SET extra = extra - 'media', updated_at = $1::text
-                WHERE agent_id = $2::text AND session_id = $3::text AND type = 'tool_result'
-                  AND id <= $4::text AND extra ? 'media'`;
-
   const commit = async (
     one: Draft | Draft[],
     lease?: Lease,
@@ -363,10 +357,6 @@ export async function openPgLog(
             }
           }
         }
-      }
-      // shed before the batch lands, so the checkpoint's own rows are never touched
-      if (opts.shed !== undefined) {
-        await count(tx, SHED, [now, opts.shed.agentId, opts.shed.sessionId, opts.shed.through]);
       }
       const out: Event[] = [];
       for (const d of drafts) {

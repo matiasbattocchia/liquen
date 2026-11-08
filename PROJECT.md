@@ -6372,6 +6372,24 @@ The boots that dropped nothing came soon after the one before them.
   checkpoint it bounds what a long downtime leaves owed, and in steady running it bites
   only on a row stamped older than the floor.
 
+### What the harness derives and sends is kept (2026-11-08) — LANDED
+
+- **A long transcript.** Past `PROCESSOR_TEXT_CAP` (4 KB) the transcript carries its
+  head, cut at a word and marked `…`, and a `document` part naming the whole output as a
+  kept `.txt`. The event references it, so the agent reads on with `aread`, and a note
+  forwarded again takes both. The line wears it as `path`, and the Processors note says
+  so.
+- **A sent file.** `send({files})` and a tool's attachments keep a file of the agent's
+  ground as it is named: the part is its `storage://` uri, and the path it was named by,
+  from the agent's folder (or headed by the folder it lies in, `shared/plan.pdf`), rides
+  `extra.paths` keyed by uri. `localFiles` and `gatewayFiles` are one resolve
+  (`groundFiles`) over a reader and its roots. WhatsApp's dispatch signs the object as it
+  is and keeps nothing of its own.
+- **The pin goes.** Each read of a workspace path is its own object, so its bytes never
+  change and the loader serves them like any received file. `extra.media`,
+  `Files.snapshot` and the checkpoint's shed (`PublishOptions.shed`) are gone. A row an
+  older harness pinned keeps its bytes in `extra`, unread.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

@@ -548,7 +548,7 @@ export function createMailDispatch(deps: MailDispatchDeps): () => Promise<void> 
       // the headers a reply is threaded by: the parent, and the chain the parent carried
       const parent = messageIdOf(work.connection, re?.envelope.external_id);
       const references = re && parent ? referencesTo(work.connection, re, parent) : [];
-      // local files ride as attachments; an external link joins the words as a line
+      // kept files ride as attachments; an external link joins the words as a line
       const files: Outgoing["files"] = [];
       const links: string[] = [];
       for (const f of work.files) {

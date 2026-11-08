@@ -94,9 +94,8 @@ export type MediaKind =
 export interface FilePart {
   type: "file";
   kind: MediaKind;
-  /** `uri` is a real URI: `file://` = local bytes (media shelf or workspace — the
-   *  harness's canonical form; bare paths are tolerated on input), `http(s)://` =
-   *  external link, passed through untouched — never downloaded or uploaded broker-side
+  /** `uri` is a real URI: `storage://` = an object the harness keeps (§8), what every
+   *  file received or sent is, `http(s)://` = external link, passed through untouched — never downloaded or uploaded broker-side
    *  (connectors whose platform takes links send it as-is; the API reads it via a
    *  url-source block). `size` is unknowable for external uris. `width` and `height` are
    *  an image's pixels, read off its header when the bytes landed: what it weighs to the

@@ -33,7 +33,9 @@ profile: read how your principal writes there, then send again.
   remove. Text or files: create without `re` sends a new message, with `re` *replies to* the
   target message; edit *replaces* content and delete *takes* it back (both require `re`).
   Reactions: add *reacts to* the target message, remove *takes* back the glyph you put on it
-- files: file paths to attach. A relative path resolves from your shell's cwd
+- files: file paths to attach, or storage:// paths. A relative path resolves from your
+  shell's cwd; a file is kept as it is when you send it, and your line shows it by its
+  storage:// path
 - location: a map pin, sent as its own message after any text or files. WhatsApp
   conversations only
   - name: the label the pin shows

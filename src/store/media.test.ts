@@ -132,26 +132,18 @@ Deno.test("mimeOf/kindOf: the small closed map; unknown falls to document/octet-
   assertEquals(kindOf("application/pdf"), "document");
 });
 
-Deno.test("filePartOf: a real path stats and classifies; a missing one throws (tool error)", async () => {
+Deno.test("filePartOf: an http(s) link passes through untouched; a path is no kept file", async () => {
   const root = await Deno.makeTempDir();
   try {
-    const path = `${root}/report.pdf`;
-    await Deno.writeTextFile(path, "pdf bytes");
-    const p = await filePartOf(path);
-    assertEquals(p.kind, "document");
-    assertEquals(p.file.mime_type, "application/pdf");
-    assertEquals(p.file.name, "report.pdf");
-    assertEquals(p.file.size, 9);
-    assert(p.file.uri.startsWith("file://")); // bare path in, canonical uri out
-    assertEquals((await filePartOf(p.file.uri)).file.uri, p.file.uri); // file:// in is idempotent
-    await assertRejects(() => filePartOf(`${root}/gone.png`));
-    // an http(s) link passes through UNTOUCHED: no fetch, no size, mime from the extension
-    const ext = await filePartOf("https://example.com/pics/cat.jpg");
+    const storage = fileStorage(root);
+    // no fetch, no size, mime from the extension
+    const ext = await filePartOf("https://example.com/pics/cat.jpg", storage);
     assertEquals(ext.file.uri, "https://example.com/pics/cat.jpg");
     assertEquals(ext.kind, "image");
     assertEquals(ext.file.mime_type, "image/jpeg");
     assertEquals(ext.file.name, "cat.jpg");
     assertEquals(ext.file.size, undefined);
+    await assertRejects(() => filePartOf(`${root}/report.pdf`, storage), Error, "neither");
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -183,16 +175,16 @@ Deno.test("a kept object resolves as a part and inlines through the store; with 
     const kept = await saveMedia(storage, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2]), {
       name: "dot.png",
     });
-    const part = await localFiles(undefined, storage).resolve(kept.uri);
+    const files = localFiles({ home: root, roots: [root] }, storage);
+    const { part, named } = await files.resolve(kept.uri);
     assertEquals(
-      [part.kind, part.file.uri, part.file.size, part.file.name],
-      ["image", kept.uri, 6, kept.uri.slice(16)],
+      [part.kind, part.file.uri, part.file.size, part.file.name, named],
+      ["image", kept.uri, 6, kept.uri.slice(16), undefined],
     );
     assertEquals((await loadMediaBlock(kept.uri, storage))?.media_type, "image/png");
     assertEquals(await loadMediaBlock(kept.uri), null);
-    await assertRejects(() => localFiles().resolve(kept.uri), Error, "no such file in storage");
     await assertRejects(
-      () => localFiles(undefined, storage).resolve("storage://media/gone.png"),
+      () => files.resolve("storage://media/gone.png"),
       Error,
       "no such file in storage",
     );
@@ -201,18 +193,23 @@ Deno.test("a kept object resolves as a part and inlines through the store; with 
   }
 });
 
-Deno.test("localFiles.snapshot: the part's bytes NOW, as its block — nothing for what can't inline", async () => {
-  const root = await Deno.makeTempDir();
+Deno.test("localFiles: a file is kept the moment it is named — a later write to the path changes nothing it names", async () => {
+  const root = await Deno.realPath(await Deno.makeTempDir());
   try {
-    const files = localFiles();
-    const img = `${root}/dot.png`;
-    await Deno.writeFile(img, new Uint8Array([1, 2, 3]));
-    const part = await files.resolve(img);
-    assertEquals(await files.snapshot(part), { media_type: "image/png", data: "AQID" });
-    await Deno.writeFile(img, new Uint8Array([4])); // the same part, asked again: what is there now
-    assertEquals((await files.snapshot(part))?.data, "BA==");
-    await Deno.writeTextFile(`${root}/a.txt`, "x");
-    assertEquals(await files.snapshot(await files.resolve(`${root}/a.txt`)), null);
+    const storage = fileStorage(`${root}/data`);
+    const home = `${root}/home`;
+    await Deno.mkdir(home);
+    const files = localFiles({ home, roots: [home] }, storage);
+    await Deno.writeFile(`${home}/dot.png`, new Uint8Array([1, 2, 3]));
+    const { part, named } = await files.resolve("dot.png");
+    assertEquals(named, "dot.png");
+    assert(/^storage:\/\/media\/[0-9a-f]{32}\.png$/.test(part.file.uri));
+    assertEquals([part.kind, part.file.name, part.file.size], ["image", "dot.png", 3]);
+    await Deno.writeFile(`${home}/dot.png`, new Uint8Array([4]));
+    assertEquals((await loadMediaBlock(part.file.uri, storage))?.data, "AQID");
+    // named again, it is the bytes there now: another object
+    assert((await files.resolve("dot.png")).part.file.uri !== part.file.uri);
+    await assertRejects(() => files.resolve("gone.png"), Deno.errors.NotFound, "gone.png");
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -236,7 +233,8 @@ Deno.test("extension-less media classifies by its bytes — whole pipeline, not 
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2]);
     const path = `${root}/snapshot`; // no extension at all
     await Deno.writeFile(path, png);
-    const p = await filePartOf(path);
+    const { part: p } = await localFiles({ home: root, roots: [root] }, fileStorage(root))
+      .resolve(path);
     assertEquals(p.kind, "image"); // sniffed
     assertEquals(p.file.mime_type, "image/png");
     const block = await loadMediaBlock(path);
@@ -377,7 +375,8 @@ Deno.test("localFiles: a scoped reference resolves from the agent's home and sta
   const tmp = await Deno.realPath(await Deno.makeTempDir());
   try {
     const home = `${tmp}/agents/ana`;
-    const files = localFiles({ home, roots: [home, `${tmp}/shared`] });
+    const storage = fileStorage(tmp);
+    const files = localFiles({ home, roots: [home, `${tmp}/shared`] }, storage);
     await Deno.mkdir(`${home}/notes`, { recursive: true });
     await Deno.mkdir(`${tmp}/shared`, { recursive: true });
     await Deno.mkdir(`${tmp}/log`, { recursive: true });
@@ -386,9 +385,14 @@ Deno.test("localFiles: a scoped reference resolves from the agent's home and sta
     await Deno.writeTextFile(`${tmp}/shared/shared.csv`, "a,b");
     await Deno.writeTextFile(`${tmp}/log/log.db`, "sqlite");
     await Deno.writeTextFile(`${tmp}/agents/bo/secret.md`, "bo's");
-    // relative = from the agent's home, not the harness's cwd
-    assertEquals((await files.resolve("notes/plan.md")).file.uri, `file://${home}/notes/plan.md`);
-    assertEquals((await files.resolve(`${tmp}/shared/shared.csv`)).file.name, "shared.csv");
+    // relative = from the agent's home, not the harness's cwd; the named path says so, and
+    // a file of another root is named from the folder it lies in
+    assertEquals((await files.resolve("notes/plan.md")).named, "notes/plan.md");
+    const csv = await files.resolve(`${tmp}/shared/shared.csv`);
+    assertEquals([csv.part.file.name, csv.named], ["shared.csv", "shared/shared.csv"]);
+    // a link in the home is named where the agent put it
+    await Deno.symlink(`${tmp}/shared/shared.csv`, `${home}/table.csv`);
+    assertEquals((await files.resolve("table.csv")).named, "table.csv");
     // the substrate and a peer's folder are outside — the tool_result carries the refusal
     await assertRejects(() => files.resolve(`${tmp}/log/log.db`), Error, "outside");
     await assertRejects(() => files.resolve(`${tmp}/agents/bo/secret.md`), Error, "outside");
@@ -398,15 +402,15 @@ Deno.test("localFiles: a scoped reference resolves from the agent's home and sta
     await assertRejects(() => files.resolve(`${home}/innocent.db`), Error, "outside");
     // links pass untouched: nothing local is read
     assertEquals(
-      (await files.resolve("https://example.com/a.pdf")).file.uri,
+      (await files.resolve("https://example.com/a.pdf")).part.file.uri,
       "https://example.com/a.pdf",
     );
     // with a shell, relative is from where it stands, and the roots judge it all the same
     let cwd = `${home}/notes`;
-    const shelled = localFiles({ home, cwd: () => cwd, roots: [home, `${tmp}/shared`] });
-    assertEquals((await shelled.resolve("plan.md")).file.uri, `file://${home}/notes/plan.md`);
+    const shelled = localFiles({ home, cwd: () => cwd, roots: [home, `${tmp}/shared`] }, storage);
+    assertEquals((await shelled.resolve("plan.md")).named, "notes/plan.md");
     cwd = `${tmp}/shared`;
-    assertEquals((await shelled.resolve("shared.csv")).file.name, "shared.csv");
+    assertEquals((await shelled.resolve("shared.csv")).named, "shared/shared.csv");
     await assertRejects(() => shelled.resolve("../log/log.db"), Error, "outside");
   } finally {
     await Deno.remove(tmp, { recursive: true });
