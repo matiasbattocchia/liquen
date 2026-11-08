@@ -1106,6 +1106,25 @@ Deno.test("beforePool: each room's newest rows below the floor, and a far refere
   });
 });
 
+Deno.test("beforePool: a room's past reaches a day below the checkpoint, whatever the boot floor", async () => {
+  await withLog(async (log) => {
+    await log.upsertConnections([{ service: "slack", address: "T1" }]);
+    const at = (hours: number) => new Date(T0 + hours * 3_600_000).toISOString();
+    const said = (i: number, ts: string): Draft<Event> =>
+      ({ ...lineAt(i, ts), envelope: env("C1") }) as Draft<Event>;
+    const rows = await log.publish([said(0, at(-30)), said(1, at(-2)), said(2, at(-1))]);
+    await log.publish(checkpointOver([rows[0].id, rows[2].id]));
+    await log.publish([said(3, at(1))]);
+    // two processes, booted a day apart: the same window draws the same pool
+    const pools = await Promise.all(
+      [at(-40), at(-3)].map(async (since) =>
+        (await beforePool(log, await windowOf(log, since), SESSION)).rows.map((e) => e.id)
+      ),
+    );
+    assertEquals(pools, [[rows[1].id, rows[2].id], [rows[1].id, rows[2].id]]);
+  });
+});
+
 Deno.test("beforePool: a referent is found wherever the log holds it, a checkpoint or none", async () => {
   await withLog(async (log) => {
     await log.upsertConnections([{ service: "slack", address: "T1" }]);
@@ -1115,14 +1134,14 @@ Deno.test("beforePool: a referent is found wherever the log holds it, a checkpoi
     const [old] = await log.publish([said(0, { external_id: "slack:old" })]);
     const since = new Date(T0 + 30 * 60_000).toISOString();
     await log.publish([{ ...said(60), payload: { ref_external_id: "slack:old" } } as Draft<Event>]);
-    const pool = await beforePool(log, await windowOf(log, since), SESSION, since);
+    const pool = await beforePool(log, await windowOf(log, since), SESSION);
     assertEquals(pool.refs.map((e) => e.id), [old.id]);
     assertEquals(pool.between, { [old.id]: 0 }); // nothing lies between it and the reply
     // and a reply to nothing the log holds finds nothing: that is `re="?"`
     await log.publish([
       { ...said(61), payload: { ref_external_id: "slack:gone" } } as Draft<Event>,
     ]);
-    const again = await beforePool(log, await windowOf(log, since), SESSION, since);
+    const again = await beforePool(log, await windowOf(log, since), SESSION);
     assertEquals(again.refs.map((e) => e.id), [old.id]);
   });
 });

@@ -1460,9 +1460,10 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   `<conv>` it stands in, outside the budget, once across the window; one drawn already is
   pointed at, and `re="?"` means only an event that cannot be found. `… N not shown` counts
   the rows between two lines that are not neighbours. xi reads what lies beyond the window
-  (`beforePool`) by id below a floor that stands still, and render keeps a row by its
-  write-once stamps against a fixed moment, so a `<before>` renders the same bytes on every
-  step. A message that IS one part — a lone data part or a bare attachment —
+  (`beforePool`) by id below a floor that stands still, back to `BEFORE_HOURS` before the
+  checkpoint's own stamp, and render keeps a row by its write-once stamps against that
+  moment, so a `<before>` renders the same bytes on every step and in every process: a
+  restart changes none of them. A message that IS one part — a lone data part or a bare attachment —
   hoists the envelope onto that part's own element and spends no `<msg>` wrapper. A
   room's change is such a line on every service: `<room>` from whoever made it, carrying
   who joined, who left, or the name the room now wears.

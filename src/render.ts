@@ -770,8 +770,9 @@ export function capRun(
  * not seen drawn, word for word: what the reply is a reply to. They come from below the
  * floor (a checkpoint folded them into prose) and from what an earlier WUM's cap left out
  * whole. A room drawn in an earlier WUM has its past in view already. Rows are chosen by id
- * and filtered on write-once stamps against a fixed moment, so a room's `<before>` is a pure
- * function of the floor and the log, and renders the same bytes on every step.
+ * and filtered on write-once stamps against the checkpoint's own, so a room's `<before>` is
+ * a pure function of the floor and the log, and renders the same bytes on every step and in
+ * every process.
  */
 
 /** A room's `<before>`: its last turns, at most this many, whole… */
@@ -781,6 +782,9 @@ export const BEFORE_LINES = 12;
 /** The newest rows xi reads of each room below the floor: past `BEFORE_LINES`, so a turn
  *  that would fit is read whole, and the one before it shows where it starts. */
 export const BEFORE_READ = 40;
+/** How far below the checkpoint's stamp a room's rows reach `<before>`: a room quiet for
+ *  longer opens on no past. */
+export const BEFORE_HOURS = 24;
 
 /** What xi read beyond the window for `<before>` and `re` (§5). */
 export interface BeforePool {

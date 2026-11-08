@@ -111,6 +111,7 @@ import {
   actedOn,
   AUTHOR_KEYS,
   authorKeyOf,
+  BEFORE_HOURS,
   BEFORE_LINES,
   BEFORE_READ,
   type BeforePool,
@@ -1112,7 +1113,6 @@ export async function beforePool(
   log: Pick<Reader, "read">,
   window: Event[],
   session: Session,
-  since?: string,
 ): Promise<BeforePool> {
   const floor = window.findLast((e): e is SummaryEvent => e.type === "summary");
   const end = floor?.payload.covers[1];
@@ -1127,13 +1127,15 @@ export async function beforePool(
   );
   const newest = new Map<string, MessageEvent[]>();
   if (end !== undefined) {
+    // measured from the checkpoint, a row of the log, so a restart reads the same pool
+    const reach = new Date(Date.parse(floor!.ts) - BEFORE_HOURS * 3_600_000).toISOString();
     // `id ≤ end`: ids are fixed-width, so nothing sorts between `end` and `end` + "0"
     const rooms = new Map(shown.map((e) => [roomKey(e), e]));
     await Promise.all([...rooms].map(async ([k, e]) => {
       const rows = await log.read({
         ...room(e),
         beforeId: `${end}0`,
-        ...(since ? { after: since } : {}),
+        after: reach,
         types: ["message"],
         copies: false, // the room never saw a mirror's copy
         limit: BEFORE_READ,
@@ -1412,7 +1414,6 @@ async function think(
         ports.log,
         events,
         { id: config.sessionId, agentId: config.agentId, conversation: home },
-        config.since,
       ),
       // who is one of us (§4, §5): the roster's names, and who steers this agent — live
       roster: {

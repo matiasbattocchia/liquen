@@ -6355,6 +6355,23 @@ The storage batch of `CHANGES.md`, a step at a time.
   Supabase's Storage API it would be named by its token's claims, which waits with the
   edge.
 
+### A restart keeps the thinking it finds (2026-11-08) — LANDED
+
+`new` logged `thinking_dropped … (prefix_binding_mismatch)` on every call after five of its
+restarts, until the next checkpoint: the reasoning minted before the restart, set aside.
+The boots that dropped nothing came soon after the one before them.
+
+- **The cause.** `beforePool` read each room's rows below the checkpoint `after: since`,
+  and `since` is boot time less `backlogHours`. A restart moved it, so every room in view
+  with rows between the two floors drew a shorter `<before>`, and the thinking after it
+  was bound to bytes that were gone. On 7 Nov the floor jumped twenty hours; Gryngo had 35
+  rows in that span, Florencia 27, Sol 13, the principal's own chat 32. The first call
+  wrote 11,860 tokens to cache, and five blocks dropped on each call until the checkpoint.
+- **The fix.** The pool reaches `BEFORE_HOURS` (24) below the checkpoint's own stamp, a
+  row of the log, so every process reads the same rows. `windowOf` keeps `since`: past a
+  checkpoint it bounds what a long downtime leaves owed, and in steady running it bites
+  only on a row stamped older than the floor.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
