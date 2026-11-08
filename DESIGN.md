@@ -1081,13 +1081,14 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     points where a terminal names the card by its handle. Tool calls cross as redacted one-liners under a tag of their
     own (`[agent tool] bash(git status)`). What the harness says in the REPL crosses as
     `[system] …`: a failure (`✗` and the tool's words; an approved call's names the call), a
-    fired wake (`⏰` and the agent's note), a turn the principal cut (under their
+    model call that failed past its retries (what kept it: the model unreached, overloaded,
+    or refusing the request, then the provider's words), a fired wake (`⏰` and the agent's note), a turn the principal cut (under their
     `/cancel`, which crosses as their line). A checkpoint written is the terminal's: a
     surface heard `[agent compacting...]` while it was written. A settlement's own row is
     the terminal's too — a verdict (`— bbc24a refused once`), a lapse (`— bbc24a lapsed: unanswered
     for 24h`), the agent's withdrawal: on a surface the line that gave a verdict says it,
     and a call refused draws no outcome anywhere. The tags, the
-    reply hint under a card and the presence words are the harness's own, so they speak the
+    reply hint under a card, the presence words and a failed call's are the harness's own, so they speak the
     org's tongue (config `locale`, language subtag: `es_AR.UTF-8` ⇒ `[agente pregunta] …`;
     unknown or unset ⇒ English) — the model's voice needs no translating, the prefix states
     the locale and it answers in it. What never translates is what is read back or quoted:

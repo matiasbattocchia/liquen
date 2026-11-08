@@ -59,8 +59,21 @@ Deno.test("nu: persistent step failure → a single harness-authored error event
   assertEquals(out.length, 1);
   const [err] = out;
   assert(err.type === "error");
-  assertEquals(err.parts[0].data, { error: "overloaded", origin: "model" });
+  assertEquals(err.parts[0].data, { error: "overloaded", origin: "model", failed: { tries: 3 } });
   assertEquals(err.agent, undefined); // harness-authored (§3)
+});
+
+Deno.test("nu: a failed call's error keeps the last status and how many attempts it took", async () => {
+  const failing = (status: number) => () =>
+    Promise.reject(Object.assign(new Error("upstream said no"), { status }));
+  const run = (status: number) =>
+    nu({ events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG }, failing(status));
+  const [busy] = await run(529);
+  assert(busy.type === "error");
+  assertEquals(busy.parts[0].data.failed, { status: 529, tries: 3 });
+  const [refused] = await run(400); // the request's own fault: one attempt is the whole of it
+  assert(refused.type === "error");
+  assertEquals(refused.parts[0].data.failed, { status: 400, tries: 1 });
 });
 
 Deno.test("nu: a failed request's error names the last row it read", async () => {

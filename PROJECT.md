@@ -6390,6 +6390,22 @@ The boots that dropped nothing came soon after the one before them.
   `Files.snapshot` and the checkpoint's shed (`PublishOptions.shed`) are gone. A row an
   older harness pinned keeps its bytes in `extra`, unread.
 
+### A failed model call says what kept it (2026-11-08) — LANDED
+
+On 7 Nov the internet went for about an hour and a half. The turn at 10:47 spent its three
+attempts and the principal's chat got `[sistema] Connection error.`, the SDK's words with
+nothing on what failed or what came next. WhatsApp held its messages until 12:08, and the
+mind answered the moment they came.
+
+- **The event keeps the call.** An error from a call that failed past its retries carries
+  `failed`: the last attempt's `status`, none when the request never reached the provider,
+  and the attempts it took.
+- **The mirror says it.** No status reads as the model unreached, weather the retries
+  cover (`retryable`) as overloaded, and anything else as the request refused. The first
+  two say the mind picks up with the next message, which is what `decide` does after a
+  failed turn. The words are the org's tongue, and the provider's close the line as they
+  came. The model reads the English error as before.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

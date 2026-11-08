@@ -5,6 +5,7 @@ import { SILENCE } from "../render.ts";
 import { answerLine, parseVerdict } from "../verdict.ts";
 import { openLog } from "../store/log.ts";
 import type {
+  CallFailure,
   Draft,
   Event,
   MessageEvent,
@@ -774,6 +775,37 @@ Deno.test("mirror fan-out: a harness error crosses — the one voice left when a
     await waitFor(async () => (await inConv("D1")).length === 1);
     assertStringIncludes(textOf((await inConv("D1"))[0]), "`[system]` that approval was already");
   });
+});
+
+Deno.test("mirror fan-out: a failed model call says what kept it, in the org's tongue", async () => {
+  const failure = (error: string, failed: CallFailure): Draft<Event> =>
+    ({
+      ts: new Date().toISOString(),
+      type: "error",
+      envelope: {
+        service: "local",
+        connection_address: "default",
+        conversation: { address: "mind@ana" },
+      },
+      parts: [{ type: "data", kind: "error", data: { error, origin: "model", failed } }],
+    }) as Draft<Event>;
+  await withMirror(
+    async ({ publish, inConv, waitFor }) => {
+      await publish(failure("Connection error.", { tries: 3 }));
+      await publish(failure("Overloaded", { status: 529, tries: 3 }));
+      await publish(failure("prompt is too long", { status: 400, tries: 1 }));
+      await waitFor(async () => (await inConv("D1")).length === 3);
+      assertEquals((await inConv("D1")).map(textOf), [
+        "`[sistema]` No pude conectarme con el modelo: lo intenté 3 veces. " +
+        "Retomo con el próximo mensaje. (Connection error.)",
+        "`[sistema]` El modelo está saturado (529): lo intenté 3 veces. " +
+        "Retomo con el próximo mensaje. (Overloaded)",
+        "`[sistema]` El modelo rechazó el pedido (400): prompt is too long",
+      ]);
+    },
+    30,
+    "es_AR.UTF-8",
+  );
 });
 
 Deno.test("mirror fan-out: a settlement's row — a verdict, a lapse, a withdrawal — and a refused call's outcome stay at the terminal", async () => {

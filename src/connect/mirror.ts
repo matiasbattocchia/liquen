@@ -71,6 +71,7 @@ import { roomWords } from "../room.ts";
 import { clipStart } from "../exec/truncate.ts";
 import { SENDER_EMAIL, SENDER_NAME, senderEmail, senderFacts } from "../sender.ts";
 import { type Words, words } from "../i18n.ts";
+import { retryable } from "../nu.ts";
 import {
   answer,
   answerLine,
@@ -85,6 +86,7 @@ import type { Gates } from "../store/gates.ts";
 import type { Appender, DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type {
   AlarmEvent,
+  CallFailure,
   ControlEvent,
   DeltaEvent,
   Draft,
@@ -601,8 +603,8 @@ async function ccParts(
   if (e.type === "error") {
     // the harness's own voice reaching the principal (§2): it speaks when the model can't
     // — a gate is waiting, so no turn will be taken to relay this
-    const { error, refusal } = (e as ErrorEvent).parts[0].data;
-    const said = refusal ? refusalText(refusal, w) : error;
+    const { error, refusal, failed } = (e as ErrorEvent).parts[0].data;
+    const said = refusal ? refusalText(refusal, w) : failed ? failureText(failed, error, w) : error;
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${said}` }]);
   }
   if (e.type === "delta") {
@@ -668,6 +670,16 @@ async function ccParts(
   const files = parts.filter((p) => p.type === "file");
   if (!said && files.length === 0) return null;
   return line(said, files);
+}
+
+/** A model call that failed past its retries, in the surface's tongue: no status means the
+ *  request never reached the provider, weather the retries covered means it is overloaded,
+ *  and anything else is the request's own fault. The provider's words ride along. */
+function failureText({ status, tries }: CallFailure, said: string, w: Words): string {
+  if (status === undefined) return w.failed.unreached(tries, said);
+  return retryable(status, said)
+    ? w.failed.busy(status, tries, said)
+    : w.failed.refused(status, said);
 }
 
 /** A principal's row on a surface: the same tag shape as the voice, saying where it was

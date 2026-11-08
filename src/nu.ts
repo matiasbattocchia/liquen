@@ -15,6 +15,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type {
   AgentId,
   BinDir,
+  CallFailure,
   Draft,
   Emit,
   Event,
@@ -175,14 +176,19 @@ function turnOf(input: TurnInput, transport: ModelTransport) {
   // a cut call is theirs, not the weather's. Whoever needs a call takes this, so a
   // checkpoint is tried exactly as a think is.
   const delays = config.retryDelaysMs ?? RETRY_DELAYS_MS;
-  const attempt = async (step: StepInput, stream?: Emit): Promise<StepResult> => {
+  const attempt = async (
+    step: StepInput,
+    stream?: Emit,
+  ): Promise<StepResult & { tries: number }> => {
     let res: StepResult = { ok: false, error: "not attempted" };
+    let tries = 0;
     for (let i = 0; i <= delays.length; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, delays[i - 1]));
       res = await mu(step, transport, stream);
+      tries = i + 1;
       if (input.signal?.aborted || res.ok || !retryable(res.status, res.error)) break;
     }
-    return res;
+    return { ...res, tries };
   };
 
   // the prefix the think reads: a checkpoint writes against it too, so what the agent's
@@ -279,12 +285,16 @@ export async function nu(
   const ts = () => new Date().toISOString();
   // what the request this error ends read through: the same horizon a step records (§5)
   const horizon = input.events.at(-1)?.id;
-  const errorEvent = (error: string): Draft<Event> => ({
+  const errorEvent = (error: string, failed?: CallFailure): Draft<Event> => ({
     ts: ts(),
     type: "error",
     envelope: here, // harness-authored: no `agent` (§3)
     // the model call itself failed, past its retries: the provider's error, not the harness's
-    parts: [{ type: "data", kind: "error", data: { error, origin: "model" } }],
+    parts: [{
+      type: "data",
+      kind: "error",
+      data: { error, origin: "model", ...(failed ? { failed } : {}) },
+    }],
     ...(horizon ? { extra: { consumed: horizon } } : {}),
   });
 
@@ -302,7 +312,10 @@ export async function nu(
     signal: input.signal,
   }, emit);
   if (input.signal?.aborted) return []; // the principal spoke, not the weather: their row closes it
-  if (!res.ok) return [errorEvent(res.error)]; // unstamped ⇒ terminal (decide idles)
+  if (!res.ok) { // unstamped ⇒ terminal (decide idles)
+    const { error, status, tries } = res;
+    return [errorEvent(error, status === undefined ? { tries } : { status, tries })];
+  }
 
   // The model's words in the session's own room. consumed: the coalescing horizon — what
   // this step actually read; xi's `unanswered` measures against it (§2). silence: the

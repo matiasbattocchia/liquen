@@ -671,8 +671,20 @@ export interface ErrorEvent extends EventBase {
   /** `origin: "model"` — the model call failed (the provider's answer); absent — the
    *  harness's own failure: a checkpoint, a verdict that could not settle. A verdict's
    *  carries its `refusal` too, so a surface says it in its own tongue while `error` stays
-   *  the English the model reads. */
-  parts: [DataPart<"error", { error: string; origin?: "model"; refusal?: Refusal }>];
+   *  the English the model reads. A call that failed past its retries carries `failed`. */
+  parts: [
+    DataPart<
+      "error",
+      { error: string; origin?: "model"; refusal?: Refusal; failed?: CallFailure }
+    >,
+  ];
+}
+
+/** How a model call failed: the last attempt's HTTP `status` (none when the request never
+ *  reached the provider) and how many attempts it took. */
+export interface CallFailure {
+  status?: number;
+  tries: number;
 }
 
 /** Why a principal's answer settled no card (`verdict.ts`): not a verdict at all, a handle

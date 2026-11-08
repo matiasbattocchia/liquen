@@ -15,6 +15,9 @@ import type { DeltaKind } from "./types.ts";
 
 export type Words = typeof TONGUES.en;
 
+const times = (n: number) => n === 1 ? "tried once" : `tried ${n} times`;
+const veces = (n: number) => n === 1 ? "lo intenté una vez" : `lo intenté ${n} veces`;
+
 const TONGUES = {
   en: {
     agent: "agent",
@@ -71,6 +74,21 @@ const TONGUES = {
           : `that approval was already answered — ${waiting} still waiting, /y answers the newest`,
       noneWaiting: "no approval is waiting",
     },
+    // a model call that failed past its retries, by what kept it (`CallFailure`): unreached
+    // (no status), busy (weather the retries covered), refused (the request's own fault).
+    // The provider's words close the line as they came
+    failed: {
+      unreached: (tries: number, said: string) =>
+        `I couldn't reach the model: ${
+          times(tries)
+        }. I'll pick up again with the next message. (${said})`,
+      busy: (status: number, tries: number, said: string) =>
+        `The model is overloaded (${status}): ${
+          times(tries)
+        }. I'll pick up again with the next message. (${said})`,
+      refused: (status: number, said: string) =>
+        `The model refused the request (${status}): ${said}`,
+    },
   },
   // one Spanish for every dialect: the hint keeps to the infinitive, which tú and vos share
   es: {
@@ -120,6 +138,17 @@ const TONGUES = {
             waiting === 1 ? "queda 1 esperando" : `quedan ${waiting} esperando`
           }, /y responde la más reciente`,
       noneWaiting: "no hay ninguna aprobación esperando",
+    },
+    failed: {
+      unreached: (tries: number, said: string) =>
+        `No pude conectarme con el modelo: ${
+          veces(tries)
+        }. Retomo con el próximo mensaje. (${said})`,
+      busy: (status: number, tries: number, said: string) =>
+        `El modelo está saturado (${status}): ${
+          veces(tries)
+        }. Retomo con el próximo mensaje. (${said})`,
+      refused: (status: number, said: string) => `El modelo rechazó el pedido (${status}): ${said}`,
     },
   },
 };
