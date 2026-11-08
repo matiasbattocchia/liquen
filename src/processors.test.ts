@@ -1,9 +1,9 @@
 import { assert, assertEquals } from "@std/assert";
-import { createTranscriber, transcribable } from "./processors.ts";
-import { openLog } from "./store/log.ts";
-import { fileStorage } from "./store/storage.ts";
+import { createTranscriber, PROCESSOR_TEXT_CAP, transcribable } from "./processors.ts";
+import { openLog, type Reader } from "./store/log.ts";
+import { fileStorage, keyOf, type Storage } from "./store/storage.ts";
 import { saveMedia } from "./store/media.ts";
-import type { Draft, Event, MessageEvent } from "./types.ts";
+import type { Draft, Event, FilePart, MessageEvent } from "./types.ts";
 
 /** A live org with the transcriber on a REAL log — the upsert idempotence is half the
  *  contract. The "model" is a shell one-liner over stdin, which is the whole interface. */
@@ -14,6 +14,8 @@ async function withTranscriber(
     transcripts: () => Promise<MessageEvent[]>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
     media: string; // the uri of a kept .ogg for FileParts to point at
+    storage: Storage;
+    read: Reader["read"];
   }) => Promise<void>,
   org: { locale?: string } = {},
 ): Promise<void> {
@@ -53,6 +55,8 @@ async function withTranscriber(
           .filter((e) => e.payload?.action === "add"),
       waitFor,
       media,
+      storage,
+      read: (q) => log.read(q),
     });
   } finally {
     stop();
@@ -115,6 +119,43 @@ Deno.test("the same note forwarded again takes the words it was given: the model
         await t.waitFor(async () => (await t.transcripts()).length === 2);
         const words = (await t.transcripts()).map((e) => (e.parts[0] as { text: string }).text);
         assertEquals(words, ["vamos el martes (1)", "vamos el martes (1)"]);
+      },
+    );
+  } finally {
+    await Deno.remove(runs);
+  }
+});
+
+Deno.test("a long transcript carries its head, and the whole output is kept as an object it references", async () => {
+  const runs = await Deno.makeTempFile();
+  try {
+    // a word per line, numbered, well past the cap; each run leaves a mark
+    await withTranscriber(
+      `cat > /dev/null; echo x >> ${runs}; seq 1 3000 | sed 's/^/palabra/' | tr '\\n' ' '`,
+      async (t) => {
+        await t.publish(voiceNote(t.media));
+        await t.waitFor(async () => (await t.transcripts()).length === 1);
+        const [tr] = await t.transcripts();
+        const [words, whole] = tr.parts as [{ type: "text"; text: string }, FilePart];
+        assert(words.text.length <= PROCESSOR_TEXT_CAP + 1);
+        assert(words.text.startsWith("palabra1 palabra2 "));
+        assert(words.text.endsWith("…"));
+        const said = words.text.slice(0, -1).split(" "); // cut at a word, never inside one
+        assertEquals(said.at(-1), `palabra${said.length}`);
+        assertEquals(whole.kind, "document");
+        assertEquals(whole.file.mime_type, "text/plain");
+        assert(/^storage:\/\/media\/[0-9a-f]{32}\.txt$/.test(whole.file.uri));
+        const kept = new TextDecoder().decode((await t.storage.get(keyOf(whole.file.uri)))!);
+        assert(kept.trim().endsWith("palabra3000"));
+        // the event references it: the agent may read it, and the store keeps it
+        assertEquals((await t.read({ uri: whole.file.uri })).map((e) => e.id), [tr.id]);
+
+        // forwarded again: both the words and the object, and no second run
+        await t.publish(voiceNote(t.media, { external_id: "wa:note2" }));
+        await t.waitFor(async () => (await t.transcripts()).length === 2);
+        const again = (await t.transcripts())[1];
+        assertEquals(again.parts, tr.parts);
+        assertEquals((await Deno.readTextFile(runs)).trim().split("\n").length, 1);
       },
     );
   } finally {

@@ -24,7 +24,9 @@
  * The transcript is an `action: "add"` event (§3): a `transcript` text part added to the
  * audio message, `ref_external_id` pointing at it — the original row stays sealed, past
  * WUMs stay invariant, and the words render as a later `<transcript re=…>` line (§5). The
- * wake it fires is the point: the agent reads the note when the words arrive.
+ * wake it fires is the point: the agent reads the note when the words arrive. An output
+ * past `PROCESSOR_TEXT_CAP` rides as its head, and a `document` part beside it names the
+ * whole, kept as a text object the event references: the agent reads on through its door.
  *
  * Idempotence, twice:
  *   the EVENT   `external_id = transcript:<audio external_id>` — deterministic, so the
@@ -49,15 +51,20 @@
  * conversation around them.
  */
 
+import { saveMedia } from "./store/media.ts";
 import { isStored, keyOf, type Storage } from "./store/storage.ts";
 import { silenced } from "./render.ts";
 import type { Appender, Reader, Subscriber } from "./store/log.ts";
-import type { Draft, Event, FilePart, MessageEvent } from "./types.ts";
+import type { Draft, Event, FilePart, MessageEvent, Part } from "./types.ts";
 
 /** A hung model must not wedge the queue (a real 0.9.1 failure mode): well past the
  *  transcribe-in-own-duration rule for the longest note a platform accepts. It is also the
  *  deadline attention holds a sealed note for (xi §2): past it, nobody is coming. */
 export const PROCESSOR_TIMEOUT_MS = 10 * 60_000;
+
+/** The most of a processor's output the event carries as words: past it, the words are its
+ *  head, and the whole output is kept as an object the event references. */
+export const PROCESSOR_TEXT_CAP = 4 * 1024;
 
 export interface TranscriberDeps {
   subscribe: Subscriber["subscribe"];
@@ -104,8 +111,9 @@ async function transcribe(
   audio: FilePart,
   now: () => string,
 ): Promise<void> {
-  const text = await heard(deps, audio.file.uri) ?? await hear(deps, audio.file.uri);
-  if (!text) return; // a silent clip, or bytes gone: no words to add
+  const parts = await heard(deps, audio.file.uri) ??
+    await partsOf(deps.storage, await hear(deps, audio.file.uri));
+  if (!parts) return; // a silent clip, or bytes gone: no words to add
   const { service, connection_address, conversation, external_id } = e.envelope;
   await deps.publish({
     ts: now(),
@@ -119,20 +127,44 @@ async function transcribe(
       external_id: `transcript:${external_id}`,
     },
     payload: { action: "add", ref_external_id: external_id },
-    parts: [{ type: "text", kind: "transcript", text }],
+    parts,
   } as Draft<MessageEvent>);
 }
 
-/** The words already heard in these bytes: another message that references the same
- *  object (`refs`, §8) and has its transcript. A note forwarded again is one object, so the
- *  model hears it once. */
-async function heard(deps: TranscriberDeps, uri: string): Promise<string | undefined> {
+/** A processor's output as a transcript's parts: the words whole, or, past the cap, their
+ *  head beside the whole output kept as a text object. */
+async function partsOf(storage: Storage, text: string): Promise<Part[] | undefined> {
+  if (!text) return undefined;
+  if (text.length <= PROCESSOR_TEXT_CAP) return [{ type: "text", kind: "transcript", text }];
+  const whole = await saveMedia(storage, new TextEncoder().encode(text), {
+    mime_type: "text/plain",
+  });
+  return [
+    { type: "text", kind: "transcript", text: headOf(text, PROCESSOR_TEXT_CAP) },
+    { type: "file", kind: "document", file: whole },
+  ];
+}
+
+/** The text's first `cap` characters, cut at a word where one is near, marked as cut. */
+function headOf(text: string, cap: number): string {
+  const cut = text.slice(0, cap);
+  const space = cut.search(/\s\S*$/);
+  return `${space > cap * 0.8 ? cut.slice(0, space) : cut}…`;
+}
+
+/** The transcript already made of these bytes: another message that references the same
+ *  object (`refs`, §8) and has one, its words and the whole output it kept. A note
+ *  forwarded again is one object, so the model hears it once. */
+async function heard(deps: TranscriberDeps, uri: string): Promise<Part[] | undefined> {
   for (const e of await deps.read({ uri, types: ["message"] })) {
     const id = e.envelope.external_id;
     if (!id) continue;
     const [words] = await deps.read({ externalId: `transcript:${id}`, limit: 1 });
-    const text = words?.parts?.find((p) => p.type === "text" && p.kind === "transcript");
-    if (text?.type === "text" && text.text) return text.text;
+    const parts = words?.type === "message" ? words.parts : [];
+    const text = parts.find((p) => p.type === "text" && p.kind === "transcript");
+    if (text?.type === "text" && text.text) {
+      return parts.filter((p) => p === text || p.type === "file");
+    }
   }
   return undefined;
 }

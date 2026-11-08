@@ -54,7 +54,7 @@ goes with its words. Each skill the system describes is one file under
 | `mentions="…"` | ✗ | |
 | `<image/>` `<audio/>` `<document/>` … `name path` | ✗ | `path`: `bash.md` |
 | Data elements `<location>` `<contacts>` `<calendar>` `<pr>` `<issue>` `<review>` `<review_comment>`, `data=` `diff=` | ✗ | Sending `<location>` and `<contacts>`: `send.md` |
-| `<transcript re>` | ✗ | The Processors note |
+| `<transcript re path>` | ✗ | The Processors note: `path` names the whole text of a long one |
 | `<interactive>` `options` `links` | ✗ | `send.md` |
 | `— N more messages in M other conversations not shown — search to read them —` | ✗ | |
 | `… N earlier, not shown` | ✗ | |

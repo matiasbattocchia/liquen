@@ -128,7 +128,8 @@ const binLines = (b: BinDir): string =>
 
 /** What a configured processor means to the model, said once above the kinds. */
 const PROCESSORS_NOTE = "Media of these kinds is made readable for you automatically, as a " +
-  "<transcript> that follows the message; it can take a couple of minutes to arrive.";
+  "<transcript> that follows the message; it can take a couple of minutes to arrive. A " +
+  "long one carries its opening words, and the whole text is at its path.";
 
 const facts = (fields: (string | undefined | false)[]): string =>
   fields.filter((f): f is string => !!f).join(" · ");
@@ -2102,7 +2103,10 @@ function msgLine(
     const t = e.parts.find((p): p is TextPart => p.type === "text" && p.kind === "transcript");
     if (t) {
       const spoke = ref.target?.type === "message" ? authorOf(ref.target, session, roster) : "";
-      return `<transcript${spoke}${re}>${escText(t.text)}</transcript>`;
+      // a capped output: the words are its head, and the whole is the object at `path`
+      const whole = filesOf(e)[0];
+      const path = whole ? ` path="${escAttr(pathOf(whole.file.uri))}"` : "";
+      return `<transcript${spoke}${re}${path}>${escText(t.text)}</transcript>`;
     }
     const r = e.parts.find((p): p is ReactionPart => p.type === "data" && p.kind === "reaction");
     // `?? ""`: a glyphless reaction (a removal) renders empty — one malformed event must

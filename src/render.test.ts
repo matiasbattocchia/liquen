@@ -205,7 +205,8 @@ Deno.test("processors: the note is said once, above the kinds it is about", () =
     env.text,
     "# Environment\n\nself: a1\n\n## Processors\n\n" +
       "Media of these kinds is made readable for you automatically, as a <transcript> that " +
-      "follows the message; it can take a couple of minutes to arrive.\n\n- audio\n- image",
+      "follows the message; it can take a couple of minutes to arrive. A long one carries its " +
+      "opening words, and the whole text is at its path.\n\n- audio\n- image",
   );
 });
 
@@ -2142,6 +2143,36 @@ Deno.test("a transcript wears its audio's author even when the marker is capped 
     dump,
     '<transcript principal=\\"Matías\\" re=\\"e1\\">hoy duerme conmigo</transcript>',
   );
+});
+
+Deno.test("a long transcript names the whole text at its path (§5)", () => {
+  const t = "2026-08-16T12:00:00Z";
+  const conv = { address: "wa:sol", kind: "direct" as const };
+  const transcript: MessageEvent = {
+    ...worldMsg("e2", t, conv, null, ""),
+    parts: [
+      { type: "text", kind: "transcript", text: "primero, lo del lunes…" },
+      {
+        type: "file",
+        kind: "document",
+        file: { mime_type: "text/plain", uri: "storage://media/ab.txt", size: 9000 },
+      },
+    ],
+    payload: { action: "add", ref_external_id: "whatsapp:wmw.gone" },
+  };
+  const { messages } = render({
+    events: [transcript],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t,
+  });
+  const dump = JSON.stringify(messages);
+  assertStringIncludes(
+    dump,
+    '<transcript re=\\"?\\" path=\\"storage://media/ab.txt\\">primero, lo del lunes…</transcript>',
+  );
+  assert(!dump.includes("<document"));
 });
 
 Deno.test("a transcript whose audio is outside the window wears no author (§5)", () => {

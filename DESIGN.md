@@ -1683,7 +1683,10 @@ words are the only part of the pair that reads as speech and the marker they poi
 be a turn behind or past the WUM caps. `external_id = transcript:<audio external_id>` (the
 upsert makes one audio message exactly one transcript), and the same bytes forwarded again
 take the words an earlier message that references the object was given (`refs`), so the
-model hears them once. Serial, one note at a time: transcription is CPU-bound and a burst of forwarded notes is
+model hears them once. The words are capped (`PROCESSOR_TEXT_CAP`, a few KB): a longer
+output rides as its head, and the event names the whole as a kept text object
+(`storage://media/<hash>.txt`), which it references, so the agent reads on through its
+door and the store keeps it while the event stands; the line shows it as `path`. Serial, one note at a time: transcription is CPU-bound and a burst of forwarded notes is
 exactly when N model trees must not race each other; concurrency becomes a `processors`
 knob if a GPU box ever runs it.
 
