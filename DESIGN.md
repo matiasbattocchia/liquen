@@ -1887,16 +1887,21 @@ layer**:
   heavy window is answered first, and the gap after that answer compacts. The one hard
   ceiling is the API's own: a request refused as too long ("prompt is too long", the error
   as the last row) makes the next look `compact` whatever the estimate says — the estimate
-  is chars/4 and blind to inlined media, the API's count is the one that binds — and the
-  summary's insert then wakes the think over the record. A dead turn (an error or a cancel
-  as its last row) is covered WHOLE, its chain and the input it was answering: nothing
-  continues it, so its results are not being worked from, a summary under part of its
-  chain is the prefix edit this layer exists to avoid, and the record carries what it was
-  asked, what its tools found and how it ended, which is what the next think answers from.
-  The cut falls at the end of a turn — after its closing's last row, the error that killed
-  it, or the cancel and what the cut turn still wrote — so every turn a span touches is in
-  it whole: a summarizer reading half a turn reads it as in flight, and records as open
-  what the kept half settled. **The cut is pinned**: a pin is the first turn end past each
+  is chars/4 and blind to inlined media, the API's count is the one that binds. The
+  refusal wakes its session at once, so the agent recovers while idle and the next input
+  finds the window already shrunk. The cut falls at the end of a turn — after its
+  closing's last row, the error that killed it, or the cancel and what the cut turn still
+  wrote — so every turn a span touches is in it whole: a summarizer reading half a turn
+  reads it as in flight, and records as open what the kept half settled. A dead turn (an
+  error or a cancel as its last row) is the exception: nothing continues it, so the cut
+  may also fall at the end of any of its steps, and it leaves `keepRecent` like any
+  window. A turn refused for size is that case: what pushed it over the ceiling is its
+  newest results, which the tail keeps, so the checkpoint's first try fits where the think
+  did not. The steps the cut leaves render behind the record as narration, a
+  `<system kind="tool_result">` line a call: their thinking was bound to the prefix the
+  checkpoint replaced, and a dead turn never closed, so its last call would otherwise go
+  out open without the thinking both wires want beside it. A dead turn the tail holds
+  whole, one refused under the estimate, is covered whole. **The cut is pinned**: a pin is the first turn end past each
   multiple of `compactAt − keepRecent`, so it stands still while the window grows, and the
   cut is the latest pin the window's weight has reached — the first until the window
   outgrows `compactAt` by a whole span, the next after that — so a checkpoint due at
@@ -1908,12 +1913,23 @@ layer**:
   after unanswered input a closing left unconsumed: a world message is INPUT, and a
   checkpoint is a record, not an answer. The
   window the checkpoint works from carries a dead turn's tool calls, their outcomes and
-  the error that ended it for the same reason — inside a loop they ARE the content, and a
-  dead chain is trailing, so render lays it out whole. A checkpoint that cannot be written is an error event, not a record — the model wrote it
-  badly (cut at the output ceiling, or empty), or the call never completed. The turn ends
-  on it, unstamped, and the next look retries: the window stays uncovered whichever it
-  was, a turn taken over it would cost more and say less, and a checkpoint failing for a
-  standing reason must not buy a second call on every wake in silence.
+  the error that ended it for the same reason — inside a loop they ARE the content.
+  A checkpoint that cannot be written is an error event, not a record — the model wrote it
+  badly (cut at the output cap or at the end of the context window, or empty), the API
+  refused the request as too long, or the call never completed. The turn ends on it,
+  unstamped: the window stays uncovered whichever it was, and a turn taken over it would
+  cost more and say less. **Three tries**: a call that answered without a record, or was
+  refused for its size, is a try (`attempt` on the error, counted since the floor) and
+  wakes its session at once. The first try is the window as the thinks read it, which
+  keeps the cache; the second is the window **lean**, at low effort (no thinking, each
+  call and its outcome one `<system kind="tool_result">` line clipped at 500 characters a
+  side; words, the world's lines, media and the previous checkpoint as always); the third
+  makes no call: the record is the previous one and a line saying what the span holds and
+  from when, which the tag's `before` closes for `search`. So the floor moves within three
+  looks whatever the window, and the agent is idle again. A call that never completed
+  (weather, past nu's retries) cost nothing and is no try: the tick retries it. The output
+  cap is half the span a record replaces, `(compactAt − keepRecent) / 2`, under the
+  agent's own `maxTokens`, so a record that lands leaves the window well under `compactAt`.
 - **Unload: the facts go to docs before the gist goes to the record.** A checkpoint keeps
   the gist; what a span taught as fact (who someone is, what they prefer, what was
   promised) belongs in a doc, as `70-memory` says, and the turn that writes it is the
@@ -1947,8 +1963,7 @@ layer**:
   frontmatter, so it is never indexed: the harness sends it as itself, and reads it by
   name; a doc that is gone is a checkpoint that cannot be written, on the error path a cut
   or empty one already takes. One unified instruction covers first-checkpoint and fold
-  (it branches on the `<checkpoint>` or `<previous-summary>` block itself, so the code
-  doesn't), and the two forms the window takes (below).
+  (it branches on the `<checkpoint>` block itself, so the code doesn't).
 - **The request is the think's.** The checkpoint call carries the think's tools (offered
   with `tool_choice: none`, none called), the system prefix the think reads — instructions,
   memories, environment — and the window as render laid it out for the thinks, through the
@@ -1960,11 +1975,7 @@ layer**:
   each of them, so only the instruction is written. After the agent's own words the
   instruction is a user turn of `<system kind="checkpoint">` text, since the API takes a
   `mid_conv_system` block only after other content in a user turn; after a user turn (an
-  error, a cancel) it is that block. Two windows go as a **transcript** instead, a
-  `<conversation>` block of the covered span with the previous checkpoint beside it as
-  `<previous-summary>`: one the API refused as too long (sending it again would be refused
-  again; the transcript cuts each tool outcome short and inlines no media), and one whose
-  span draws no block.
+  error, a cancel) it is that block. After a failed try the window goes lean (above).
 - **Prompt shape** = open ends, not a record: what is still open (each by the name and
   address the window shows, whose move it is, with the figures that move needs) · what a
   principal said here that the prefix does not already say. Closed threads, standing facts
@@ -1973,7 +1984,7 @@ layer**:
   heading with nothing under it is left out, and names, addresses, paths and figures are
   kept verbatim. **Iterative merge**: a later
   compaction folds the previous summary in (the `<checkpoint>` block the window opens on,
-  or `<previous-summary>` beside a transcript, + new span → merged);
+  + new span → merged);
   `covers` chains from the previous summary's start, so survivors get re-covered (pi's
   rule); `covers[1]` is the newest event folded in, so the range is always ordered.
 - **Render**: drop everything with `id ≤ covers[1]` of the latest summary and every earlier

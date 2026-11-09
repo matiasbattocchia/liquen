@@ -671,11 +671,19 @@ export interface ErrorEvent extends EventBase {
   /** `origin: "model"` — the model call failed (the provider's answer); absent — the
    *  harness's own failure: a checkpoint, a verdict that could not settle. A verdict's
    *  carries its `refusal` too, so a surface says it in its own tongue while `error` stays
-   *  the English the model reads. A call that failed past its retries carries `failed`. */
+   *  the English the model reads. A call that failed past its retries carries `failed`. A
+   *  checkpoint that made its call and got no record from it (refused for size, cut at the
+   *  output cap, or empty) carries `attempt`: the try its ladder counts (compact.ts `tries`). */
   parts: [
     DataPart<
       "error",
-      { error: string; origin?: "model"; refusal?: Refusal; failed?: CallFailure }
+      {
+        error: string;
+        origin?: "model";
+        refusal?: Refusal;
+        failed?: CallFailure;
+        attempt?: true;
+      }
     >,
   ];
 }

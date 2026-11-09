@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { checkpoint, nu, type TurnConfig } from "./nu.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission } from "./mu.ts";
@@ -269,6 +269,21 @@ Deno.test("nu: a max_tokens cut inside a tool_use drops the half-written call �
     ], "max_tokens"),
   );
   assertEquals(whole.filter((e) => e.type === "tool_use").length, 1);
+});
+
+Deno.test("nu: output that runs into the context window is cut as at the ceiling — the turn continues", async () => {
+  const out = await nu(
+    { events: [], docs: [], tools: [], compactPrompt: PROMPT, config: CONFIG },
+    once([
+      { kind: "assistant", text: "voy a limpiar" },
+      { kind: "tool_use", name: "bash", input: { command: "rm -rf /tm" } },
+    ], "model_context_window_exceeded" as Anthropic.StopReason),
+  );
+  assertEquals(out.some((e) => e.type === "tool_use"), false);
+  const advisory = out.at(-1)!;
+  assertEquals(advisory.type, "error");
+  assertStringIncludes(JSON.stringify(advisory.parts), "the end of the context window");
+  assertEquals(advisory.payload?.stop_reason, "max_tokens");
 });
 
 Deno.test("nu stamps a redacted thinking block as a thinking event — replayed as it came", async () => {

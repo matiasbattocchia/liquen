@@ -4,14 +4,16 @@
  * The window only grows between checkpoints (render keeps every turn as its requests held
  * it); this is the layer that bounds it: when the
  * window outgrows `compactAt`, one mu call writes a structured checkpoint over the older
- * CLOSED turns — whole ones: a span ends where a turn ends, never inside one — published as
+ * CLOSED turns — whole ones: a span ends where a turn ends, or at a step's end inside a
+ * turn that died, which nothing continues — published as
  * a `summary` event with `covers: [from, to]`. The call is the think's own request — its
  * tools (offered, none called), its system prefix, the window as render lays it out — cut
  * where the span ends and closing on the instruction: the position is the boundary, and
  * the model reads the span in the form it works from. The cut is pinned well before the
- * checkpoint is due, and every think marks it, so the span is a cache read. A window the
- * API refused as too long, or a span that draws nothing, goes as a transcript instead.
- * Iterative: a later compaction folds the previous summary in (pi's update rule), and
+ * checkpoint is due, and every think marks it, so the span is a cache read. A call that
+ * brings back no record (refused as too long, cut at its cap, or empty) is a try: after
+ * one the span goes lean (no thinking, each call clipped), after two it is recorded with
+ * no call, as the stretch `search` reads back. Iterative: a later compaction folds the previous summary in (pi's update rule), and
  * `covers` chains from the previous summary's start so survivors get re-covered.
  *
  * A checkpoint runs only BETWEEN turns (§5): a thinking block's signature binds everything
@@ -36,24 +38,13 @@ import {
   errorTextOf,
   estTokens,
   mediaTokens,
-  outcomeLine,
   ownVoice,
-  scripted,
-  worldCapped,
 } from "./render.ts";
 import type { StepCall, StepInput } from "./mu.ts";
 import type Anthropic from "@anthropic-ai/sdk";
-import { describeCall } from "./describe.ts";
 import { LOCAL_CONNECTION } from "./session.ts";
 
-import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT } from "./config.ts";
-
-/** The output ceiling of a checkpoint call. A structured summary of a whole window has to
- *  fit under it whole: a cut summary is not a record, it is a failure (see `buildSummary`). */
-export const SUMMARY_MAX_TOKENS = 16_384;
-
-/** How much of one tool outcome the checkpoint transcript carries. */
-const RESULT_CHARS = 500;
+import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT, DEFAULT_MAX_TOKENS } from "./config.ts";
 
 export interface CompactInput {
   /** The turn's interrupt (§2) — a cut checkpoint call is the cut turn's. */
@@ -79,23 +70,29 @@ export interface CompactInput {
   prompt: () => Promise<string | null>;
   compactAt?: number;
   keepRecent?: number;
+  maxTokens?: number; // the agent's output cap, which a checkpoint's never passes (`summaryCap`)
   /** The invocation's turn (nu mints it): the checkpoint call's spend is metered under it,
    *  and the summary carries it — a checkpoint is a model turn like any other. */
   turnId?: string;
 }
 
 /** The API refused the request for its size: "prompt is too long: N tokens > M maximum"
- *  (Anthropic's wording), "The input token count exceeds the maximum number of tokens
- *  allowed N." (Gemini's). The window's own estimate is chars/4 over the raw events —
- *  order-of-magnitude, and blind to inlined media — so the ceiling that counts is the
- *  API's, and this is how it says so. */
-const TOO_LONG = /prompt is too long|input token count exceeds the maximum/i;
+ *  (Anthropic's wording, the input alone over the window), "The input token count (N)
+ *  exceeds the maximum number of tokens allowed (M)." (Gemini's, the count there or not).
+ *  The window's own estimate is chars/4 over the raw events — order-of-magnitude, and
+ *  blind to inlined media — so the ceiling that counts is the API's, and this is how it
+ *  says so. */
+const TOO_LONG = /prompt is too long|input token count (\(\d+\) )?exceeds the maximum/i;
+
+/** An error saying a request was over the model's ceiling, a think's or a checkpoint's. */
+export function tooLong(e: Event | undefined): boolean {
+  return e?.type === "error" && TOO_LONG.test(errorTextOf(e));
+}
 
 /** The last event says the previous request was over the model's ceiling: the window has to
  *  shrink before any think can run, whatever `compactAt` says. */
 export function overflowed(events: Event[]): boolean {
-  const last = events.at(-1);
-  return last?.type === "error" && TOO_LONG.test(errorTextOf(last));
+  return tooLong(events.at(-1));
 }
 
 /** Is the turn over? The trailing chain — everything after the last closing — replays its
@@ -103,7 +100,7 @@ export function overflowed(events: Event[]): boolean {
  *  signature was bound to. So a checkpoint waits for the turn to end: a closing (nothing
  *  trails), or the turn is dead — a terminal error as the last event, or the principal's
  *  cancel standing (`cutStands`). A dead turn's chain replays too, but nothing continues
- *  it: the checkpoint covers it whole, and the record says what its tools found. */
+ *  it: the checkpoint may cut inside it, at a step's end (`cutIndex`). */
 export function turnOver(events: Event[], session: Session): boolean {
   if (dead(events, session)) return true;
   const boundary = closingBoundary(events, session);
@@ -174,6 +171,25 @@ function turnEnds(events: Event[], session: Session): (i: number) => boolean {
   };
 }
 
+/** Where a step ends: after index `i` when its row is the last of one of the session's tool
+ *  steps. Inside a dead turn that is a cut too (`cutIndex`): the step is whole on its side
+ *  of the cut, and nothing continues the turn past it. */
+function stepEnds(events: Event[], session: Session): (i: number) => boolean {
+  const steps = new Set(
+    events.filter((e) => e.type === "tool_use").map((e) => e.payload.turn_id),
+  );
+  const lastOfStep = new Map<string, number>();
+  events.forEach((e, i) => {
+    const turn = e.payload?.turn_id;
+    if (typeof turn === "string" && steps.has(turn)) lastOfStep.set(turn, i);
+  });
+  return (i) => {
+    const turn = events[i].payload?.turn_id;
+    return typeof turn === "string" && lastOfStep.get(turn) === i &&
+      ownVoice(events[i], session);
+  };
+}
+
 /** The pictures the window inlines weigh with the rows. */
 const weightOf = (es: Event[], session: Session) => estTokens(es) + mediaTokens(es, session);
 
@@ -227,8 +243,8 @@ export function pinnedCut(
  * PINNED: a turn end past a multiple of `compactAt − keepRecent`, so it stands still while
  * the window grows behind it, and every think from then on marks the same block. A
  * checkpoint due at `compactAt` leaves about `keepRecent` uncovered. `due` is the
- * checkpoint asking: a dead turn is then covered whole, and a window with no pin yet (one
- * turn heavier than the span) cuts where the keep-recent tail allows.
+ * checkpoint asking: a dead turn's steps are then cuts too, and a window with no pin yet
+ * (one turn heavier than the span) cuts where the keep-recent tail allows.
  */
 function cutIndex(
   events: Event[],
@@ -254,24 +270,20 @@ function cutIndex(
   // checkpoint is a record, not an answer. Input the closing never consumed sits BEFORE the
   // boundary and is input all the same: `covers` is an id range, so the cut stays below the
   // first such message, or the range would hide it.
-  // A DEAD turn — an error or a cancel ended it — is covered WHOLE, its chain and the
-  // input it was answering, down to the last row it wrote: its thinking replays on the
-  // next request, and a summary under part of it is the prefix edit this layer exists to
-  // avoid; nothing continues the turn, so its results are not being worked from; and the
-  // record carries what it was asked and what its tools found, which is what the next
-  // think answers from. `keepRecent` is a live conversation's tail, and does not apply.
   // A live conversation's span is whole turns: the turn the span's weight falls in goes in
-  // whole, and the cut is its end.
+  // whole, and the cut is its end. A DEAD turn — an error or a cancel ended it — is over
+  // too, and nothing continues it, so when the checkpoint asks, the cut may also fall at
+  // the end of any of its steps: it leaves `keepRecent` like any window, and the steps it
+  // leaves draw as narration behind the record (render.ts `deadSteps`), their thinking gone
+  // with the prefix it was bound to.
   const ended = due && dead(events, session);
   const safe = cutPoints(events);
   const ends = turnEnds(events, session);
-  const cuttable = (c: number) => safe.has(c) && (c <= boundary || ended) && ends(c);
+  const steps = stepEnds(events, session);
+  const cuttable = (c: number) =>
+    safe.has(c) && (c <= boundary ? ends(c) : ended && (ends(c) || steps(c)));
   const firstDeferred = events.findIndex((e) => deferred.has(e));
   const limit = firstDeferred === -1 ? events.length : firstDeferred;
-  if (ended) {
-    for (let c = limit - 1; c >= 0; c--) if (cuttable(c)) return c;
-    return -1;
-  }
   // the pins: the first turn end past each multiple of the span's weight, the summary the
   // window opens on weighing with it. The cut is the latest pin the window's weight has
   // reached: the first until the window outgrows `compactAt` by a whole span, the next
@@ -297,47 +309,59 @@ function cutIndex(
   // the fallback needs content past the budget: a tail that holds every turn stays whole
   const over = events.slice(0, kept).some((e) => e.type !== "summary");
   if (over) { for (let c = ceiling; c < limit; c++) if (cuttable(c)) return c; }
+  // a dead turn whose window the tail holds whole — one the API refused under the estimate
+  // — is covered whole: no think reads it until it shrinks
+  if (ended) { for (let c = limit - 1; c >= 0; c--) if (cuttable(c)) return c; }
   return -1;
 }
 
-/** The covered span as a plain transcript + the previous checkpoint (if one is inside).
- *  Tool traffic is in it: inside an open loop the calls and their outcomes ARE the
- *  content, and a checkpoint that leads a trailing chain has to say what the work found.
- *  The world's runs are capped as the window caps them (`worldCapped`): a flood the
- *  agent was shown a share of is a share here too. */
-function transcript(
-  covered: Event[],
-  session: Session,
-  compactAt: number,
-): { text: string; previous?: string } {
-  let previous: string | undefined;
-  const lines: string[] = [];
-  for (const e of worldCapped(covered, session, compactAt)) {
-    // a script's calls are the bash call's, whose output says what the script found
-    if (scripted(e) !== undefined) continue;
-    if (e.type === "summary") {
-      previous = e.parts.map((p) => p.text).join("\n");
-    } else if (e.type === "message") {
-      const who = ownVoice(e, session)
-        ? "me"
-        : e.envelope.sender?.name ?? e.envelope.sender?.address ?? "?";
-      const text = e.parts.filter((p) => p.type === "text")
-        .map((p) => (p as { text: string }).text).join(" ");
-      lines.push(`[${who} @ ${e.envelope.conversation.address}] ${text}`);
-    } else if (e.type === "tool_use") {
-      const { name, input } = e.parts[0].data;
-      lines.push(`[me → ${describeCall({ name, input }, { full: true })}]`);
-    } else if (e.type === "tool_result") {
-      lines.push(`[tool] ${outcomeLine(e, RESULT_CHARS)}`);
-    } else if (e.type === "error") {
-      // a dead turn's last word: the record says the work stopped, and why
-      lines.push(`[error] ${errorTextOf(e)}`);
-    } else if (e.type === "control") {
-      lines.push(`[cancelled] the turn was stopped`);
-    }
-    // thinking: private — never part of the record
-  }
-  return { text: lines.join("\n"), previous };
+/** How many checkpoints since the floor made their call and got no record from it (the
+ *  error's `attempt`). A failed checkpoint leaves the floor where it was, so the count is
+ *  the log's own, and it is the rung the next checkpoint stands on (`buildSummary`). */
+export function tries(events: Event[]): number {
+  const floor = events.reduce((m, e) => e.type === "summary" && e.id > m ? e.id : m, "");
+  return events.filter((e) =>
+    e.id > floor && e.type === "error" && e.parts[0]?.data?.attempt === true
+  ).length;
+}
+
+/** The tries after which a checkpoint is written without a call: the window, then the
+ *  window lean (render.ts `Archive.lean`). */
+const TRIES = 2;
+
+/** The output cap of a checkpoint call: half of what the span it replaces weighs, so the
+ *  record that lands leaves the window well under `compactAt`, and never past the agent's
+ *  own cap. Thinking spends from it too; a record cut at it is a try that failed. */
+export function summaryCap(
+  compactAt = DEFAULT_COMPACT_AT,
+  keepRecent = DEFAULT_KEEP_RECENT,
+  maxTokens = DEFAULT_MAX_TOKENS,
+): number {
+  return Math.min(maxTokens, Math.floor((compactAt - keepRecent) / 2));
+}
+
+/** The record a span gets when no request could carry it: the previous checkpoint as it
+ *  stands, and what the span holds from where it starts. Its tag's `before` closes it, so
+ *  `search` reads it back between the two. */
+function unread(covered: Event[]): string {
+  const previous = covered.find((e): e is SummaryEvent => e.type === "summary");
+  const rows = covered.filter((e) => e.type !== "summary");
+  const messages = rows.filter((e) => e.type === "message");
+  const rooms = new Set(messages.map((e) => e.envelope.conversation.address)).size;
+  const calls = rows.filter((e) => e.type === "tool_use").length;
+  const what = [
+    ...(messages.length
+      ? [
+        `${messages.length} message${messages.length === 1 ? "" : "s"} in ${rooms} ` +
+        `conversation${rooms === 1 ? "" : "s"}`,
+      ]
+      : []),
+    ...(calls ? [`${calls} call${calls === 1 ? "" : "s"} of yours`] : []),
+  ].join(" and ") || `${rows.length} rows`;
+  const after = new Date(Date.parse(rows[0].ts) - 1).toISOString();
+  const note = `Not in this record: ${what}, after ${after}; too much to read into it. ` +
+    `search reads them word for word, with calls: true for the calls.`;
+  return previous ? `${previous.parts.map((p) => p.text).join("\n")}\n\n${note}` : note;
 }
 
 /** Run the checkpoint step and mint the summary event. Null ⇒ under threshold: there was
@@ -345,7 +369,10 @@ function transcript(
  *  never completed, or the model answered without a usable checkpoint (cut at the ceiling,
  *  or empty). All three end the turn on the error, unstamped, and the next input retries:
  *  a partial record would stand for the whole window, and a checkpoint that keeps failing
- *  would otherwise cost a call on every wake and show nowhere. */
+ *  would otherwise cost a call on every wake and show nowhere. A call that got no record
+ *  climbs a rung (`tries`): the window, then the window lean at low effort, whose prefix
+ *  is no longer the cached one, then the record `unread` writes with no call at all, so a
+ *  span no request carries still moves the floor. */
 export async function buildSummary(
   input: CompactInput,
   call: StepCall,
@@ -353,59 +380,7 @@ export async function buildSummary(
   const span = compactionSpan(input.events, input.session, input.compactAt, input.keepRecent);
   if (!span) return null;
 
-  const failed = (why: string): Draft<ErrorEvent> => ({
-    ts: new Date().toISOString(),
-    type: "error",
-    envelope: {
-      service: "local",
-      connection_address: LOCAL_CONNECTION,
-      conversation: { address: input.session.conversation },
-    }, // harness-authored: no `agent` (§3)
-    parts: [{ type: "data", kind: "error", data: { error: `checkpoint failed: ${why}` } }],
-    // what the checkpoint's request read through: the window it could not record
-    ...(input.events.length ? { extra: { consumed: input.events.at(-1)!.id } } : {}),
-  });
-
-  // the instruction is read lazily: only a window that actually compacts pays the read
-  const instruction = await input.prompt();
-  if (instruction === null) return failed("system/compaction.md is missing");
-  // the window as the think read it, up to the cut and closing on the instruction — or,
-  // for a window the API refused whole or a span that draws no block, the span as a
-  // transcript with the previous checkpoint beside it
-  let messages = overflowed(input.events) ? [] : input.window({
-    covered: new Set(span.covered.map((e) => e.id)),
-    cut: span.covered.at(-1)!.id,
-    instruction,
-  });
-  if (messages.length === 0) {
-    const { text, previous } = transcript(
-      span.covered,
-      input.session,
-      input.compactAt ?? DEFAULT_COMPACT_AT,
-    );
-    let prompt = `<conversation>\n${text}\n</conversation>\n\n`;
-    if (previous) prompt += `<previous-summary>\n${previous}\n</previous-summary>\n\n`;
-    messages = [{ role: "user", content: [{ type: "text", text: prompt + instruction }] }];
-  }
-
-  const res = await call({
-    system: input.system ?? [],
-    messages,
-    model: input.model,
-    effort: input.effort,
-    maxTokens: SUMMARY_MAX_TOKENS,
-    tools: input.tools ?? [],
-    ...(input.tools?.length ? { toolChoice: "none" as const } : {}),
-    turnId: input.turnId,
-    signal: input.signal,
-  });
-  if (!res.ok) return failed(res.error);
-  if (res.stop === "max_tokens") return failed("cut off at the output ceiling");
-  const summary = res.emissions.filter((e) => e.kind === "assistant")
-    .map((e) => e.text).join("\n").trim();
-  if (summary.length === 0) return failed("the model wrote nothing");
-
-  return {
+  const record = (text: string): Draft<SummaryEvent> => ({
     ts: new Date().toISOString(),
     type: "summary",
     agent: { id: input.session.agentId, session_id: input.session.id },
@@ -415,6 +390,61 @@ export async function buildSummary(
       conversation: { address: input.session.conversation },
     },
     payload: { covers: span.covers, ...(input.turnId ? { turn_id: input.turnId } : {}) },
-    parts: [{ type: "text", kind: "text", text: summary }],
-  };
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  const tried = tries(input.events);
+  if (tried >= TRIES) return record(unread(span.covered));
+
+  const failed = (why: string, attempt = false): Draft<ErrorEvent> => ({
+    ts: new Date().toISOString(),
+    type: "error",
+    envelope: {
+      service: "local",
+      connection_address: LOCAL_CONNECTION,
+      conversation: { address: input.session.conversation },
+    }, // harness-authored: no `agent` (§3)
+    parts: [{
+      type: "data",
+      kind: "error",
+      data: { error: `checkpoint failed: ${why}`, ...(attempt ? { attempt: true } : {}) },
+    }],
+    // what the checkpoint's request read through: the window it could not record
+    ...(input.events.length ? { extra: { consumed: input.events.at(-1)!.id } } : {}),
+  });
+
+  // the instruction is read lazily: only a window that actually compacts pays the read
+  const instruction = await input.prompt();
+  if (instruction === null) return failed("system/compaction.md is missing");
+  // the window as the think read it, up to the cut and closing on the instruction; lean
+  // once a try has failed
+  const lean = tried > 0;
+  const messages = input.window({
+    covered: new Set(span.covered.map((e) => e.id)),
+    cut: span.covered.at(-1)!.id,
+    instruction,
+    ...(lean ? { lean } : {}),
+  });
+
+  const res = await call({
+    system: input.system ?? [],
+    messages,
+    model: input.model,
+    effort: lean ? "low" : input.effort,
+    maxTokens: summaryCap(input.compactAt, input.keepRecent, input.maxTokens),
+    tools: input.tools ?? [],
+    ...(input.tools?.length ? { toolChoice: "none" as const } : {}),
+    turnId: input.turnId,
+    signal: input.signal,
+  });
+  // weather was retried in nu and a failed call cost nothing: only the call that answered
+  // without a record, or was refused for its size, is a try
+  if (!res.ok) return failed(res.error, TOO_LONG.test(res.error));
+  if (res.stop === "max_tokens") return failed("cut off at the output ceiling", true);
+  if (res.stop === "model_context_window_exceeded") {
+    return failed("cut off at the end of the context window", true);
+  }
+  const summary = res.emissions.filter((e) => e.kind === "assistant")
+    .map((e) => e.text).join("\n").trim();
+  if (summary.length === 0) return failed("the model wrote nothing", true);
+  return record(summary);
 }
