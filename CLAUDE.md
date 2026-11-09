@@ -43,7 +43,8 @@ Write the positive property. If the rejected design is genuinely worth recording
 
 ## Where things are written down
 
-- `DESIGN.md` — architecture only: what the system is and why it holds together.
+- `DESIGN.md` — architecture: what the system is and why it holds together. Its deferred and
+  future sections (§10, §13) hold the directions not yet planned.
 - `PROJECT.md` — dated entries: what landed, what an incident showed, what is still open.
   Connector minutiae and incident reports live here, never in `DESIGN.md`.
 - `RENDER.md` — every tag and line the model reads, by skill, and whether the system

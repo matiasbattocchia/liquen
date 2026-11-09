@@ -3726,8 +3726,12 @@ on Postgres).
 
 **The scribe** (a daily pass that backfills: it reads through `search` the conversations
 the mind never drew, `seen="never"`, and makes the cold start from the log, the principal's
-profile and the people closest to them; and the nightly unload, writing down what a day
-taught) · **a reminder's own check** (a command a reminder runs first, exit 0 wakes, 1
+profile and the people closest to them; the nightly unload, writing down what a day
+taught; and a dreaming pass, rereading older entries against the lines they cite, the
+dated and lapsing ones first, to fix, prune or confirm each, and mending links between
+profiles that point nowhere. A note checked against its transcript is what moved the agent
+past where it was stuck in Anthropic's "The components of agent memory", and every entry
+here already ends with the ids of the lines that taught it) · **a reminder's own check** (a command a reminder runs first, exit 0 wakes, 1
 skips the model, anything else wakes anyway, so a poll that finds nothing costs no call) ·
 **a local group's lines batched** (each line wakes every member today) · **an index for
 search's text** (a stored folded column, then FTS5 trigram beside `pg_trgm`, once a search
@@ -3743,11 +3747,42 @@ HTTP) · **`install.sh` on macOS**, and a CI job that runs it · **checks on a l
 the account alone, whether the org hears its own removal from a group; Slack: which leave
 and archive events reach the bot) · **compaction's refinements** (the principal's
 corrections kept verbatim, a stale checkpoint's age, each denial kept with its draft and
-reason) · **model routing** · **wire facts that land late** (Teams' kind lookup retried,
-an `external_id` for conversations) · **a script's call made whole** (the door writes the
-call's row before it answers, and main answers at boot any it finds unanswered, so a crash
+reason) · **model routing** (a decision model and a second model family, below) · **wire
+facts that land late** (Teams' kind lookup retried, an `external_id` for conversations) ·
+**a script's call made whole** (the door writes the call's row before it answers, and main answers at boot any it finds unanswered, so a crash
 between the answer and the row leaves no sent message without its call; worth it once
 scripts see real use).
+
+- **A decision model for the questions with known answers**: wake now or wait for the
+  digest, act or stay silent, which tier drafts, which contact a name means. A decision
+  model answers each in one pass with a confidence, at a fraction of a think; Jev, from
+  TypeSafe AI, is one, so far known only through vendor claims. The LLM still writes every
+  draft and every note. By value:
+  - **Wake or not, promote only**: a burst it marks urgent wakes the mind early, and the
+    digest runs whatever it says. A miss costs today's delay, a false alarm one think.
+  - **The agenda first, with no model**: a room named in today's agenda counts as engaged
+    for a few hours around its time. The model takes the long tail ("estoy abajo", a
+    delivery at the door), reading the burst, the room's last lines and today's agenda.
+  - **Shadow before it acts**: its verdict is logged for each burst and compared with what
+    the next digest did. The principal's approvals are labels already on file for the
+    other questions.
+- **A second model family through Chat Completions.** DeepSeek V4-Pro runs an agent like
+  matias for about a tenth of Opus 5.5, priced on a real week, and trails it by 5 to 20
+  points on the benchmarks the two share. Chat Completions is also what OpenRouter, Kimi,
+  Qwen, vLLM and Ollama speak, so one transport opens them all:
+  - **The transport**: `src/transport/openai.ts` with a translator beside it, as `steps.ts`
+    is for Google. System blocks become one system message, `tool_use` and `tool_result`
+    become `tool_calls` and `tool`, thinking becomes `reasoning_content`, which every
+    earlier turn sends back once tools are in play. The reply is rebuilt as an Anthropic
+    `Message`.
+  - **The provider**: `^deepseek-` names, efforts mapped to `reasoning_effort`, no
+    keep-alive (its cache is free to write and lives hours to days), and price rows that
+    know its off-peak half.
+  - **Media**: V4-Pro reads no images and no route takes documents, so each becomes a text
+    marker carrying its `path`, unless a processor describes it first.
+
+  A replay of a few dozen real turns, side by side, comes before any of it; DeepSeek's
+  Anthropic-compatible endpoint serves that trial with no transport.
 
 ## 11. Reference landscape (what we took from each)
 
@@ -3838,6 +3873,30 @@ scripts see real use).
   
   The phone holds the principal's whole life, so what runs there offers a narrow set of
   gated calls (send this SMS, read the notifications since a moment), never an open shell.
+- **One mind across many logs.** A person with a company agent and a personal one ends with
+  two, like two mailboxes, yet an agent centralizes a life and should be one. One mind
+  reads several logs, and each fact stays in the log of whoever owns it, since a copy
+  breaks its owner's retention, legal hold and offboarding. By role:
+  - **Reads** pull from every log the mind holds a grant for, merged by time when the
+    window is read. A line's id names its log (`work:d5e566`).
+  - **Actions** land in the log and room they belong to, through that org's permission
+    table and gate.
+  - **The mind** lives in the main log, the personal one: its thinking, its checkpoints,
+    its identity.
+  - **Memory** lives where its sources live: a note citing work lines under the work org, a
+    personal one under the main agent, one citing both under the stricter owner. Revoking
+    a grant takes the log and its notes together.
+  - **Execution environments**: `bash` takes an `env`, named in the config as a bubble or
+    an ssh host. The env's owner gates it: the ssh key's forced command lands in that
+    org's own door, which applies its table and logs the command. The key lives in the
+    vault, and a remote host that needs the egress guard runs its own bubble.
+
+  Block's Buzz takes the other road: an identity is a keypair that travels, while memory
+  and history stay with each relay. Three of its ideas carry over: identity links the orgs,
+  not hosting; home and body apart, the log as home and each env a body; presence as a
+  renewed lease, so one identity never runs two minds. An employer that wants its agent on
+  its own servers gets two minds and a narrow, gated channel between them. Log-qualified
+  ids serve both roads.
 - Rejected & why (for future selves): **A2A** as gateway protocol (peer-protocol ceremony
   vs driver shape — open-bsp already ships A2A types); **MCP channels** for ingestion
   (local-subprocess topology, can't publish to a log).
