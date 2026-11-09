@@ -88,7 +88,7 @@ import { type DoorAgent, installDoors, type Status, type Tune } from "./door.ts"
 import { readTurns, turnLine } from "./turns.ts";
 import { loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import { collect } from "./store/storage.ts";
-import type { About, Delta, Event } from "./types.ts";
+import type { Delta, Event, PresenceLevel } from "./types.ts";
 import { checkToolDocs } from "./tooldoc.ts";
 import { type BashInput, bashShape } from "./exec/bash.ts";
 import { partialToolHomes } from "./exec/bubble.ts";
@@ -97,6 +97,7 @@ import {
   DEFAULT_BACKLOG_HOURS,
   DEFAULT_BASH_WAIT_MS,
   DEFAULT_DEBOUNCE_MS,
+  DEFAULT_PRESENCE,
   findRoot,
   type OrgConfig,
   orgFlag,
@@ -263,8 +264,8 @@ export async function start(
   const updating = new Set<Promise<void>>();
   const planeOptions = {
     agents: principals.map((p) => p.agentId),
-    locale: catalog?.organization.locale,
-    timezone: catalog?.organization.timezone,
+    locale: catalog?.shared.locale,
+    timezone: catalog?.shared.timezone,
     bashWaitMs: catalog?.system.bashWaitMs,
     tell: (u: SessionUpdate) => {
       // a shell's word on a call (late.ts): published as the update it is. Held until
@@ -346,7 +347,6 @@ export async function start(
     agentId: string,
     sessionId: string,
     line: Status,
-    about: About[],
   ) => void = () => {};
   // the status push is EDGE-triggered (§2): one line per change of what the daemon would
   // say — per SESSION, so siblings' edges never collide — and a quiet org tails quietly:
@@ -357,7 +357,6 @@ export async function start(
     sessionId: string,
     verdict: Decision,
     cursor: string | undefined,
-    about: About[] = [],
   ) => {
     const line: Status = verdict === "ignore"
       ? { status: "idle", ...(cursor !== undefined ? { after: cursor } : {}) }
@@ -367,7 +366,7 @@ export async function start(
     const was = reported.get(who);
     if (was === key) return;
     reported.set(who, key);
-    castStatus(agentId, sessionId, line, about);
+    castStatus(agentId, sessionId, line);
     if (line.status === "idle" && was === "busy") sayTurn(agentId, sessionId);
   };
   // the turn's line: when a session falls from busy to idle, the turn that just ended is
@@ -430,8 +429,7 @@ export async function start(
     ...(contact ? { contact } : {}),
     ...(rooms ? { rooms } : {}),
     onDelta: (agentId, sessionId, d) => cast(agentId, sessionId, d),
-    onDecision: (agentId, sessionId, v, cursor, about) =>
-      disclose(agentId, sessionId, v, cursor, about),
+    onDecision: (agentId, sessionId, v, cursor) => disclose(agentId, sessionId, v, cursor),
   };
   const build = (p: AgentRow, sessionId: string): Runner =>
     runnerFor(host, p, sessionId, seamsOf(p.agentId));
@@ -605,10 +603,13 @@ export async function start(
   );
   // presence (§9): the same two facts the doors serve, written as a `delta` event in the
   // mind's room — the mirror is what carries it to every surface, tagged. Inert until a
-  // surface is bound.
+  // surface is bound. Each agent's level is its entry's, else the org's
+  const presenceOf = (agentId: string): PresenceLevel =>
+    catalog?.agents[agentId]?.presence ?? catalog?.shared.agents.presence ?? DEFAULT_PRESENCE;
   const presence = createPresence({
     aliases: () => log.aliases(),
     publish: (draft) => log.publish(draft),
+    level: presenceOf,
     onError: (err) => console.error("presence FAILED:", err),
   });
   cast = (agentId, sessionId, delta) => {
@@ -616,9 +617,9 @@ export async function start(
     presence.delta(agentId, sessionId, delta);
   };
   castUsage = (agentId, row) => doors.usage(agentId, row);
-  castStatus = (agentId, sessionId, line, about) => {
+  castStatus = (agentId, sessionId, line) => {
     doors.status(agentId, sessionId, line);
-    presence.status(agentId, sessionId, line.status, about);
+    presence.status(agentId, sessionId, line.status);
   };
 
   const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
@@ -679,7 +680,8 @@ export async function start(
     aliases: () => log.aliases(),
     nameOf: async (id) => (await log.agents()).find((a) => a.agentId === id)?.name ?? id,
     principalsOf: (id) => log.principalsOf(id),
-    locale: catalog?.organization.locale,
+    locale: catalog?.shared.locale,
+    presence: presenceOf,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onError: (e, err) => console.error(`mirror FAILED on ${e.envelope.conversation.address}:`, err),
   }));
@@ -693,7 +695,7 @@ export async function start(
       read: (q) => log.read(q),
       storage,
       command: catalog.processors.audio,
-      locale: catalog.organization.locale,
+      locale: catalog.shared.locale,
       onError: (e, err) =>
         console.error(`transcriber FAILED on ${e.envelope.conversation.address}:`, err),
     }));
@@ -719,7 +721,7 @@ export async function start(
   const clock: Clock = {
     agents: () => agents.map((a) => ({ agentId: a.config.agentId, timezone: a.config.timezone })),
     docs,
-    backlogHours: config.backlogHours ?? catalog?.organization.backlogHours ??
+    backlogHours: config.backlogHours ?? catalog?.shared.backlogHours ??
       DEFAULT_BACKLOG_HOURS,
   };
   let beating: Promise<unknown> | undefined;
@@ -814,7 +816,7 @@ function rowOf(p: AgentConfig & Policy): AgentRow {
  *  ("principal handle → principal-DM alias", the special wiring).
  *
  *  Resolution, most specific wins: agents.<name> → MainConfig (the process: tests) →
- *  organization.agents — every key has a default, so nothing falls through. The clock and locale
+ *  shared.agents — every key has a default, so nothing falls through. The clock and locale
  *  are the ORG's alone: one deployment, one wall time. */
 async function compileRoster(
   dir: string,
@@ -824,16 +826,16 @@ async function compileRoster(
 ): Promise<AgentRow[]> {
   // the backlog is resolved ONCE, into an instant: every agent in this org comes up owing
   // the same stretch of history, and no later read re-decides where that stretch begins
-  const hours = defaults.backlogHours ?? catalog.organization.backlogHours;
+  const hours = defaults.backlogHours ?? catalog.shared.backlogHours;
   const since = new Date(startedAt - hours * 3_600_000).toISOString();
-  const org = catalog.organization.agents;
+  const org = catalog.shared.agents;
   // the media kinds a processor makes readable — org-wide, one fact for every agent (§5)
   const processors = Object.entries(catalog.processors).filter(([, cmd]) => !!cmd)
     .map(([kind]) => kind);
   const found: AgentRow[] = [];
   for (const [name, entry] of Object.entries(catalog.agents)) {
     const { identity = {}, principals, mind, ...cfg } = entry;
-    // a session runs unless the entry — or `organization.agents.mind`, for all of them — says not
+    // a session runs unless the entry — or `shared.agents.mind`, for all of them — says not
     // (§4). The workspace is derived, for an agent: a person alone gets none (the door's
     // socket is all its folder holds), a paused agent keeps the one it has and takes no turn
     const runs = mind ?? org.mind;
@@ -856,8 +858,8 @@ async function compileRoster(
         rules: cfg.rules ?? org.rules,
         export: cfg.export ?? org.export,
         since,
-        timezone: catalog.organization.timezone || undefined,
-        locale: catalog.organization.locale ?? undefined,
+        timezone: catalog.shared.timezone || undefined,
+        locale: catalog.shared.locale ?? undefined,
         // attention (§2): the wake policy is the agent's — hot, summoned, or on the digest
         engagedMinutes: cfg.engagedMinutes ?? org.engagedMinutes,
         digestAfterMessages: cfg.digestAfterMessages ?? org.digestAfterMessages,

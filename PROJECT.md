@@ -6406,6 +6406,23 @@ mind answered the moment they came.
   failed turn. The words are the org's tongue, and the provider's close the line as they
   came. The model reads the English error as before.
 
+### Presence has levels, and the section is `shared` (2026-11-08) — LANDED
+
+The mind compacted after every unload, but a surface heard only the unload: presence spoke
+only when the principal had written in the minute before the turn, and an unload and its
+checkpoint run when no news waits.
+
+- **Levels.** `presence` is an agent knob, `shared.agents` or an `agents.<name>` entry:
+  `off`, `waiting` (the default) or `tools`. `waiting` says memorizing, compacting,
+  thinking and working (the model writing a call), each once a turn as it starts. `tools`
+  crosses each call by name in place of working, and a call's failure with it. An approved
+  call's failure crosses at every level, since its card did. `off` keeps a surface to the
+  agent's words, its cards and its errors.
+- **Every turn speaks.** The minute is gone, and with it `About`, `aboutOf` and the `about`
+  that `onDecision` carried: presence was their only reader.
+- **The section.** `organization` in `config.jsonc` is `shared`: what every agent shares,
+  the clock, the backlog and `shared.agents`. Every org's file changes with it.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

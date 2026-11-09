@@ -2,9 +2,9 @@
  * connect/presence.ts — the mind says what it is DOING.
  *
  * The motive is one a log cannot serve: from the other side of a chat, a mind that has been
- * thinking for forty seconds and a mind that is wedged are the same silence. So a `thinking`
- * delta and a `checkpoint` delta each become a `delta` EVENT in the mind's room (§9) — the
- * fact, harness-authored, that the mind is at work.
+ * thinking for forty seconds and a mind that is wedged are the same silence. So each kind of
+ * work, as it starts, becomes a `delta` EVENT in the mind's room (§9): the fact,
+ * harness-authored, that the mind is at work.
  *
  * The event is all this module writes. The mirror does the rest, exactly as it does for a
  * gate: it crosses the fact to every live surface as a tagged line (`[agent thinking...]`),
@@ -12,32 +12,19 @@
  * mind excludes the event by type — it renders nowhere, is not news, wakes nothing, and
  * `search` never finds it — so the mind never reads back a word it did not say.
  *
- * Two questions are this module's own:
+ * Three questions are this module's own:
  *
- *   - **WHETHER** — only when the PRINCIPAL is there, because the line is painted on THEIR
- *     surface. A turn's `about` carries `since` per unanswered conversation; presence reads
- *     the one room the principal speaks in, the mind's own, where their word lands whether
- *     typed into a door or crossed in by the mirror — so a line sent from Slack is still a
- *     reason to say `[agent thinking...]` on WhatsApp, and a stranger's message in some
- *     group, which wakes the mind exactly the same way, is not. It must also be a word:
- *     an alarm ringing in that room is the clock, and nobody is waiting on it. Then the
- *     word must be within `RECENT_MS` — a 3am tick over a three-day-old window says
- *     nothing. That question is settled ONCE, at the turn's edge: the answer a principal
- *     waits five minutes for is the one they most need a sign of life during, and the
- *     minute is about whether they are there, not how long the mind may take. And nothing
- *     at all is written while no surface is bound: a fact nobody can hear is not worth a
- *     row.
+ *   - **WHAT** — the agent's `presence` level. `off` says nothing. `waiting` says each kind
+ *     of work: thinking, compacting, and working, the model writing a call. `tools` leaves
+ *     working to the calls themselves, which the mirror crosses by name.
+ *   - **WHETHER** — only the mind's own session, and only while a surface of the agent's is
+ *     bound: a fact nobody can hear is not worth a row.
  *   - **HOW OFTEN** — once per kind per turn.
  */
 
 import { LOCAL_CONNECTION, MIND, sessionAddress } from "../session.ts";
 import type { AliasRow } from "../store/connections.ts";
-import type { About, Delta, DeltaEvent, DeltaKind, Draft } from "../types.ts";
-
-/** How recently a conversation must have spoken for presence to say anything. The wire's
- *  own sense of "now" (the whatsmeow bridge holds a minute for chat presence), and the
- *  reason the mind's background life stays invisible: nobody is watching, nobody is told. */
-export const RECENT_MS = 60_000;
+import type { Delta, DeltaEvent, DeltaKind, Draft, PresenceLevel } from "../types.ts";
 
 export interface PresenceDeps {
   /** The mirror's surfaces, live — read through, so a binding granted while the org runs
@@ -45,72 +32,53 @@ export interface PresenceDeps {
   aliases: () => Promise<AliasRow[]>;
   /** → the log: one `delta` event in the mind's room, which the mirror carries from there. */
   publish: (draft: Draft<DeltaEvent>) => Promise<unknown>;
-  now?: () => number;
-  recentMs?: number;
+  /** The agent's level, read at each delta. */
+  level: (agentId: string) => PresenceLevel;
   onError?: (err: unknown) => void;
 }
 
 /** What main tells presence — the same two facts it hands the doors. */
 export interface Presence {
-  status(agentId: string, sessionId: string, status: "busy" | "idle", about: About[]): void;
+  status(agentId: string, sessionId: string, status: "busy" | "idle"): void;
   delta(agentId: string, sessionId: string, delta: Delta): void;
 }
 
-/** An open turn: whether the principal was there when it began, and what it has already
- *  said about itself. */
-interface Turn {
-  heard: boolean;
-  told: Set<DeltaKind>;
+/** The word a stream delta is at a level, if any: a `tool` delta is the model writing a
+ *  call, which `tools` leaves to the call's own line. */
+export function presenceKind(kind: Delta["kind"], level: PresenceLevel): DeltaKind | undefined {
+  if (level === "off") return undefined;
+  if (kind === "thinking" || kind === "checkpoint") return kind;
+  if (kind === "tool" && level === "waiting") return "working";
 }
 
 /**
  * Wire presence to the log.
  *
  * A busy edge MERGES rather than replaces — main discloses on every decision, so one turn
- * can announce itself more than once, and a reset `told` would say `[agent thinking...]`
+ * can announce itself more than once, and a fresh set would say `[agent thinking...]`
  * twice. The idle closes the turn; the next busy opens a new one, free to speak again.
  */
 export function createPresence(deps: PresenceDeps): Presence {
-  const now = deps.now ?? (() => Date.now());
-  const recentMs = deps.recentMs ?? RECENT_MS;
-  const turns = new Map<string, Turn>();
+  // per open turn: the kinds it has already said
+  const turns = new Map<string, Set<DeltaKind>>();
 
   return {
-    status(agentId, sessionId, status, about) {
+    status(agentId, sessionId, status) {
       if (sessionId !== MIND) return; // a named session is mirrored nowhere
-      if (status === "idle") {
-        turns.delete(agentId);
-        return;
-      }
-      // when the PRINCIPAL last spoke: their word lands in the mind's own room whatever
-      // carried it — typed into a door, or crossed in by the mirror from any wire
-      const home = sessionAddress(agentId, MIND);
-      const since = about
-        .filter((a) => a.conversation === home && a.spoken)
-        .map((a) => Date.parse(a.since))
-        .filter((t) => !Number.isNaN(t))
-        .reduce((a, b) => Math.max(a, b), -Infinity);
-      // asked once, at the edge: somebody who asked a minute ago is somebody who is still
-      // waiting, however long the answer takes — and the long answers are the ones worth
-      // saying anything about. A turn that opened over nothing can still be joined: a word
-      // spoken into it is the principal arriving mid-answer.
-      const heard = now() - since <= recentMs;
-      const held = turns.get(agentId);
-      if (held) held.heard ||= heard;
-      else turns.set(agentId, { heard, told: new Set() });
+      if (status === "idle") turns.delete(agentId);
+      else if (!turns.has(agentId)) turns.set(agentId, new Set());
     },
     delta(agentId, sessionId, delta) {
-      const kind = delta.kind;
-      if (kind !== "thinking" && kind !== "checkpoint") return;
       if (sessionId !== MIND) return;
-      const turn = turns.get(agentId);
-      if (!turn || !turn.heard || turn.told.has(kind)) return;
+      const told = turns.get(agentId);
+      const kind = presenceKind(delta.kind, deps.level(agentId));
+      if (!told || !kind || told.has(kind)) return;
       // the deltas do not wait: the seat is claimed as soon as a surface is known to exist,
       // and the line lands on its own time — one that did not is one nobody needed
       deps.aliases()
         .then((rows) => {
-          if (turn.told.has(kind) || !rows.some((a) => a.live && a.agentId === agentId)) return;
-          turn.told.add(kind);
+          if (told.has(kind) || !rows.some((a) => a.live && a.agentId === agentId)) return;
+          told.add(kind);
           return deps.publish(factOf(agentId, kind, new Date().toISOString()));
         })
         .catch((err) => deps.onError?.(err));

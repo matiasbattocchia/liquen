@@ -12,7 +12,7 @@ Deno.test("init scaffolds a project the reader accepts, roster empty, and refuse
     const cfg = await readConfig(path);
     assertEquals(cfg.agents, {}); // `liquen agent` declares each one
     assertEquals(cfg.connections, {});
-    assert(cfg.organization.timezone.length > 0); // the machine's clock, interviewed for the human
+    assert(cfg.shared.timezone.length > 0); // the machine's clock, interviewed for the human
     for (
       const f of [
         "Dockerfile",

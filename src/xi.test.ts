@@ -1,6 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
 import {
-  aboutOf,
   type AgentConfig,
   attachmentsOf,
   beforePool,
@@ -1310,60 +1309,6 @@ Deno.test("unknownTool: a program on PATH called as a tool is pointed through ba
     await unknownTool("aread", CONFIG, { bins } as unknown as XiPorts),
     "unknown tool: aread",
   );
-});
-
-/* ── what a turn is about, in the wire's terms ────────────────────────────── */
-
-/** A message off the wire — the shape a dispatcher can act on: a service, the connection
- *  it arrived through, and a conversation address that is not a room. */
-const wireMsg = (conversation: string, ts: string, service = "whatsapp"): Event =>
-  ({
-    id: `e${String(++n).padStart(3, "0")}`,
-    ts,
-    type: "message",
-    envelope: {
-      service,
-      connection_address: "5491133585694",
-      conversation: { address: conversation },
-      sender: { address: conversation },
-    },
-    parts: [],
-  }) as Event;
-
-Deno.test("aboutOf: the news, translated out of session terms — one entry per conversation", () => {
-  const about = aboutOf([
-    wireMsg("5492614694650", "2026-09-10T20:50:00.000Z"),
-    wireMsg("5492614694650", "2026-09-10T20:53:00.000Z"), // same conversation, later word
-    wireMsg("5492611111111", "2026-09-10T20:40:00.000Z"),
-  ], SESSION);
-
-  assertEquals(about.length, 2);
-  const one = about.find((a) => a.conversation === "5492614694650")!;
-  assertEquals(one.service, "whatsapp");
-  assertEquals(one.connection, "5491133585694");
-  assertEquals(one.since, "2026-09-10T20:53:00.000Z"); // the NEWEST word, not the first
-  // a stale conversation is named too: `since` is the fact, freshness is the reader's rule
-  assertEquals(
-    about.find((a) => a.conversation === "5492611111111")?.since,
-    "2026-09-10T20:40:00.000Z",
-  );
-});
-
-// Both wake a mind; only one of them is a person waiting for it (§9).
-Deno.test("aboutOf: a word is spoken news, the clock's own ring is not", () => {
-  const word = wireMsg("5492614694650", "2026-09-10T20:50:00.000Z");
-  const rang = { ...word, id: "e900", type: "alarm", ts: "2026-09-10T20:55:00.000Z" } as Event;
-
-  assertEquals(aboutOf([word], SESSION)[0].spoken, true);
-  const after = aboutOf([word, rang], SESSION)[0];
-  assertEquals(after.since, "2026-09-10T20:55:00.000Z"); // the newest is what the room is about
-  assertEquals(after.spoken, false);
-});
-
-Deno.test("aboutOf: answered news is not news — nothing to be about", () => {
-  const asked = wireMsg("5492614694650", "2026-09-10T20:50:00.000Z");
-  const answered = selfMsg();
-  assertEquals(aboutOf([asked, answered], SESSION), []);
 });
 
 /* ── unanswered: the rooms whose last word is not ours (§5) ─────────────── */

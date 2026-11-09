@@ -10,6 +10,7 @@ import type {
   Event,
   MessageEvent,
   PermissionResponseEvent,
+  PresenceLevel,
   ToolUseEvent,
 } from "../types.ts";
 import type { Connections } from "../store/connections.ts";
@@ -29,6 +30,7 @@ async function withMirror(
   }) => Promise<void>,
   settleMs = 30, // the waited constant, shrunk (§9) — one test widens it to race the backfill
   locale?: string, // the org's tongue — unset, the harness speaks English
+  presence: PresenceLevel = "tools", // the loudest level: every line a surface can hear
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -45,6 +47,7 @@ async function withMirror(
     aliases: () => log.aliases(),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     locale,
+    presence: () => presence,
   }, settleMs);
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {
     const t0 = Date.now();
@@ -979,7 +982,7 @@ Deno.test("mirror fan-out: a wake, an unload and a failure cross as `[system]`; 
       }], { ref_id: "u5", turn_id: "t3" });
       await waitFor(async () => (await inConv("549")).length === 5);
       assertEquals((await inConv("549")).map(textOf), [
-        "`[escribiendo memorias...]`",
+        "`[agente memorizando...]`",
         "`[sistema]` ⏰ recordarle a Mecha el mail",
         "`[sistema]` ✗ Command exited with code 1",
         "`[sistema]` ✗ send(to: Vivian) — the bridge is down",
@@ -989,6 +992,77 @@ Deno.test("mirror fan-out: a wake, an unload and a failure cross as `[system]`; 
     30,
     "es_AR.UTF-8",
   );
+});
+
+Deno.test("mirror fan-out: below tools a call crosses nothing and only an approved call's failure speaks; off hears no unload", async () => {
+  const levels: [PresenceLevel, string[]][] = [
+    ["waiting", [
+      "`[system]` ✗ send(to: Vivian) — the bridge is down",
+      "`[agent memorizing...]`",
+      "`[system]` ⏰ done",
+    ]],
+    ["off", [
+      "`[system]` ✗ send(to: Vivian) — the bridge is down",
+      "`[system]` ⏰ done",
+    ]],
+  ];
+  for (const [level, heard] of levels) {
+    await withMirror(
+      async ({ publish, inConv, waitFor }) => {
+        const mind = (draft: Record<string, unknown>) =>
+          publish({
+            ts: new Date().toISOString(),
+            envelope: {
+              service: "local",
+              connection_address: "default",
+              conversation: { address: "mind@ana" },
+            },
+            ...draft,
+          } as unknown as Draft<Event>);
+        await mind({
+          type: "tool_use",
+          payload: { turn_id: "t1" },
+          agent: { id: "ana", session_id: "mind" },
+          parts: [{
+            type: "data",
+            kind: "tool_use",
+            data: { name: "bash", input: { command: "ls" } },
+          }],
+        });
+        await mind({
+          type: "tool_result",
+          payload: { ref_id: "u1", turn_id: "t1" },
+          parts: [{
+            type: "data",
+            kind: "tool_result",
+            data: { output: "Command exited with code 1", is_error: true },
+          }],
+        });
+        await mind({
+          type: "tool_result",
+          payload: { ref_id: "u2", turn_id: "t2", gated: true },
+          parts: [{
+            type: "data",
+            kind: "tool_result",
+            text: "send(to: Vivian)",
+            data: { output: "the bridge is down", is_error: true },
+          }],
+        });
+        await mind({
+          type: "alarm",
+          extra: { unload: { since: "a", through: "b" } },
+          parts: [{ type: "text", kind: "alarm", text: "" }],
+        });
+        // the mirror keeps log order: once this crosses, everything before it has been weighed
+        await mind({ type: "alarm", parts: [{ type: "text", kind: "alarm", text: "done" }] });
+        await waitFor(async () => (await inConv("D1")).some((m) => textOf(m).endsWith("done")));
+        assertEquals((await inConv("D1")).map(textOf), heard);
+      },
+      30,
+      undefined,
+      level,
+    );
+  }
 });
 
 Deno.test("mirror: a SILENCE note reaches no surface — nothing said is nothing sent", async () => {
@@ -1245,6 +1319,7 @@ async function withRoom(
     aliases: () => log.aliases(),
     principalsOf: (id) => log.principalsOf(id),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
+    presence: () => "tools",
   }, 30);
   const waitFor = async (cond: () => Promise<boolean>) => {
     const t0 = Date.now();

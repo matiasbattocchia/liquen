@@ -370,7 +370,7 @@ Deno.test("docs in SQLite's table: boot seeds them there, and the agent writes a
 
 Deno.test("config.jsonc declares the agent: settings override defaults, handles mirror in (§9)", async () => {
   const { root, dir, catalog } = await orgDir({
-    // organization.agents' keys, overridden per agent — plus the handles a human knows it by
+    // shared.agents' keys, overridden per agent — plus the handles a human knows it by
     ana: { model: "claude-y", effort: "low", identity: { email: "ana@org.example" } },
   });
   const { transport } = scripted([reply("hola")]);

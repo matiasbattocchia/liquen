@@ -437,7 +437,7 @@ async function handle(
   if (agent.paused && ORDERS.includes(req.op as string)) {
     throw new Error(
       `${agent.agentId} is paused — mind: false in config.jsonc (agents.${agent.agentId}, ` +
-        `or organization.agents for every agent); the door reads, it takes no orders`,
+        `or shared.agents for every agent); the door reads, it takes no orders`,
     );
   }
   const envelope = {

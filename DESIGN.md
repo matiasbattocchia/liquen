@@ -80,7 +80,7 @@ Two planes:
   and errors the operator watches. Every kind reaches every tailer, named; what a surface
   shows and what it folds away is its own call. Never stored. Rule: **stream the
   in-progress, log the completed.** It reaches attach clients through each agent's door
-  (§9). What a chat surface gets of it is presence (§9): two of its facts, as rows.
+  (§9). What a chat surface gets of it is presence (§9): a few of its facts, as rows.
 
 The ReAct loop is **unrolled across invocations** (invocation = step = one model call):
 
@@ -285,7 +285,7 @@ Nothing past the floor goes unread: the agent's own history is the checkpoints' 
 and a flood of the world's is render's, which caps each run of world lines (§5, the WUM
 cap). Before the first checkpoint the floor is `since`, which bounds the BACKLOG: a fixed
 instant, set once when the agent comes up to start − `backlogHours` (24,
-org-configurable: `organization.backlogHours`), before which nothing is ever owed. An
+org-configurable: `shared.backlogHours`), before which nothing is ever owed. An
 agent coming up after a week off answers the last day, not the week, and the rest is history
 it can still reach through `search` (§6).
 
@@ -796,7 +796,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `summary` | nu, in the idle gap after a turn (§5) | leading text block (§5) | look again (idle, or the think a dead turn left owed) | parts(text) · payload{covers} |
 | `alarm` | the clock, firing a timer row (§10) · task (stall-retry) · xi, raising an unload in the idle gap (§5) | `<system kind="alarm">` carrying the note; an unload's `<system kind="unload" since="…">` | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} · extra{timer} or extra{unload: {since, through}} |
 | `error` | nu · xi · the checkpoint · the mirror | **system** + Stream | ignore | parts(data:{error}) · extra{consumed} — what a failed request read (the model's, a checkpoint's) · payload{ref_id} — the call a word is said of, or the line that settled no card |
-| `delta` | main (presence, §9): the mind is at work and somebody is waiting | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
+| `delta` | main (presence, §9): the mind has started a kind of work | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint · working}) |
 | `anchor` | nu, with a step's first row, when the state moved since the last (§5) | `mid_conv_system` where its step read it: the sections that moved; crosses to no surface | ignore | parts(text, kind anchor: `now:` and the ambient lines) · payload{turn_id} |
 | `prefix` | nu, with a step's first row, when the live system prefix differs from the last since the checkpoint (§5) | the first since the checkpoint is the request's `system`; each later one a `mid_conv_system` notice where its step read it, the sections that changed; crosses to no surface | ignore | parts(data, kind prefix: {sections: [{key, text, doc?}]}) · payload{turn_id} |
 
@@ -1030,7 +1030,7 @@ of one ties a member to an agent that is not their own, an empty list says nobod
 (a service agent, reached only through its door). Every principal is a roster entry; one
 with `mind: false` is a person alone — identity, handles, a door, no session runs for
 them. The same knob on an agent that has a folder is a PAUSE: rows keep landing in the log
-and are owed when it comes back (the backlog, §5); `organization.agents.mind: false` pauses every
+and are owed when it comes back (the backlog, §5); `shared.agents.mind: false` pauses every
 agent that does not say otherwise — the org's doors stay up, its minds do not, which is the
 half of "the org is up" that has memory behind it. A paused agent's door still opens: a tail
 reads its rooms, and an order — a message, a call, a verdict — is refused in a sentence,
@@ -1078,13 +1078,17 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     wire's name for a steering room's writer, who is on no roster). A
     principal's answer crosses as the line its settlement carries — a `/y` typed at the
     terminal, a thumb on a card — quoting the card's own crossing, which is how a surface
-    points where a terminal names the card by its handle. Tool calls cross as redacted one-liners under a tag of their
-    own (`[agent tool] bash(git status)`). What the harness says in the REPL crosses as
-    `[system] …`: a failure (`✗` and the tool's words; an approved call's names the call), a
+    points where a terminal names the card by its handle. At the `tools` presence level,
+    tool calls cross as redacted one-liners under a tag of their own
+    (`[agent tool] bash(git status)`); below it, presence says `[agent working...]` once a
+    turn instead. What the harness says in the REPL crosses as
+    `[system] …`: a failure (`✗` and the tool's words, at `tools`; an approved call's,
+    which names the call, at every level), a
     model call that failed past its retries (what kept it: the model unreached, overloaded,
     or refusing the request, then the provider's words), a fired wake (`⏰` and the agent's note), a turn the principal cut (under their
-    `/cancel`, which crosses as their line). A checkpoint written is the terminal's: a
-    surface heard `[agent compacting...]` while it was written. A settlement's own row is
+    `/cancel`, which crosses as their line). An unload notice crosses as
+    `[agent memorizing...]` unless presence is `off`. A checkpoint written is the
+    terminal's: a surface heard `[agent compacting...]` as it began. A settlement's own row is
     the terminal's too — a verdict (`— bbc24a refused once`), a lapse (`— bbc24a lapsed: unanswered
     for 24h`), the agent's withdrawal: on a surface the line that gave a verdict says it,
     and a call refused draws no outcome anywhere. The tags, the
@@ -2878,17 +2882,16 @@ a price took effect (`prices.ts` and `system.prices`), so a corrected price repr
 history and a call nobody can price is counted as unpriced, never as $0.
 
 **Presence is a typed fact in the mind, and a message on the wire — the gate's own
-shape.** While a turn runs and the PRINCIPAL is waiting, main writes a `delta` event into
-the mind's room (`connect/presence.ts`): one data part naming the kind, `thinking` or
-`checkpoint`, harness-authored. Waiting is read off the mind's own room, the one place
-their word lands whatever carried it — a door, or the mirror off any wire — and it must be
-a word: every other thing that wakes a mind (a stranger's message in a group, an alarm
-coming due) would otherwise paint a line on a surface belonging to somebody who never
-spoke. The minute is asked once, at the turn's edge, because it asks whether they are
-there and not how long the mind may take: a fold that runs five minutes is the silence
-this exists to fill. That is all the log holds. The mirror crosses it to every
+shape.** As a turn starts a kind of work, main writes a `delta` event into the mind's
+room (`connect/presence.ts`): one data part naming the kind, harness-authored, once per
+kind per turn. What it names is the agent's `presence` level (config, per agent):
+`off` names nothing; `waiting` names `thinking`, `checkpoint` and `working`, the model
+writing a call; `tools` leaves the work to the calls themselves, which the mirror crosses
+by name. Every turn speaks, whatever woke it: a fold that runs while nobody asked is still
+the mind at work. That is all the log holds. The mirror crosses it to every
 live surface exactly as it crosses a `permission_request` — as a tagged line the surface can
-show, `[agent thinking...]` or `[agent compacting...]`, the whole line being the tag — and
+show, `[agent thinking...]`, `[agent compacting...]` or `[agent working...]`, the whole
+line being the tag — and
 that CC rides whatever dispatcher already serves the surface. No typed event ever touches a
 wire, in either direction; a wire's only currency is a message, and the mirror is the one
 translator. Nothing about it is a connector's business — a connector that is a serverless
@@ -2906,10 +2909,8 @@ delivered. Ephemera fails once, quietly.
 Where a presence line goes is therefore not presence's question at all: the mirror's
 fan-out rule decides — the agent's live alias bindings, for the MIND session only, so the
 principal's own surfaces hear it, a group never does, and a named session says nothing
-because it is mirrored nowhere. Whether one is written is `about`: only while the turn's
-freshest unanswered conversation is inside the minute, read across every service, because
-the mind is one; and never while no surface is bound, since a fact nobody can hear is not
-worth a row.
+because it is mirrored nowhere. Whether one is written is the level's, and never while no
+surface is bound, since a fact nobody can hear is not worth a row.
 
 **Discovery is a skill, not a file.** The agent is taught two lines — import `bind` from
 `@liquen/liquen/script` (the package export of `src/script.ts`, which the org's `deno.jsonc`
@@ -3473,12 +3474,12 @@ sqlite is SQLite in `data/log`, a Postgres URL is a schema of that database, its
 `PGPASSWORD` · docs — filesystem, or database, the table of that database, either engine ·
 sandbox — this machine bare or in bubbles,
 or a gateway, which needs the docs in the database · mounts · sandboxSleepMinutes),
-`organization`
-(this deployment's identity: timezone · locale ·
+`shared`
+(what every agent shares: timezone · locale ·
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
-`organization.agents`, the defaults every agent inherits: model · effort · maxTokens · the
-window, compactAt · keepRecent · provider · tools · rules · the attention knobs), `processors` (media→text commands, §5), `agents`
-(the roster: each entry re-declares `organization.agents` keys sparsely, plus `identity` —
+`shared.agents`, the defaults every agent inherits: model · effort · maxTokens · the
+window, compactAt · keepRecent · provider · tools · rules · the attention knobs · presence), `processors` (media→text commands, §5), `agents`
+(the roster: each entry re-declares `shared.agents` keys sparsely, plus `identity` —
 `name`/`email`/`phone`, the agent's own: the name it goes by and the handles of the
 account it acts as, mirrored into the registry's columns; whether that account is a
 member's or the org's is the connection row's fact, §4 — `principals`, the whole list of
@@ -3502,7 +3503,7 @@ that call landed (upserted by scope: a later verdict replaces the action). The g
 compiles both, remembered first: the principal outranks the base, and among the
 remembered the most specific wins. Same division of labor as the registry — humans write
 config, verdicts write rows, the reader merges. Resolution, most specific wins:
-`agents.<name>` → MainConfig (the process: tests) → `organization.agents` → the catalog's
+`agents.<name>` → MainConfig (the process: tests) → `shared.agents` → the catalog's
 constants — a key left out takes its default, and an unknown key or malformed value
 fails the boot loudly: a typo must not run silently, and a silent fallback would run the
 org on settings the human believes overridden. The functions are 100% parametrized —

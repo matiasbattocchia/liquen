@@ -25,7 +25,7 @@ const TONGUES = {
     asks: "agent asks",
     system: "system",
     // an unload's label (§5): the turn that writes down a span before a checkpoint folds it
-    unload: "writing memories...",
+    unload: "agent memorizing...",
     approve: "approve",
     hint:
       "reply /y to approve · /n <reason> to refuse · or react 👍 / 👎 · 🤖 approves the whole conversation",
@@ -60,7 +60,11 @@ const TONGUES = {
     // where a principal's line was typed, and by whom when the surface is someone else's
     via: (where: string, who?: string) => who ? `${who} via ${where}` : `via ${where}`,
     // the word a presence line carries for each delta (§9): the surface's, not the log's
-    presence: { thinking: "agent thinking...", checkpoint: "agent compacting..." } as Record<
+    presence: {
+      thinking: "agent thinking...",
+      checkpoint: "agent compacting...",
+      working: "agent working...",
+    } as Record<
       DeltaKind,
       string
     >,
@@ -96,7 +100,7 @@ const TONGUES = {
     tool: "agente usa",
     asks: "agente pregunta",
     system: "sistema",
-    unload: "escribiendo memorias...",
+    unload: "agente memorizando...",
     approve: "aprobar",
     hint:
       "responder /y para aprobar · /n <motivo> para rechazar · o reaccionar 👍 / 👎 · 🤖 aprueba toda la conversación",
@@ -127,7 +131,11 @@ const TONGUES = {
       },
     },
     via: (where: string, who?: string) => who ? `${who} por ${where}` : `por ${where}`,
-    presence: { thinking: "agente pensando...", checkpoint: "agente compactando..." },
+    presence: {
+      thinking: "agente pensando...",
+      checkpoint: "agente compactando...",
+      working: "agente trabajando...",
+    },
     refusal: {
       notVerdict: "eso no es una respuesta — /y[once|conv|conn|always|all] [tarjeta] [motivo]",
       noCard: (handle: string) => `ninguna tarjeta ${handle} está esperando`,

@@ -23,9 +23,9 @@
  *   · Placement is by audience. `system`: machinery tuning — every deployment works on the
  *     defaults. `deployment`: where the org's parts live — the log and the vault, the docs,
  *     the agents' shells — where shells off this machine need the docs in the database.
- *     `organization`: this deployment's identity — the clock, the backlog, and
- *     under `organization.agents` the defaults every agent inherits. `agents.<name>`: the
- *     roster — each entry overrides `organization.agents` key by key and may declare the
+ *     `shared`: what every agent shares — the clock, the backlog, and
+ *     under `shared.agents` the defaults every agent inherits. `agents.<name>`: the
+ *     roster — each entry overrides `shared.agents` key by key and may declare the
  *     handles a human knows the
  *     agent by. `connections.<name>` belongs to the connectors: each ships its own
  *     `config.ts` (its DEFAULT_s, the same rules) and validates ITS subsection.
@@ -40,16 +40,16 @@
  */
 
 import { parse } from "@std/jsonc";
-import type { Effort, PolicyAction, Rule } from "./types.ts";
+import type { Effort, PolicyAction, PresenceLevel, Rule } from "./types.ts";
 import { checkPrices, type Price } from "./prices.ts";
 
 /* ── the defaults: the single source ─────────────────────────────────────── */
 
-// organization — this deployment's identity
+// shared — what every agent shares
 export const DEFAULT_BACKLOG_HOURS = 24;
 export const DEFAULT_TIMEZONE = "UTC"; // explicit, so two boxes render the same stamps
 
-// organization.agents — every agent's defaults (an `agents.<name>` entry re-declares these, key by key)
+// shared.agents — every agent's defaults (an `agents.<name>` entry re-declares these, key by key)
 export const DEFAULT_MODEL = "claude-sonnet-5";
 export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + tools + text
 // the default deployment's whole offer: the four built-ins plus the exec plane's bash.
@@ -78,6 +78,8 @@ export const DEFAULT_DIGEST_MINUTES = 15;
 // the world waits until morning and arrives as one digest. What still wakes is what always
 // did — the mind alias, and a conversation the agent is holding the floor in.
 export const DEFAULT_SLEEP_HOURS = "23-8";
+// presence (§9): what a surface hears of the mind at work
+export const DEFAULT_PRESENCE: PresenceLevel = "waiting";
 // the window (§5): est. tokens of RAW EVENT JSON (`estTokens`, chars/4) and the pictures it
 // inlines (`mediaTokens`) — the estimate counts ids and envelopes the prompt never shows, so
 // it runs above the prompt it renders to. An agent's own, since what it holds in view is its work's
@@ -134,6 +136,8 @@ export const TICK_MS = 60_000;
 export const DEFAULT_EDGE_PORT = 8787;
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+/** What a surface hears of the mind at work, quietest first (§9). */
+export const PRESENCE_LEVELS: readonly PresenceLevel[] = ["off", "waiting", "tools"];
 /** The model providers a transport exists for (transport/mod.ts); `provider: null` ⇒ the first. */
 export const PROVIDERS = ["anthropic", "google"] as const;
 export type ProviderName = (typeof PROVIDERS)[number];
@@ -141,7 +145,7 @@ export const ACTIONS: readonly PolicyAction[] = ["allow", "ask", "deny"];
 
 /* ── the shape the reader returns ────────────────────────────────────────── */
 
-/** The keys every agent resolves — `organization.agents` declares the org's values, an
+/** The keys every agent resolves — `shared.agents` declares the org's values, an
  *  `agents.<name>` entry re-declares them for one agent. */
 export interface AgentDefaults {
   model: string;
@@ -157,10 +161,11 @@ export interface AgentDefaults {
   digestAfterMessages: number; //   a conversation hot · the ambient pile that forces a
   digestMinutes: number; //   wake · the ambient look interval
   sleepHours: string | null; // org-clock span "23-8"; null ⇒ never sleeps
+  presence: PresenceLevel; // what a surface hears of the mind at work (§9)
   mind: boolean; // false ⇒ no session runs (§4): a member with no agent, or an agent paused
 }
 
-/** One roster entry: overrides of `organization.agents`, key by key, plus the agent's own identity —
+/** One roster entry: overrides of `shared.agents`, key by key, plus the agent's own identity —
  *  the name it goes by and the handles of the account it acts as (§4). Whose that account
  *  is — a member's, or the org's — is the connection row's fact, never declared here.
  *  `principals` says who steers, as roster usernames, when the derivation of §4 (the owner;
@@ -180,8 +185,7 @@ export interface Identity {
   phone?: string | null;
 }
 export const IDENTITY_KEYS = ["name", "email", "phone"] as const;
-const IDENTITY_DOC =
-  "<name>: any organization.agents key re-declared, plus identity — the name the " +
+const IDENTITY_DOC = "<name>: any shared.agents key re-declared, plus identity — the name the " +
   "agent goes by and the handles of the account it acts as (null ⇒ not declared); " +
   "principals — who steers it, roster names ([] ⇒ nobody; absent ⇒ its owner, or every " +
   "member when the account is the org's); mind: false — no session runs: a member with no " +
@@ -201,7 +205,7 @@ export interface OrgConfig {
     mounts: string[]; // more of this machine a bubble shows, read-only unless `:rw`
     sandboxSleepMinutes: number; // a gateway sandbox's life after its last bash call
   };
-  organization: {
+  shared: {
     timezone: string; // the ORG's clock — every stamp, cron and sleep span reads it (§5); TZ in every agent shell
     locale: string | null; // LANG in every agent shell and media processor
     backlogHours: number;
@@ -341,7 +345,7 @@ const DEPLOYMENT: Entry[] = [
   },
 ];
 
-const ORG: Entry[] = [
+const SHARED: Entry[] = [
   {
     key: "timezone",
     value: DEFAULT_TIMEZONE,
@@ -434,6 +438,14 @@ const AGENT: Entry[] = [
     doc: 'attention: org-clock span "from-to" the ambient world waits out; null ⇒ never sleeps',
   },
   {
+    key: "presence",
+    value: DEFAULT_PRESENCE,
+    doc: "what the principal's surfaces hear of the agent at work, as it starts: off ⇒ " +
+      "only its words, its approval cards and its errors; waiting ⇒ also memorizing, " +
+      "compacting, thinking and working, each once a turn; tools ⇒ each call by name in " +
+      "place of working, and a call that failed",
+  },
+  {
     key: "mind",
     value: true,
     doc: "whether a session runs for the agent; false PAUSES it — its rows still land in " +
@@ -479,7 +491,7 @@ const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
   deployment: "where the org's parts live — the log and the vault, the docs, the agents' " +
     "shells; shells off this machine need the docs in the database",
-  organization: "this deployment's identity — the clock, the backlog, and every agent's defaults",
+  shared: "what every agent shares — the clock, the backlog, and the defaults each inherits",
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
   edge: "the org's one door — the address the world dials, the one port the org binds, " +
     "and the tunnel",
@@ -502,7 +514,7 @@ function defaults(): OrgConfig {
   return {
     system: fromEntries(SYSTEM),
     deployment: fromEntries(DEPLOYMENT),
-    organization: { ...fromEntries(ORG), agents: fromEntries(AGENT) },
+    shared: { ...fromEntries(SHARED), agents: fromEntries(AGENT) },
     processors: fromEntries(PROCESSORS),
     edge: fromEntries(EDGE),
     agents: {},
@@ -511,7 +523,7 @@ function defaults(): OrgConfig {
 }
 
 /** Merge one section: the user's values over the entries' defaults; an unknown key is a
- *  boot error. `label` names the section in the complaint ("organization.agents.model"). */
+ *  boot error. `label` names the section in the complaint ("shared.agents.model"). */
 function mergeSection(
   given: Record<string, unknown>,
   entries: Entry[],
@@ -605,8 +617,8 @@ export async function readConfig(root: string): Promise<OrgConfig> {
     }
     return v as Record<string, unknown>;
   };
-  const orgGiven = asObject(found.organization, "organization");
-  const { agents: agentsGiven, ...orgPlain } = orgGiven;
+  const sharedGiven = asObject(found.shared, "shared");
+  const { agents: agentsGiven, ...sharedPlain } = sharedGiven;
   const cfg = {
     system: mergeSection(asObject(found.system, "system"), SYSTEM, path, "system"),
     deployment: mergeSection(
@@ -615,13 +627,13 @@ export async function readConfig(root: string): Promise<OrgConfig> {
       path,
       "deployment",
     ),
-    organization: {
-      ...mergeSection(orgPlain, ORG, path, "organization"),
+    shared: {
+      ...mergeSection(sharedPlain, SHARED, path, "shared"),
       agents: mergeSection(
-        asObject(agentsGiven, "organization.agents"),
+        asObject(agentsGiven, "shared.agents"),
         AGENT,
         path,
-        "organization.agents",
+        "shared.agents",
       ),
     },
     processors: mergeSection(
@@ -746,13 +758,13 @@ export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string
   lines.push(`  // ${SECTION_DOCS.deployment}`, `  "deployment": {`);
   emit("    ", DEPLOYMENT, cfg.deployment as unknown as Record<string, unknown>);
   lines.push("  },");
-  lines.push(`  // ${SECTION_DOCS.organization}`, `  "organization": {`);
-  emit("    ", ORG, cfg.organization as unknown as Record<string, unknown>, ",");
+  lines.push(`  // ${SECTION_DOCS.shared}`, `  "shared": {`);
+  emit("    ", SHARED, cfg.shared as unknown as Record<string, unknown>, ",");
   lines.push(
     `    // every agent's defaults — an agents.<name> entry re-declares these, key by key`,
   );
   lines.push(`    "agents": {`);
-  emit("      ", AGENT, cfg.organization.agents as unknown as Record<string, unknown>);
+  emit("      ", AGENT, cfg.shared.agents as unknown as Record<string, unknown>);
   lines.push("    }", "  },");
   lines.push(`  // ${SECTION_DOCS.processors}`, `  "processors": {`);
   emit("    ", PROCESSORS, cfg.processors as unknown as Record<string, unknown>);
@@ -792,8 +804,8 @@ export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string
  *  line each. */
 export function starterConfig(): OrgConfig {
   const cfg = defaults();
-  cfg.organization.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? DEFAULT_TIMEZONE;
-  cfg.organization.locale = machineLocale();
+  cfg.shared.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? DEFAULT_TIMEZONE;
+  cfg.shared.locale = machineLocale();
   return cfg;
 }
 
@@ -933,7 +945,7 @@ function block(raw: string, section: string, path: string): [number, number] {
 
 /** Where `"section":` opens at the file's TOP level — depth one in braces — or -1. The
  *  first match in the file is not it: `"agents":` also names the defaults every agent
- *  inherits, one level down under `organization`. */
+ *  inherits, one level down under `shared`. */
 function topLevel(raw: string, section: string): number {
   for (const m of raw.matchAll(new RegExp(`"${section}"\\s*:`, "g"))) {
     if (depthAt(raw, m.index) === 1) return m.index;
@@ -1074,9 +1086,9 @@ function validateOrg(cfg: OrgConfig, path: string): void {
   if (prices) throw new Error(`${path}: system.prices ${prices}`);
   // the pair is checked as each agent resolves it: an entry that re-declares one of the two
   // is held to the org's other
-  const org = cfg.organization.agents;
+  const org = cfg.shared.agents;
   const windows: [string, Partial<AgentDefaults>][] = [
-    ["organization.agents", {}],
+    ["shared.agents", {}],
     ...Object.entries(cfg.agents).map(([name, a]): [string, AgentEntry] => [`agents.${name}`, a]),
   ];
   for (const [label, a] of windows) {
@@ -1091,16 +1103,16 @@ function validateOrg(cfg: OrgConfig, path: string): void {
       );
     }
   }
-  if (!(cfg.organization.backlogHours > 0)) {
+  if (!(cfg.shared.backlogHours > 0)) {
     throw new Error(
-      `${path}: backlogHours must be a positive number (got ${cfg.organization.backlogHours})`,
+      `${path}: backlogHours must be a positive number (got ${cfg.shared.backlogHours})`,
     );
   }
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: cfg.organization.timezone });
+    new Intl.DateTimeFormat("en-US", { timeZone: cfg.shared.timezone });
   } catch {
     throw new Error(
-      `${path}: unknown timezone "${cfg.organization.timezone}" (IANA name expected)`,
+      `${path}: unknown timezone "${cfg.shared.timezone}" (IANA name expected)`,
     );
   }
   if (cfg.processors.audio !== null && typeof cfg.processors.audio !== "string") {
@@ -1164,7 +1176,7 @@ function validateOrg(cfg: OrgConfig, path: string): void {
       throw new Error(`${path}: edge.tunnel publishes edge.publicUrl, and publicUrl is null`);
     }
   }
-  validateAgent(cfg.organization.agents, `${path}: organization.agents`);
+  validateAgent(cfg.shared.agents, `${path}: shared.agents`);
 }
 
 /** What `edge.publicUrl` may hold: null, or an https:// base — an origin, or an origin
@@ -1303,6 +1315,11 @@ function validateAgent(a: Partial<AgentDefaults>, path: string): void {
   }
   if (a.effort != null && !(EFFORTS as readonly string[]).includes(a.effort)) {
     throw new Error(`${path}: unknown effort "${a.effort}" (one of ${EFFORTS.join(", ")})`);
+  }
+  if (a.presence != null && !PRESENCE_LEVELS.includes(a.presence)) {
+    throw new Error(
+      `${path}: unknown presence "${a.presence}" (one of ${PRESENCE_LEVELS.join(", ")})`,
+    );
   }
   if (a.mind !== undefined && typeof a.mind !== "boolean") {
     throw new Error(`${path}: mind must be true or false`);

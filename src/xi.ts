@@ -26,7 +26,6 @@
 
 import { type Inputs, inputsOf, packageVersion, sameInputs } from "./inputs.ts";
 import type {
-  About,
   Action,
   AlarmEvent,
   ContactHit,
@@ -783,29 +782,6 @@ function denied(e: Event, session: Session): e is PermissionResponseEvent {
     e.envelope.conversation.address === session.conversation;
 }
 
-/** The conversations behind a turn's news, one entry each, carrying when that conversation
- *  last spoke. This is the news translated OUT of session terms, into the service, the
- *  connection and the address a wire knows. Every unanswered conversation is named, stale
- *  ones included — the reader has `since` and its own rule for what is worth acting on
- *  (§2: the daemon discloses, the reader decides). */
-export function aboutOf(events: Event[], session: Session): About[] {
-  const newest = new Map<string, About>();
-  for (const e of newsOf(events, session)) {
-    const key = `${e.envelope.service}\u0000${e.envelope.conversation.address}`;
-    const held = newest.get(key);
-    if (held === undefined || e.ts > held.since) {
-      newest.set(key, {
-        service: e.envelope.service,
-        connection: e.envelope.connection_address,
-        conversation: e.envelope.conversation.address,
-        since: e.ts,
-        spoken: e.type === "message",
-      });
-    }
-  }
-  return [...newest.values()];
-}
-
 /** All our uses have results but no turn output followed ⇒ the closing think is owed.
  *  Turn output = our thinking / tool_use / home message; a directed peer send is not. Any
  *  result counts, a late one too — an errand's outcome, an update — but one its tool marked
@@ -1067,14 +1043,8 @@ export interface XiPorts {
   onDelta?: Emit; // → the harness stream (fire-and-forget)
   /** The decision, disclosed the moment it is made — fire-and-forget like onDelta: main
    *  fans it to the door's tailers as a turn edge ({status}), the one fact an attach
-   *  client cannot compute for itself. `cursor` is the last event the deciding read saw;
-   *  `about` names the conversations whose words the turn has not answered, and when they
-   *  last spoke — what presence reads to know whether anyone is there (§2). */
-  onDecision?: (
-    verdict: Decision,
-    cursor: string | undefined,
-    about: About[],
-  ) => void;
+   *  client cannot compute for itself. `cursor` is the last event the deciding read saw. */
+  onDecision?: (verdict: Decision, cursor: string | undefined) => void;
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
   bins?: () => Promise<BinDir[]>; // the org folder's programs on PATH, for the prefix (§5)
 }
@@ -1245,7 +1215,7 @@ export async function xi(
     Date.now(),
     await ports.log.owed(session.agentId, session.id),
   );
-  ports.onDecision?.(v, events.at(-1)?.id, aboutOf(events, session));
+  ports.onDecision?.(v, events.at(-1)?.id);
   if (v === "ignore") {
     await lock.release();
     return v;
@@ -1280,11 +1250,7 @@ export async function xi(
     // next invocation, which discloses again, but a terminal error or a cancel wakes
     // nothing on purpose (`relevant`), and the idle they leave would otherwise go unsaid
     const after = [...events, ...landed];
-    ports.onDecision?.(
-      decide(after, session, config),
-      landed.at(-1)?.id,
-      aboutOf(after, session),
-    );
+    ports.onDecision?.(decide(after, session, config), landed.at(-1)?.id);
   } catch (err) {
     // declared dead mid-turn: a successor took the lease and is redoing this window from
     // the same events. Dropping the work is the point — landing it would publish the turn

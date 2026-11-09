@@ -574,7 +574,7 @@ if (import.meta.main) {
     if (view === "tail") return await runTail(rest, org.dir);
     const root = findRoot(org);
     const catalog = await readConfig(root);
-    const zone = catalog.organization.timezone;
+    const zone = catalog.shared.timezone;
     const args = parseLogArgs(view, rest, zone);
     const roster = Object.keys(catalog.agents);
     if (args.agent !== undefined && !roster.includes(args.agent)) {

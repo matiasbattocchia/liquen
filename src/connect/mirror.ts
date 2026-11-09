@@ -72,6 +72,7 @@ import { clipStart } from "../exec/truncate.ts";
 import { SENDER_EMAIL, SENDER_NAME, senderEmail, senderFacts } from "../sender.ts";
 import { type Words, words } from "../i18n.ts";
 import { retryable } from "../nu.ts";
+import { DEFAULT_PRESENCE } from "../config.ts";
 import {
   answer,
   answerLine,
@@ -97,6 +98,7 @@ import type {
   Part,
   PermissionRequestEvent,
   PermissionResponseEvent,
+  PresenceLevel,
   RoomPart,
   Service,
   ToolUseEvent,
@@ -122,6 +124,9 @@ export interface MirrorDeps {
    *  the reply hint, the presence line. The model's voice needs no translating: the prefix
    *  states the locale and it answers in it. Unset, or a tongue we don't speak ⇒ English. */
   locale?: string | null;
+  /** An agent's presence level (§9): what its surfaces hear of it at work, beyond its
+   *  words, its cards and its errors. Unset, `waiting`. */
+  presence?: (agentId: string) => PresenceLevel;
   /** The unclaimed-CC repair: stamp a CC with the id its own post came back carrying —
    *  the dispatcher's `setDelivery`, run late by the mirror (it absorbs the echo row). */
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
@@ -146,7 +151,7 @@ export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): ()
     const mind = mindOf(e);
     if (mind !== null) {
       enqueue(e, async () => {
-        const cc = await ccParts(e, deps, w);
+        const cc = await ccParts(e, deps, w, deps.presence?.(mind) ?? DEFAULT_PRESENCE);
         if (cc) await fanOut(deps, e, mind, cc, now);
       });
       return;
@@ -561,12 +566,14 @@ async function ccParts(
   e: Event,
   deps: Pick<MirrorDeps, "read" | "aliases">,
   w: Words,
+  level: PresenceLevel,
 ): Promise<CC | null> {
   const read = deps.read;
   const line = async (words: string, files: Part[]) =>
     principalLine(e, words, files, w, await fromRoom(deps, e));
   if (silent(e)) return null; // the model said nothing (§5) — nothing crosses to a surface
   if (e.type === "tool_use") {
+    if (level !== "tools") return null; // below it, presence says `working` instead
     // the same rendering the card gets (§9), addresses and all: a surface is where the
     // principal READS the call, so `in: Sprinters Friends` beats `in: 1203…@g.us`
     const call = (e as ToolUseEvent).parts[0].data;
@@ -582,14 +589,20 @@ async function ccParts(
     // in the tool's own words; a late one (an approved call's, an update's) names the
     // call, its row long gone. A call refused never ran: the line that refused it crossed
     // already, as did the `/cancel` that cut one.
+    // Below `tools` no call crossed, so only a late one's failure speaks: its card did.
     const { is_error, refused, cancelled } = e.parts[0].data;
     if (!is_error || refused || cancelled) return null;
+    if (!isLate(e) && level !== "tools") return null;
     const said = isLate(e) ? failedCallOf(e) : failureOf(e);
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${lastOf(said)}` }]);
   }
-  // an unload opens a turn that writes docs and ends silent: its label says what the calls
-  // after it are for
-  if (unloadOf(e)) return same([{ type: "text", kind: "text", text: `\`[${w.unload}]\`` }]);
+  // an unload opens a turn that writes docs and ends silent: its label says what that turn
+  // is for, as presence does for the rest of the mind's work
+  if (unloadOf(e)) {
+    return level === "off"
+      ? null
+      : same([{ type: "text", kind: "text", text: `\`[${w.unload}]\`` }]);
+  }
   if (e.type === "alarm") {
     // a reminder of the agent's own lines, handed back: what the turn after it acts on
     const note = (e as AlarmEvent).parts[0]?.text ?? "";

@@ -695,8 +695,12 @@ export type Refusal =
   | { refusal: "answered"; waiting: number }
   | { refusal: "none_waiting" };
 
-/** What a presence line says the mind is doing: the two stream deltas worth a word. */
-export type DeltaKind = "thinking" | "checkpoint";
+/** What a presence line says the mind is doing: the stream deltas worth a word. */
+export type DeltaKind = "thinking" | "checkpoint" | "working";
+
+/** What a surface hears of the mind at work (§9), quietest first: `off` nothing, `waiting`
+ *  each kind of work as it starts, `tools` each call by name in place of the work. */
+export type PresenceLevel = "off" | "waiting" | "tools";
 
 /** Presence (§9): the mind saying what it is DOING, as a fact in its own room. Harness-
  *  authored while a turn runs, and only when somebody is there to read it. The fact is all
@@ -899,21 +903,6 @@ export interface Usage {
  *  the kind is what makes "what has maintenance cost" a query; a delta carries the same
  *  word so a surface knows which text it is watching. */
 export type CallKind = "think" | "checkpoint" | "keepalive";
-
-/** What a turn is ABOUT, named the way the wire names it rather than the way a session
- *  does: the conversations whose words the turn has not answered. `since` is when that
- *  conversation last spoke; whether that is recent enough to act on is the reader's rule
- *  (presence, §2: it speaks only while somebody is there). */
-export interface About {
-  service: string;
-  connection: string;
-  conversation: string;
-  since: string;
-  /** Whether the freshest news here is somebody's WORD rather than the clock's — a message,
-   *  not an alarm. Presence rides it (§9): a room whose newest news nobody spoke has nobody
-   *  waiting in it. */
-  spoken: boolean;
-}
 
 /** Ephemeral broadcast — stream the in-progress; never stored. Correctness never depends on
  *  it. Every kind reaches every tailer: what to show and what to fold away is the client's

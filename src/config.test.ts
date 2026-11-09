@@ -57,7 +57,7 @@ Deno.test("a connection's name is its route on the edge — one the edge cannot 
 Deno.test("the reader only reads: an absent file is the defaults, and stays absent", async () => {
   await withDir(async (root) => {
     const cfg = await readConfig(root);
-    assertEquals(cfg.organization.agents.tools, ["search", "cancel", "bash"]);
+    assertEquals(cfg.shared.agents.tools, ["search", "cancel", "bash"]);
     assertEquals(cfg.agents, {});
     await assertRejects(() => Deno.stat(`${root}/config.jsonc`), Deno.errors.NotFound);
   });
@@ -68,7 +68,7 @@ Deno.test("a sparse file: a set key wins, a left-out key defaults", async () => 
     await Deno.writeTextFile(
       `${root}/config.jsonc`,
       JSON.stringify({
-        organization: {
+        shared: {
           timezone: "Europe/Madrid",
           locale: "es_ES.UTF-8",
           agents: { effort: "low" },
@@ -77,10 +77,10 @@ Deno.test("a sparse file: a set key wins, a left-out key defaults", async () => 
       }),
     );
     const cfg = await readConfig(root);
-    assertEquals(cfg.organization.timezone, "Europe/Madrid");
-    assertEquals(cfg.organization.locale, "es_ES.UTF-8");
-    assertEquals(cfg.organization.agents.effort, "low");
-    assertEquals(cfg.organization.agents.model, "claude-sonnet-5"); // the default filled in
+    assertEquals(cfg.shared.timezone, "Europe/Madrid");
+    assertEquals(cfg.shared.locale, "es_ES.UTF-8");
+    assertEquals(cfg.shared.agents.effort, "low");
+    assertEquals(cfg.shared.agents.model, "claude-sonnet-5"); // the default filled in
     assertEquals(cfg.system.debounceMs, 0);
   });
 });
@@ -93,16 +93,16 @@ Deno.test("an unknown section or key is a boot error — a typo must not run sil
   await withDir(async (root) => {
     await Deno.writeTextFile(
       `${root}/config.jsonc`,
-      JSON.stringify({ organization: { agents: { modle: "x" } } }),
+      JSON.stringify({ shared: { agents: { modle: "x" } } }),
     );
-    await assertRejects(() => readConfig(root), Error, 'unknown key "organization.agents.modle"');
+    await assertRejects(() => readConfig(root), Error, 'unknown key "shared.agents.modle"');
   });
   await withDir(async (root) => {
     await Deno.writeTextFile(
       `${root}/config.jsonc`,
-      JSON.stringify({ organization: { backlogHours: 24, model: "x" } }),
+      JSON.stringify({ shared: { backlogHours: 24, model: "x" } }),
     );
-    await assertRejects(() => readConfig(root), Error, 'unknown key "organization.model"');
+    await assertRejects(() => readConfig(root), Error, 'unknown key "shared.model"');
   });
 });
 
@@ -149,7 +149,7 @@ Deno.test("org-level validation: timezone, backlogHours, an agent override's eff
   await withDir(async (root) => {
     await Deno.writeTextFile(
       `${root}/config.jsonc`,
-      JSON.stringify({ organization: { timezone: "Mars/Olympus" } }),
+      JSON.stringify({ shared: { timezone: "Mars/Olympus" } }),
     );
     await assertRejects(() => readConfig(root), Error, 'unknown timezone "Mars/Olympus"');
   });
@@ -163,7 +163,7 @@ Deno.test("org-level validation: timezone, backlogHours, an agent override's eff
   await withDir(async (root) => {
     await Deno.writeTextFile(
       `${root}/config.jsonc`,
-      JSON.stringify({ organization: { agents: { tools: "send" } } }),
+      JSON.stringify({ shared: { agents: { tools: "send" } } }),
     );
     await assertRejects(() => readConfig(root), Error, "tools must be an array of tool names");
   });
@@ -242,14 +242,14 @@ Deno.test("starterConfig: the machine's locale, LC_ALL over LANG, and C is none"
   try {
     setEnv("LC_ALL", undefined);
     setEnv("LANG", "es_AR.UTF-8");
-    assertEquals(starterConfig().organization.locale, "es_AR.UTF-8");
+    assertEquals(starterConfig().shared.locale, "es_AR.UTF-8");
     setEnv("LC_ALL", "en_US.UTF-8");
-    assertEquals(starterConfig().organization.locale, "en_US.UTF-8");
+    assertEquals(starterConfig().shared.locale, "en_US.UTF-8");
     setEnv("LC_ALL", undefined);
     setEnv("LANG", "C.UTF-8");
-    assertEquals(starterConfig().organization.locale, null);
+    assertEquals(starterConfig().shared.locale, null);
     setEnv("LANG", undefined);
-    assertEquals(starterConfig().organization.locale, null);
+    assertEquals(starterConfig().shared.locale, null);
   } finally {
     setEnv("LC_ALL", was.LC_ALL);
     setEnv("LANG", was.LANG);
@@ -342,7 +342,7 @@ Deno.test("declareAgent: the roster entry with every handle in view, every other
       "    }",
     ].join("\n");
     assert(
-      after.indexOf("// <name>: any organization.agents key re-declared") < after.indexOf('"ana"'),
+      after.indexOf("// <name>: any shared.agents key re-declared") < after.indexOf('"ana"'),
     );
     assertEquals(after.replace(entry, ""), raw);
 
@@ -420,13 +420,13 @@ Deno.test("export: environment variable names, never a secret's or one the harne
   await withDir(async (root) => {
     const write = (cfg: unknown) => Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify(cfg));
     await write({ agents: { ana: {} } });
-    assertEquals((await readConfig(root)).organization.agents.export, []);
+    assertEquals((await readConfig(root)).shared.agents.export, []);
     await write({
-      organization: { agents: { export: ["DISPLAY"] } },
+      shared: { agents: { export: ["DISPLAY"] } },
       agents: { ana: { export: ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] } },
     });
     const cfg = await readConfig(root);
-    assertEquals(cfg.organization.agents.export, ["DISPLAY"]);
+    assertEquals(cfg.shared.agents.export, ["DISPLAY"]);
     assertEquals(cfg.agents.ana.export, ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"]);
     for (
       const [bad, says] of [
@@ -491,33 +491,57 @@ Deno.test("declareAgent: --principal and --no-mind land as the entry's own keys"
   });
 });
 
-Deno.test("organization.agents.mind: the org's default, an entry's override, and a boolean or nothing", async () => {
+Deno.test("shared.agents.mind: the org's default, an entry's override, and a boolean or nothing", async () => {
   const root = await Deno.makeTempDir();
   try {
     await Deno.writeTextFile(`${root}/config.jsonc`, materialize(starterConfig()));
-    assertEquals((await readConfig(root)).organization.agents.mind, true); // materialized, on by default
+    assertEquals((await readConfig(root)).shared.agents.mind, true); // materialized, on by default
 
     // the whole org paused, one agent kept awake by its own entry
     await Deno.writeTextFile(
       `${root}/config.jsonc`,
       JSON.stringify({
-        organization: { agents: { mind: false } },
+        shared: { agents: { mind: false } },
         agents: { ana: {}, sol: { mind: true } },
       }),
     );
     const cfg = await readConfig(root);
-    assertEquals(cfg.organization.agents.mind, false);
+    assertEquals(cfg.shared.agents.mind, false);
     assertEquals(cfg.agents.ana.mind, undefined); // sparse: inherits the org's
     assertEquals(cfg.agents.sol.mind, true);
 
     await Deno.writeTextFile(
       `${root}/config.jsonc`,
-      JSON.stringify({ organization: { agents: { mind: "no" } } }),
+      JSON.stringify({ shared: { agents: { mind: "no" } } }),
     );
     await assertRejects(() => readConfig(root), Error, "mind must be true or false");
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test("shared.agents.presence: waiting by default, an entry's override, and one of three", async () => {
+  await withDir(async (root) => {
+    await Deno.writeTextFile(`${root}/config.jsonc`, materialize(starterConfig()));
+    assertEquals((await readConfig(root)).shared.agents.presence, "waiting");
+
+    await Deno.writeTextFile(
+      `${root}/config.jsonc`,
+      JSON.stringify({
+        shared: { agents: { presence: "off" } },
+        agents: { ana: { presence: "tools" } },
+      }),
+    );
+    const cfg = await readConfig(root);
+    assertEquals(cfg.shared.agents.presence, "off");
+    assertEquals(cfg.agents.ana.presence, "tools");
+
+    await Deno.writeTextFile(
+      `${root}/config.jsonc`,
+      JSON.stringify({ agents: { ana: { presence: "all" } } }),
+    );
+    await assertRejects(() => readConfig(root), Error, 'unknown presence "all"');
+  });
 });
 
 Deno.test('deployment.database: "sqlite" or a Postgres URL without its password — the secret rides PGPASSWORD', async () => {
@@ -628,9 +652,9 @@ Deno.test("keepRecent: below compactAt, or a checkpoint has nothing to cover", a
   await withDir(async (root) => {
     const write = (body: Record<string, unknown>) =>
       Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify(body));
-    const org = (agents: Record<string, unknown>) => ({ organization: { agents } });
+    const org = (agents: Record<string, unknown>) => ({ shared: { agents } });
     await write(org({ compactAt: 150_000 }));
-    assertEquals((await readConfig(root)).organization.agents.keepRecent, 20_000);
+    assertEquals((await readConfig(root)).shared.agents.keepRecent, 20_000);
     for (const bad of [{ keepRecent: 50_000 }, { keepRecent: 60_000 }, { keepRecent: 0 }]) {
       await write(org(bad));
       await assertRejects(() => readConfig(root), Error, "keepRecent must be");
@@ -680,11 +704,11 @@ Deno.test("deployment: where the parts live is its own section, and the machiner
     await write({ deployment: { bashWaitMs: 1000 } });
     await assertRejects(() => readConfig(root), Error, 'unknown key "deployment.bashWaitMs"');
     // an ask lapses a day on, for every agent alike
-    await write({ organization: { agents: { gateHours: 48 } } });
+    await write({ shared: { agents: { gateHours: 48 } } });
     await assertRejects(
       () => readConfig(root),
       Error,
-      'unknown key "organization.agents.gateHours"',
+      'unknown key "shared.agents.gateHours"',
     );
   });
 });

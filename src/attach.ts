@@ -84,11 +84,11 @@ export async function resolveAgent(
   }
   // a paused agent (mind: false, §4) is still attached to: what landed in its rooms reads,
   // and the door — not this client — refuses an order with the sentence that says why
-  const paused = (catalog.agents[target].mind ?? catalog.organization.agents.mind) === false;
-  const model = tune.model ?? catalog.agents[target].model ?? catalog.organization.agents.model;
+  const paused = (catalog.agents[target].mind ?? catalog.shared.agents.mind) === false;
+  const model = tune.model ?? catalog.agents[target].model ?? catalog.shared.agents.model;
   const effort = tune.effort ?? catalog.agents[target].effort ??
-    catalog.organization.agents.effort;
-  const timezone = catalog.organization.timezone;
+    catalog.shared.agents.effort;
+  const timezone = catalog.shared.timezone;
   return { root, dir: `${root}/data`, target, username, model, effort, tune, timezone, paused };
 }
 
