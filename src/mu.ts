@@ -47,8 +47,12 @@ export interface StepInput extends RenderedRequest {
  *  `pause_turn` → continue (server turn paused) · `refusal`/`max_tokens` → handle.
  *  A failure carries the HTTP `status` when there was one — nu retries only weather. */
 export type StepResult =
-  | { ok: true; emissions: Emission[]; usage: Usage; stop: Anthropic.StopReason }
+  | { ok: true; emissions: Emission[]; usage: Usage; stop: StopReason }
   | { ok: false; error: string; status?: number };
+
+/** The API's stop reasons: `model_context_window_exceeded` is the output running into the
+ *  context window, which the wire sends and the SDK's type does not list yet. */
+export type StopReason = Anthropic.StopReason | "model_context_window_exceeded";
 
 /** A step, already carrying whatever the layer above wraps around one: the retry ladder,
  *  the stream it goes to, what the spend is for. Handed DOWN so a caller that needs a model

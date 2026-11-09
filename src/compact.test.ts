@@ -1,5 +1,13 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { buildSummary, compactionSpan, overflowed, pinnedCut, turnOver } from "./compact.ts";
+import {
+  buildSummary,
+  compactionSpan,
+  overflowed,
+  pinnedCut,
+  summaryCap,
+  tries,
+  turnOver,
+} from "./compact.ts";
 import { applySummary, type Archive, estTokens, render, SILENCE } from "./render.ts";
 import type {
   Event,
@@ -405,7 +413,7 @@ Deno.test("span: a closing step's words stay together — the turn ends on its l
   assertEquals(span.covered, [ask, first, second]);
 });
 
-Deno.test("span: a dead turn is covered whole, down to the row that killed it", () => {
+Deno.test("span: a dead turn is cut at a step's end, and leaves keepRecent like any window", () => {
   const events: Event[] = [
     msg("uno", false),
     msg("respuesta uno", true),
@@ -414,15 +422,53 @@ Deno.test("span: a dead turn is covered whole, down to the row that killed it", 
   for (let k = 1; k <= 8; k++) events.push(...step(k));
   const dead = [...events, errorEv("overloaded")];
   assertEquals(turnOver(dead, SESSION), true);
-  const span = compactionSpan(dead, SESSION, 1, 400); // keepRecent would keep half the chain…
+  const sixth = dead.findIndex((e) => e.type === "tool_result" && e.payload?.turn_id === "T6");
+  const span = compactionSpan(dead, SESSION, ...pinAt(dead, sixth));
   assert(span !== null);
-  assertEquals(span.covered, dead); // …but nothing continues a dead turn: it goes whole
-  assertEquals(span.covers[1], dead.at(-1)!.id);
+  assertEquals(span.covered, dead.slice(0, sixth + 1)); // steps 7 and 8 and the error stay
+  // a live chain is never cut inside: the same window, its turn still running, waits
+  assertEquals(compactionSpan(events, SESSION, ...pinAt(dead, sixth)), null);
+  // a dead turn the tail holds whole (the API refused it under the estimate) goes whole
+  const whole = compactionSpan(dead, SESSION, 1_000_000, 1_000_000 - 1);
+  assertEquals(whole, null); // under the threshold, nothing refused: nothing to do
+  const refused = [...events, errorEv("prompt is too long: 213462 tokens > 200000 maximum")];
+  assertEquals(compactionSpan(refused, SESSION, 2_000_000, 1_000_000)!.covered, refused);
   // a step still waiting for its result holds the turn open past the error, and stays out
   const waiting = [...events, use("T9", "step 9"), errorEv("overloaded")];
   const partial = compactionSpan(waiting, SESSION, 1, 0);
   assert(partial !== null);
   assert(!partial.covered.some((e) => e.payload?.turn_id === "T9"));
+});
+
+Deno.test("render: behind the checkpoint, a dead turn's steps are told as narration — no open call goes out without its thinking", () => {
+  const events: Event[] = [msg("hacé el informe", false)];
+  for (let k = 1; k <= 3; k++) events.push(...step(k));
+  const died = errorEv("overloaded");
+  const advisory = errorEv("your previous turn hit the output token limit");
+  advisory.payload = { stop_reason: "max_tokens" };
+  const closing = msg("listo", true);
+  const floor = summaryEv([events[0].id, events[3].id], "## Open\n- informe"); // step 1
+  const asked = msg("¿y?", false);
+  const draw = (rows: Event[]) =>
+    JSON.stringify(
+      render({
+        events: [floor, ...rows, asked],
+        docs: [],
+        session: SESSION,
+        now: "2026-07-20T10:05:00Z",
+      })
+        .messages,
+    );
+  const dead = draw([...events.slice(4), died]);
+  assert(!dead.includes('"tool_use"') && !dead.includes('"thinking"'), dead);
+  assertStringIncludes(dead, '<system kind=\\"tool_result\\">bash(step 2) → out 2</system>');
+  assertStringIncludes(dead, '<system kind=\\"error\\">overloaded</system>');
+  // a turn that closed, or goes on past a cut at the ceiling, keeps its calls as calls
+  assertStringIncludes(draw([...events.slice(4), closing]), '"tool_use"');
+  assertStringIncludes(
+    draw([...events.slice(4, 7), advisory, ...events.slice(7), closing]),
+    '"tool_use"',
+  );
 });
 
 Deno.test("span: the API's ceiling is the one hard one — a refused request compacts under the threshold", () => {
@@ -434,6 +480,9 @@ Deno.test("span: the API's ceiling is the one hard one — a refused request com
   const gemini = "400 The input token count exceeds the maximum number of tokens allowed 1048576.";
   assert(overflowed([...events, errorEv(gemini)]));
   assert(overflowed([...events, errorEv(`checkpoint failed: ${gemini}`)]));
+  const counted = "400 The input token count (35868) exceeds the maximum number of tokens " +
+    "allowed (32768).";
+  assert(overflowed([...events, errorEv(counted)])); // the count there or not
   assert(!overflowed([...events, errorEv("overloaded")]));
   assertEquals(compactionSpan([...events, errorEv("overloaded")], SESSION, 1_000_000, 0), null);
   const span = compactionSpan(refused, SESSION, 1_000_000, 0);
@@ -441,10 +490,21 @@ Deno.test("span: the API's ceiling is the one hard one — a refused request com
   assertEquals(span.covered, refused);
 });
 
-Deno.test("buildSummary: a window the API refused goes as a transcript — the tool traffic and the error ARE the content", async () => {
-  const events: Event[] = [msg("hacé el informe", false)];
-  for (let k = 1; k <= 8; k++) events.push(...step(k));
-  events.push(errorEv("prompt is too long: 213462 tokens > 200000 maximum"));
+const REFUSED = "prompt is too long: 213462 tokens > 200000 maximum";
+
+/** A checkpoint that failed a try: its call answered without a record. */
+const triedEv = (error: string): Event => {
+  const e = errorEv(`checkpoint failed: ${error}`);
+  (e.parts[0] as { data: object }).data = { error: `checkpoint failed: ${error}`, attempt: true };
+  return e;
+};
+
+/** A checkpoint over a dead turn, its requests kept; `answer` stands in for the API. */
+const ladder = async (
+  events: Event[],
+  answer: () => Promise<Anthropic.Message> = () =>
+    Promise.resolve(canned([{ kind: "assistant", text: "## Open\n- informe" }])),
+) => {
   const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
   const out = await buildSummary(
     {
@@ -452,55 +512,117 @@ Deno.test("buildSummary: a window the API refused goes as a transcript — the t
       window: windowOf(events),
       session: SESSION,
       model: "claude-x",
+      effort: "high",
       compactAt: 1,
       keepRecent: 400,
       prompt: PROMPT,
     },
     stepping((p) => {
       seen.push(p);
-      return Promise.resolve(
-        canned([{ kind: "assistant", text: "## Ongoing threads\n- informe" }]),
-      );
+      return answer();
     }),
   );
-  assert(out !== null && out.type === "summary");
-  assertEquals(seen[0].messages.length, 1); // the one block: sending the window again would be refused again
-  const prompt = lastText(seen[0]);
-  assertStringIncludes(prompt, "<conversation>\n[Ana @ mind@a1] hacé el informe"); // what it was asked
-  assertStringIncludes(prompt, "bash(step 1)");
-  assertStringIncludes(prompt, "out 1");
-  assertStringIncludes(prompt, "[error] prompt is too long"); // and how it ended
-  assertStringIncludes(prompt, "the block is the whole of what is archived");
+  return { out, seen };
+};
+
+Deno.test("tries: the checkpoints since the floor that answered without a record", () => {
+  const before = triedEv(REFUSED);
+  const floor = summaryEv([before.id, before.id], "## viejo");
+  const events = [
+    before, // an uncovered row the floor's read still holds: the climb before it is done
+    floor,
+    msg("hola", false),
+    errorEv(REFUSED), // a think's refusal is no try: the checkpoint sends less than it did
+    errorEv("checkpoint failed: overloaded"), // weather, retried in nu and never billed
+    triedEv("cut off at the output ceiling"),
+  ];
+  assertEquals(tries(events), 1);
+  assertEquals(tries(events.slice(0, 5)), 0);
 });
 
-Deno.test("buildSummary: a refused window's transcript caps the world's runs as the window does", async () => {
-  const flood = Array.from({ length: 40 }, (_, i) => msg(`línea ${i}`, false, "grupo"));
-  const events: Event[] = [
-    msg("hola", false),
-    ...flood,
-    msg("leído", true),
-    errorEv("prompt is too long: 213462 tokens > 200000 maximum"),
-  ];
-  const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
-  await buildSummary(
-    {
-      events,
-      window: windowOf(events),
-      session: SESSION,
-      model: "claude-x",
-      compactAt: estTokens(flood.slice(-5)), // the run's budget buys its newest five
-      keepRecent: 0,
-      prompt: PROMPT,
-    },
-    stepping((p) => {
-      seen.push(p);
-      return Promise.resolve(canned([{ kind: "assistant", text: "## Open" }]));
-    }),
-  );
-  const prompt = lastText(seen[0]);
-  assertStringIncludes(prompt, "línea 39"); // the newest of the run
-  assert(!prompt.includes("línea 0]") && !prompt.includes("línea 0\n"), prompt); // the oldest is search's
-  assertStringIncludes(prompt, "[Ana @ mind@a1] hola"); // the session's own room is never capped
+Deno.test("buildSummary: the first try is the window, and a refusal for size is a try", async () => {
+  const events: Event[] = [msg("hacé el informe", false)];
+  for (let k = 1; k <= 3; k++) events.push(...step(k));
+  events.push(errorEv(REFUSED));
+  const { out, seen } = await ladder(events, () => Promise.reject(new Error(`400 ${REFUSED}`)));
+  const sent = JSON.stringify(seen[0].messages);
+  assertStringIncludes(sent, '"thinking"');
+  assertStringIncludes(sent, '"tool_use"');
+  assertEquals(seen[0].output_config, { effort: "high" }); // the think's, so its cache holds
+  assert(out !== null && out.type === "error");
+  assertEquals(out.parts[0].data.attempt, true);
+  // weather is no try
+  const { out: down } = await ladder(events, () => Promise.reject(new Error("fetch failed")));
+  assert(down !== null && down.type === "error");
+  assertEquals(down.parts[0].data.attempt, undefined);
+});
+
+Deno.test("buildSummary: a cut or empty record is a try", async () => {
+  const events: Event[] = [msg("hacé el informe", false), ...step(1), errorEv("overloaded")];
+  const cut = await ladder(events, () =>
+    Promise.resolve({
+      ...canned([{ kind: "assistant", text: "## Open\n- inf" }]),
+      stop_reason: "max_tokens",
+    }));
+  assert(cut.out !== null && cut.out.type === "error");
+  assertEquals(cut.out.parts[0].data.attempt, true);
+  const empty = await ladder(events, () => Promise.resolve(canned([])));
+  assert(empty.out !== null && empty.out.type === "error");
+  assertEquals(empty.out.parts[0].data.attempt, true);
+  // the output ran into the context window: the record is cut all the same
+  const full = await ladder(events, () =>
+    Promise.resolve({
+      ...canned([{ kind: "assistant", text: "## Open\n- inf" }]),
+      stop_reason: "model_context_window_exceeded",
+    } as unknown as Anthropic.Message));
+  assert(full.out !== null && full.out.type === "error");
+  assertEquals(full.out.parts[0].data.attempt, true);
+});
+
+Deno.test("summaryCap: half the span a record replaces, never past the agent's own cap", () => {
+  assertEquals(summaryCap(50_000, 20_000, 64_000), 15_000);
+  assertEquals(summaryCap(150_000, 20_000, 64_000), 64_000);
+  assertEquals(summaryCap(), 15_000);
+});
+
+Deno.test("buildSummary: after a failed try the window goes lean at low effort — no thinking, each call and its outcome one clipped line, the rest as the window draws it", async () => {
+  const events: Event[] = [msg("hacé el informe", false)];
+  for (let k = 1; k <= 3; k++) events.push(...step(k));
+  const long = use("T4", "x".repeat(2_000));
+  events.push(think("T4"), long, result("T4", long.id, "y".repeat(2_000)));
+  events.push(errorEv(REFUSED), triedEv(REFUSED));
+  const { out, seen } = await ladder(events);
+  assert(out !== null && out.type === "summary");
+  assertEquals(seen[0].output_config, { effort: "low" });
+  const sent = JSON.stringify(seen[0].messages);
+  assert(!sent.includes('"thinking"'), "no thinking block");
+  assert(!sent.includes('"tool_use"') && !sent.includes('"tool_result"'), "no tool blocks");
+  assertStringIncludes(sent, "hacé el informe"); // what it was asked
+  assertStringIncludes(sent, '<system kind=\\"tool_result\\">bash(step 1) → out 1</system>');
+  assertStringIncludes(sent, `${"x".repeat(100)}`);
+  assert(!sent.includes("x".repeat(500)) && !sent.includes("y".repeat(500)), "both sides clipped");
+  assertStringIncludes(sent, "prompt is too long"); // and how it ended
+  assertStringIncludes(lastText(seen[0]), "Write a checkpoint");
+});
+
+Deno.test("buildSummary: two failed tries, the checkpoint is written with no call — the previous record, and where the rest starts for search", async () => {
+  const old = msg("viejo", false);
+  const floor = summaryEv([old.id, old.id], "## Open\n- lo de ayer");
+  const asked = msg("hacé el informe", false);
+  asked.ts = "2026-07-20T10:01:00Z";
+  const events: Event[] = [floor, asked];
+  for (let k = 1; k <= 3; k++) events.push(...step(k));
+  events.push(errorEv(REFUSED), triedEv(REFUSED), triedEv("cut off at the output ceiling"));
+  const { out, seen } = await ladder(events);
+  assertEquals(seen.length, 0); // nothing left to fail
+  assert(out !== null && out.type === "summary");
+  assertEquals(out.payload.covers, [old.id, events.at(-1)!.id]); // the floor moves past it all
+  const text = out.parts[0].text;
+  assert(text.startsWith("## Open\n- lo de ayer\n\n"), text);
+  assertStringIncludes(text, "1 message in 1 conversation and 3 calls of yours");
+  assertStringIncludes(text, "after 2026-07-20T10:00:59.999Z");
+  assertStringIncludes(text, "calls: true");
+  assert(!text.includes("before"), "the tag's `before` closes the stretch");
 });
 
 Deno.test("buildSummary: a dead turn's chain reaches the checkpoint whole — trailing, so render lays it out", async () => {

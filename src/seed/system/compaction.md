@@ -3,12 +3,10 @@ agent reads in its place. The log stays searchable, and the instructions, memori
 templates in your system prompt stay in the agent's: the checkpoint carries only what the
 agent would otherwise have to rediscover to make its next move.
 
-The archive ends where this instruction stands. When the conversation comes as a
-<conversation> block instead, the block is the whole of what is archived.
+The archive ends where this instruction stands.
 
-If the conversation opens on a <checkpoint> block, or a <previous-summary> block is present,
-rewrite it with the archived span folded in: keep what is still open, update what moved,
-and drop the rest.
+If the conversation opens on a <checkpoint> block, rewrite it with the archived span folded
+in: keep what is still open, update what moved, and drop the rest.
 
 Use these headings; omit a heading with nothing under it.
 

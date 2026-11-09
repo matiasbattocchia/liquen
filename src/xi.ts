@@ -149,7 +149,7 @@ import {
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { checkpoint, type ModelTransport, nu, type TurnConfig } from "./nu.ts";
-import { compactionSpan, overflowed } from "./compact.ts";
+import { compactionSpan, overflowed, tooLong } from "./compact.ts";
 import { foldsUnread, unloadNotice, unloadSpan } from "./unload.ts";
 
 /* ── the poke, the class filter, and the owed-derivation ──────────────── */
@@ -578,12 +578,19 @@ export function relevant(config: AgentConfig, event: Event): boolean {
     // `error` is a PERMANENT failure until something new arrives — retrying transient ones
     // already happened inside nu, so a logged error means we stopped. `decide` says the same
     // from the window side (a trailing error ⇒ ignore, or compact when the window is over
-    // budget: the tick brings that look); waking here would hot-loop.
+    // budget: the tick brings that look); waking here would hot-loop. Except the session's
+    // own refusal for size and its checkpoint's failed try: the look either wakes compacts
+    // at once, so the agent recovers while idle and the next input finds the window already
+    // shrunk, and the tries end the climb (`buildSummary`): the third makes no call.
+    case "error":
+      return (tooLong(event) || event.parts[0]?.data?.attempt === true) &&
+        event.envelope.conversation.address ===
+          sessionAddress(config.agentId, config.sessionId);
     // `control` acts on a RUNNING turn — the store fires its lease's interrupt (§2) — never
     // starts one; standing, it closes the turn it cut, and `decide` idles on it from the
     // window side (`cutStands`).
     default:
-      return false; // thinking · error · permission_request · control · delta · anchor · prefix · unknown
+      return false; // thinking · permission_request · control · delta · anchor · prefix · unknown
   }
 }
 

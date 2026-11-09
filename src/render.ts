@@ -296,7 +296,15 @@ export interface Archive {
   covered: ReadonlySet<EventId>;
   cut: EventId;
   instruction: string;
+  /** The span as the API can still take it after refusing it whole: no thinking, and each
+   *  call with its outcome as one clipped line (`leanLine`). A window over the API's
+   *  ceiling is a long tool loop, so the calls and the reasoning around them are its bulk;
+   *  words, the world's lines, media and the previous checkpoint draw as they always do. */
+  lean?: boolean;
 }
+
+/** How much of a call, and of its outcome, a lean archive keeps. */
+const LEAN_CHARS = 500;
 
 export interface RenderInput {
   events: Event[]; // the log window — render derives its turns and steps itself
@@ -608,12 +616,6 @@ function byEventTime(
     i = i + pass.length + run.kept.length - 1;
   }
   return { events: out, elisions };
-}
-
-/** The events with every world run in event time and capped to `compactAt`, as the window
- *  lays them out — for a reader that walks the rows itself (the checkpoint's transcript). */
-export function worldCapped(events: Event[], session: Session, compactAt: number): Event[] {
-  return byEventTime(events, session, session.conversation, compactAt).events;
 }
 
 /* ── WUM cap (§5) ───────────────────────────────────────────────────────────────────
@@ -1348,6 +1350,13 @@ function renderMessages(
   // goes, and their tool pairs, which carry no signature, stay.
   const checkpoint = events[0]?.type === "summary" ? events[0] : undefined;
   const signed = (e: Event) => !checkpoint || e.id > checkpoint.id;
+  // A dead turn never closed, so its last call stands open, and both wires want an open
+  // call's thinking beside it (Gemini refuses the cycle without its thought's signature).
+  // Behind the checkpoint that thinking is gone, so the dead turn's steps there are told as
+  // narration, one line a call; a lean archive tells every step so, clipped.
+  const dead = checkpoint ? deadSteps(events, session) : new Set<string>();
+  const narrated = (e: Event) =>
+    archive?.lean === true || (!signed(e) && dead.has(e.payload?.turn_id as string));
 
   // the request-level media budget (`wantedMedia`): the table may hold more, the budget
   // decides what inlines
@@ -1412,9 +1421,23 @@ function renderMessages(
         place("user", { type: "text", text: permissionEl(e, who, zone) });
       }
     } else if (e.type === "thinking") {
-      if (signed(e) && !unanswered.has(e.payload.turn_id)) place("assistant", thinkingBlock(e));
-    } else if (e.type === "tool_use" && welded.has(e.id)) place("assistant", toolUseBlock(e));
-    else if (e.type === "tool_result" && isLate(e)) {
+      if (signed(e) && !unanswered.has(e.payload.turn_id) && !archive?.lean) {
+        place("assistant", thinkingBlock(e));
+      }
+    } else if (e.type === "tool_use" && welded.has(e.id)) {
+      if (!narrated(e)) place("assistant", toolUseBlock(e));
+    } else if (
+      e.type === "tool_result" && narrated(e) &&
+      (welded.has(e.payload.ref_id) || (isLate(e) && archive?.lean))
+    ) {
+      // narration in the harness's voice, the call and its outcome on one line
+      if (!isLate(e) || e.payload.gated) ran(e);
+      const flags = (["gated", "async", "update", "final"] as const).filter((f) => e.payload[f]);
+      const line = told(e, useById.get(e.payload.ref_id), archive?.lean ? LEAN_CHARS : 0);
+      place("user", { type: "text", text: systemEl("tool_result", line, flags) });
+      const blocks = mediaBlocks(e);
+      if (blocks.length) place("user", ...blocks);
+    } else if (e.type === "tool_result" && isLate(e)) {
       // a call's outcome after its answer (§9): the principal ruled and the harness ran
       // it, or what it set in motion went on — told in the harness's own voice, because
       // the tool_use it answers is spent. Narration, so it can stand alone in any position.
@@ -2296,6 +2319,46 @@ export function isUpdate(e: Event, session: SessionRef): e is ToolResultEvent {
 function lateLine(e: ToolResultEvent, fold?: string): string {
   const flags = (["gated", "async", "update", "final"] as const).filter((f) => e.payload[f]);
   return systemEl("tool_result", fold ? `${outcomeLine(e)}\n${fold}` : outcomeLine(e), flags);
+}
+
+/** A call and its outcome as one line of narration, each cut at `max` when one is given. A
+ *  late outcome names its call itself; any other is read off the call's own row. */
+function told(e: ToolResultEvent, use?: ToolUseEvent, max = 0): string {
+  const clip = (s: string) => max > 0 && s.length > max ? `${clipEnd(s, max - 1)}…` : s;
+  const { output, is_error } = e.parts[0].data;
+  const said = typeof output === "string" ? output : JSON.stringify(output);
+  const call = e.parts[0].text ??
+    (use ? describeCall(use.parts[0].data, { full: true }) : "the approved call");
+  return `${clip(call)} ${is_error ? "—" : "→"} ${clip(said)}`;
+}
+
+/** The tool steps of the turns the window holds that ended with no closing: an error (a
+ *  continuation's advisory aside, which the turn goes on from) or the principal's cancel
+ *  came before any closing message. */
+function deadSteps(events: Event[], session: Session): Set<string> {
+  const tools = new Set(
+    events.filter((e) => e.type === "tool_use").map((e) => e.payload?.turn_id),
+  );
+  const dead = new Set<string>();
+  let open: string[] = [];
+  for (const e of events) {
+    const turn = e.payload?.turn_id;
+    if (e.type === "tool_use" && typeof turn === "string" && ownVoice(e, session)) {
+      open.push(turn);
+    } else if (
+      e.type === "message" && isSelf(e, session) &&
+      e.envelope.conversation.address === session.conversation &&
+      !(typeof turn === "string" && tools.has(turn))
+    ) {
+      open = [];
+    } else if (
+      (e.type === "error" && e.payload?.stop_reason !== "max_tokens") || e.type === "control"
+    ) {
+      for (const t of open) dead.add(t);
+      open = [];
+    }
+  }
+  return dead;
 }
 
 /** A script's call, or its answer (`Extra.bash`): the id of the bash call whose script made

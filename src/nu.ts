@@ -261,6 +261,7 @@ export async function checkpoint(
     effort: config.effort,
     compactAt: config.compactAt,
     keepRecent: config.keepRecent,
+    maxTokens: config.maxTokens,
     prompt: input.compactPrompt,
     turnId,
     signal: input.signal,
@@ -348,8 +349,12 @@ export async function nu(
   // its JSON arrived, and a half-written command is not the call the model was making.
   // Every block before the last one closed before the cut, so only the trailing call is
   // in doubt — dropped, and the continuation re-issues it whole.
+  // The context window's end (`model_context_window_exceeded`: the input fit, the output
+  // ran into the window) cuts the same way, and the turn goes on as from the ceiling.
+  const full = res.stop === "model_context_window_exceeded";
+  const cut = res.stop === "max_tokens" || full;
   const emissions = [...res.emissions];
-  if (res.stop === "max_tokens" && emissions.at(-1)?.kind === "tool_use") emissions.pop();
+  if (cut && emissions.at(-1)?.kind === "tool_use") emissions.pop();
 
   // stamp emissions → events (mint ids; envelope by channel; one turnId per step, §5)
   const events: Draft<Event>[] = [];
@@ -417,9 +422,12 @@ export async function nu(
   // along so the model knows it was truncated and steers large output to files (§2).
   if (res.stop === "refusal") {
     events.push(errorEvent("model stopped: refusal"));
-  } else if (res.stop === "max_tokens") {
+  } else if (cut) {
     events.push(errorEvent(
-      "your previous turn hit the output token limit and was cut off mid-generation. " +
+      `your previous turn hit ${
+        full ? "the end of the context window" : "the output token limit"
+      } ` +
+        "and was cut off mid-generation. " +
         "Continue from where you stopped. For large outputs, write them to a file " +
         "incrementally (append via bash/awrite) instead of emitting everything in one message.",
     ));
@@ -429,7 +437,7 @@ export async function nu(
   // Stamping it here is what lets the log carry that, instead of a loop in xi (§2). The
   // transport-failure path above returns before this: an unstamped error is a real stop.
   const last = events.at(-1);
-  if (last) last.payload = { ...last.payload, stop_reason: res.stop };
+  if (last) last.payload = { ...last.payload, stop_reason: cut ? "max_tokens" : res.stop };
   // The request's own anchor, when the state moved since the last the window holds (§5):
   // written with the step and stamped when its request was made, so it stands where the
   // step read it, and a call that failed leaves none.

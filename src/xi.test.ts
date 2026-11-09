@@ -354,6 +354,30 @@ Deno.test("relevant: spectators cost nothing — no read, no lease", () => {
   assertEquals(relevant(CONFIG, { ...peerMsg(), type: "quantum" } as unknown as Event), false);
 });
 
+Deno.test("relevant: a refusal for size wakes its own session — the look compacts before the next input", () => {
+  const refusal = (error: string, conv?: string) =>
+    ev(
+      "error",
+      {
+        ...(conv ? { conv } : {}),
+        parts: [{ type: "data", kind: "error", data: { error } }],
+      } as Partial<Event> & { conv?: string },
+    );
+  const TOO_LONG = "prompt is too long: 213462 tokens > 200000 maximum";
+  assertEquals(relevant(CONFIG, refusal(TOO_LONG)), true);
+  assertEquals(relevant(CONFIG, refusal(`checkpoint failed: ${TOO_LONG}`)), true);
+  assertEquals(relevant(CONFIG, refusal("overloaded")), false);
+  assertEquals(relevant(CONFIG, refusal(TOO_LONG, "mind@a2")), false); // another session's
+  // a checkpoint's failed try wakes the next one, whatever failed it; weather does not
+  const tried = refusal("checkpoint failed: cut off at the output ceiling");
+  (tried.parts[0] as { data: object }).data = {
+    error: "checkpoint failed: cut off at the output ceiling",
+    attempt: true,
+  };
+  assertEquals(relevant(CONFIG, tried), true);
+  assertEquals(relevant(CONFIG, refusal("checkpoint failed: fetch failed")), false);
+});
+
 Deno.test("relevant: another session's tool events are not ours", () => {
   const other = { agent: { id: "a2", session_id: "s2" } };
   assertEquals(relevant(CONFIG, ev("tool_use", other)), false);

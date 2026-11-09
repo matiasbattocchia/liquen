@@ -6423,6 +6423,36 @@ checkpoint run when no news waits.
 - **The section.** `organization` in `config.jsonc` is `shared`: what every agent shares,
   the clock, the backlog and `shared.agents`. Every org's file changes with it.
 
+### A window too long recovers in three tries, while the agent is idle (2026-11-09) — LANDED
+
+A request the API refused as too long left the agent stalled: errors woke nothing, so the
+tick found it a minute later, and an input landing first was refused over the same
+window. A checkpoint whose transcript was refused too failed again on every tick, with no
+end, and a record cut at the output cap did the same, paying for each call.
+
+- **The refusal wakes.** A "too long" error, and every failed try, wakes its own session:
+  the look compacts at once, and the agent is idle and ready before the next input.
+- **A dead turn leaves `keepRecent`.** Its cut may fall at the end of any of its steps,
+  so the first try sends the window without the newest results, the ones that pushed it
+  over. The steps it leaves render behind the record as narration, one
+  `<system kind="tool_result">` line a call: their thinking went with the prefix, and a
+  dead turn's last call would otherwise go out open without it (Gemini refuses that).
+- **Three tries.** A call that answered without a record (cut, empty) or was refused for
+  its size is a try (`attempt` on the error). The window first, as the thinks read it, so
+  its cache holds; then lean at low effort: no thinking, each call and its outcome one
+  line clipped at 500 characters a side, the rest as the window draws it; then no call:
+  the previous record and what the span holds from when, for `search`. Weather is no try.
+- **The output cap is derived**: `(compactAt − keepRecent) / 2` under `maxTokens`, 15K
+  on the defaults. `SUMMARY_MAX_TOKENS` (16,384) is gone, and with it the transcript,
+  `<previous-summary>` and `<conversation>`.
+- **Gemini's wording with the count**, "input token count (N) exceeds the maximum", now
+  reads as a refusal for size; it had read as no overflow at all.
+- **`model_context_window_exceeded`**, the Claude 4.5+ stop when the input fits and the
+  output runs into the window, was read as an ordinary ending. A think now continues as
+  from the output cap; a checkpoint cut by it is a try.
+- Anthropic accepts input plus `max_tokens` over the window on Claude 4.5 and later, so a
+  "prompt is too long" means the input alone did not fit; older models refused the sum.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
