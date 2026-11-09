@@ -3749,9 +3749,9 @@ and archive events reach the bot) · **compaction's refinements** (the principal
 corrections kept verbatim, a stale checkpoint's age, each denial kept with its draft and
 reason) · **model routing** (a decision model and a second model family, below) · **wire
 facts that land late** (Teams' kind lookup retried, an `external_id` for conversations) ·
-**a script's call made whole** (the door writes the call's row before it answers, and main answers at boot any it finds unanswered, so a crash
-between the answer and the row leaves no sent message without its call; worth it once
-scripts see real use).
+**a script's call made whole** (the door writes the call's row before it answers, and main
+answers at boot any it finds unanswered, so a crash between the answer and the row leaves
+no sent message without its call; worth it once scripts see real use).
 
 - **A decision model for the questions with known answers**: wake now or wait for the
   digest, act or stay silent, which tier drafts, which contact a name means. A decision
