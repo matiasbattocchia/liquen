@@ -7,6 +7,11 @@ else — `config.jsonc`, `data/`, `.env`, its own `connectors/` and `processors/
 `deno.jsonc` names the package and whose tasks run it; a checkout stands in for the
 registry through `"links": ["../liquen"]`. No org file lives here.
 
+## Questions before work
+
+When a request holds both work and questions, queue the work and answer the questions.
+Start the work only once every question has been answered.
+
 ## Work in a worktree
 
 More than one session works on this repo at a time. Do your work in a git worktree of your
