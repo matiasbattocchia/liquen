@@ -290,6 +290,39 @@ function renderIndex(pointers: DocEntry[], on: Env["docs"] = "filesystem"): stri
  *  well above this) — the newest-first budget in `renderMessages`. */
 const MEDIA_BUDGET = 12 * 1024 * 1024;
 
+/** A run of pictures, one sender's back-to-back images in one conversation, inlines its
+ *  first few (§5): the opening shots and their caption carry what the run says, and the
+ *  rest keep their markers, each a path `aread` opens. */
+export const RUN_IMAGES = 3;
+
+/** The pictures past their run's first `RUN_IMAGES`, by uri. A line with words ends a run,
+ *  anyone's; a mark does not. Counted from the run's start, so a run spread over two wakes
+ *  inlines the same pictures in both, and a picture one run shows is shown wherever it
+ *  appears, since the blocks are keyed by uri. */
+function pastRuns(events: Event[]): Set<string> {
+  const runs = new Map<string, { sender: string | undefined; n: number }>();
+  const shown = new Set<string>();
+  const past = new Set<string>();
+  for (const e of events) {
+    if (e.type !== "message") continue;
+    const room = e.envelope.conversation.address;
+    const images = filesOf(e).filter((p) =>
+      inlineable(p.file.mime_type) && p.file.mime_type !== "application/pdf"
+    );
+    if (images.length === 0) {
+      if (textOf(e)) runs.delete(room);
+      continue;
+    }
+    const sender = e.envelope.sender?.address;
+    const last = runs.get(room);
+    const run = last !== undefined && last.sender === sender ? last : { sender, n: 0 };
+    runs.set(room, run);
+    for (const p of images) (++run.n > RUN_IMAGES ? past : shown).add(p.file.uri);
+  }
+  for (const uri of shown) past.delete(uri);
+  return past;
+}
+
 /** A checkpoint's span as its request draws it: the events it covers, the last of them —
  *  the cut every think marked — and the instruction that closes the request. */
 export interface Archive {
@@ -677,10 +710,11 @@ export const PDF_PAGE_BYTES = 100 * 1024;
  *  heavy with pictures reaches `compactAt` sooner. The agent's own are never re-shown. */
 export function mediaTokens(events: Event[], session: SessionRef): number {
   let n = 0;
+  const past = pastRuns(events);
   for (const e of events) {
     if (e.type !== "tool_result" && (e.type !== "message" || ownVoice(e, session))) continue;
     for (const p of filesOf(e)) {
-      if (!inlineable(p.file.mime_type)) continue;
+      if (!inlineable(p.file.mime_type) || past.has(p.file.uri)) continue;
       n += p.file.mime_type === "application/pdf"
         ? Math.max(1, Math.ceil((p.file.size ?? 0) / PDF_PAGE_BYTES)) * PDF_PAGE_TOKENS
         : imageTokens(p);
@@ -1076,7 +1110,9 @@ export function wantedMedia(
 ): string[] {
   const wanted: string[] = [];
   let budget = MEDIA_BUDGET;
-  for (const e of [...regions(window, session, compactAt).events].reverse()) {
+  const events = regions(window, session, compactAt).events;
+  const past = pastRuns(events);
+  for (const e of [...events].reverse()) {
     // world and own-room attachments, and tool-result attachments (the model asked to see those)
     if (e.type !== "message" && e.type !== "tool_result") continue;
     if (e.type === "message" && isSelf(e, session)) continue;
@@ -1085,7 +1121,7 @@ export function wantedMedia(
       if (isExternal(p.file.uri) || p.file.size === undefined) continue;
       // what the loader would refuse spends nothing: an oversize file keeps its marker
       if (!inlineable(p.file.mime_type) || p.file.size > INLINE_CAP) continue;
-      if (p.file.size > budget) continue;
+      if (past.has(p.file.uri) || p.file.size > budget) continue;
       budget -= p.file.size;
       wanted.push(p.file.uri);
     }

@@ -1597,6 +1597,38 @@ Deno.test("media: attachments inline as base64 blocks, and stay past their turn'
   );
 });
 
+Deno.test("media: a run of pictures inlines its first three; words or another sender start a new run", () => {
+  const at = (s: number) => `2026-07-21T10:00:${String(s).padStart(2, "0")}Z`;
+  const from = (e: MessageEvent, address: string) => ({
+    ...e,
+    envelope: { ...e.envelope, sender: { address, name: address } },
+  });
+  const dump = [1, 2, 3, 4, 5].map((n) => fileMsg(`d${n}`, at(n), `/m/d${n}.png`));
+  const events: Event[] = [
+    ...dump,
+    // a reaction is a mark: the run goes on
+    {
+      ...worldMsg("r", at(6), { address: "C1", kind: "channel" }, { address: "U8" }, ""),
+      envelope: { ...dump[0].envelope, sender: { address: "U8" } },
+      parts: [{ type: "data", kind: "reaction", data: { name: "😂" } }],
+    } as MessageEvent,
+    fileMsg("d6", at(7), "/m/d6.png"),
+    from(fileMsg("o1", at(8), "/m/o1.png"), "U9"), // another sender: a run of its own
+    {
+      ...worldMsg("w", at(9), { address: "C1", kind: "channel" }, { address: "U7" }, "qué lindas"),
+      envelope: dump[0].envelope,
+    } as MessageEvent,
+    fileMsg("n1", at(10), "/m/n1.png"), // after words: a new run
+    fileMsg("again", at(11), "/m/d1.png", { name: "again.png" }), // shown once, shown again
+  ];
+  assertEquals(
+    [...new Set(wantedMedia(events, SESSION))].sort(),
+    ["/m/d1.png", "/m/d2.png", "/m/d3.png", "/m/n1.png", "/m/o1.png"],
+  );
+  // a run's pictures past three weigh nothing: they render as their markers
+  assertEquals(mediaTokens(dump, SESSION), 3 * IMAGE_TOKENS);
+});
+
 Deno.test("media: without a table (closed-only, or a port that answered nothing) markers render, no blocks", () => {
   const events: Event[] = [fileMsg("e1", "2026-07-21T10:00:00Z", "/m/a.png", { text: "hola" })];
   const { messages } = render({

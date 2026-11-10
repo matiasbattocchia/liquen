@@ -6453,6 +6453,26 @@ end, and a record cut at the output cap did the same, paying for each call.
 - Anthropic accepts input plus `max_tokens` over the window on Claude 4.5 and later, so a
   "prompt is too long" means the input alone did not fit; older models refused the sum.
 
+### A failure crosses once, and a run of pictures shows three (2026-11-10) — LANDED
+
+On 10 Nov the account ran out of credit at 17:34. Sixteen calls were refused in six
+minutes, and each put the API's raw JSON in the principal's chat. Earlier that day a
+broadcast brought fourteen photos in twenty seconds; all of them inlined, the window grew
+by 33k tokens in one step, and it checkpointed four minutes later.
+
+- **Once until the model answers.** The mirror keeps, by mind, the failure line it last
+  crossed, and the same line again crosses nothing. The model's thinking, its call, its
+  voice, its silence or a presence line ends the failure.
+- **The provider's sentence.** An SDK error reads `<status> <body>`; the line says the
+  body's `message` and leaves the request id to the log.
+- **Three pictures a run.** `RUN_IMAGES` caps what one sender's back-to-back images in one
+  room inline; the rest keep their markers, and `mediaTokens` weighs only what inlines.
+
+Open: why the calls came so often. After an error `decide` idles only while the error is
+the window's last event, and the overdue digest fires on whatever lands next, so a busy
+chat wakes a failing mind on every line. The refused calls cost nothing, but each is a
+round trip.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

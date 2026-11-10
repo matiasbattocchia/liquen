@@ -1085,7 +1085,8 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     `[system] …`: a failure (`✗` and the tool's words, at `tools`; an approved call's,
     which names the call, at every level), a
     model call that failed past its retries (what kept it: the model unreached, overloaded,
-    or refusing the request, then the provider's words), a fired wake (`⏰` and the agent's note), a turn the principal cut (under their
+    or refusing the request, then the provider's own sentence, once until the model answers
+    again, since every arrival wakes a mind whose last call failed), a fired wake (`⏰` and the agent's note), a turn the principal cut (under their
     `/cancel`, which crosses as their line). An unload notice crosses as
     `[agent memorizing...]` unless presence is `off`. A checkpoint written is the
     terminal's: a surface heard `[agent compacting...]` as it began. A settlement's own row is
@@ -1645,6 +1646,10 @@ itself) — and stay until the checkpoint, like the rest of the window: turning 
 marker at a close would rewrite a block mid-history. Two caps keep the base64 sane:
 per-file (3MB raw) and a window budget (12MB raw, NEWEST first; url blocks are
 budget-free); past it the oldest falls back to its marker, a rewrite accepted as rare.
+A run of pictures, one sender's back-to-back images in one room, inlines its first three
+(`RUN_IMAGES`): the opening shots and their caption say what the run is, and the rest keep
+their markers for `aread`. A line with words ends a run, a mark does not, and the count
+starts at the run's first picture, so a run spread over two wakes shows the same ones.
 The checkpoint weighs the pictures with the rows (`mediaTokens`), so a window heavy with
 them reaches `compactAt` sooner, at the API's own rates: an image a token per 28×28 patch,
 capped at 4,784 on the high-resolution tier, a PDF page its text and an image of the page.

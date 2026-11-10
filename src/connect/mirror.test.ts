@@ -811,6 +811,50 @@ Deno.test("mirror fan-out: a failed model call says what kept it, in the org's t
   );
 });
 
+Deno.test("mirror fan-out: a failure crosses once until the model answers, in the provider's own sentence", async () => {
+  const mind = {
+    service: "local",
+    connection_address: "default",
+    conversation: { address: "mind@ana" },
+  };
+  const failure = (request: string): Draft<Event> =>
+    ({
+      ts: new Date().toISOString(),
+      type: "error",
+      envelope: mind,
+      parts: [{
+        type: "data",
+        kind: "error",
+        data: {
+          error: `400 {"type":"error","error":{"type":"invalid_request_error",` +
+            `"message":"Your credit balance is too low."},"request_id":"${request}"}`,
+          origin: "model",
+          failed: { status: 400, tries: 1 },
+        },
+      }],
+    }) as Draft<Event>;
+  const began: Draft<Event> = {
+    ts: new Date().toISOString(),
+    type: "delta",
+    envelope: mind,
+    agent: { id: "ana", session_id: "mind" },
+    parts: [{ type: "data", kind: "delta", data: { kind: "thinking" } }],
+  } as Draft<Event>;
+  await withMirror(async ({ publish, inConv, waitFor }) => {
+    await publish(failure("req_1"));
+    await publish(failure("req_2"));
+    await publish(failure("req_3"));
+    await publish(began);
+    await publish(failure("req_4"));
+    await waitFor(async () => (await inConv("D1")).length === 3);
+    assertEquals((await inConv("D1")).map(textOf), [
+      "`[system]` The model refused the request (400): Your credit balance is too low.",
+      "`[agent thinking...]`",
+      "`[system]` The model refused the request (400): Your credit balance is too low.",
+    ]);
+  });
+});
+
 Deno.test("mirror fan-out: a settlement's row — a verdict, a lapse, a withdrawal — and a refused call's outcome stay at the terminal", async () => {
   await withMirror(async ({ publish, inConv, waitFor, setDelivery }) => {
     const settle = (

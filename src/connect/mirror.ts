@@ -145,12 +145,23 @@ export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): ()
     chain = chain.then(work).catch((err) => deps.onError?.(e, err));
   };
 
+  // a failed model call's line, by mind, since the model last answered: the same failure
+  // again is the same news, so it crosses once, and a wake on every arrival cannot fill a
+  // chat with it
+  const told = new Map<string, string>();
+
   return deps.subscribe((e) => {
     if (silenced(e)) return; // silenced rows are not news (§5) — history never mirrors,
     //   and a muted chat's traffic never reaches a surface the principal silenced it from
     const mind = mindOf(e);
     if (mind !== null) {
       enqueue(e, async () => {
+        if (answered(e)) told.delete(mind);
+        if (e.type === "error" && (e as ErrorEvent).parts[0].data.failed) {
+          const said = errorLine(e as ErrorEvent, w);
+          if (told.get(mind) === said) return;
+          told.set(mind, said);
+        }
         const cc = await ccParts(e, deps, w, deps.presence?.(mind) ?? DEFAULT_PRESENCE);
         if (cc) await fanOut(deps, e, mind, cc, now);
       });
@@ -616,9 +627,7 @@ async function ccParts(
   if (e.type === "error") {
     // the harness's own voice reaching the principal (§2): it speaks when the model can't
     // — a gate is waiting, so no turn will be taken to relay this
-    const { error, refusal, failed } = (e as ErrorEvent).parts[0].data;
-    const said = refusal ? refusalText(refusal, w) : failed ? failureText(failed, error, w) : error;
-    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${said}` }]);
+    return same([{ type: "text", kind: "text", text: errorLine(e as ErrorEvent, w) }]);
   }
   if (e.type === "delta") {
     // presence (§9): what the mind is doing, for the principal on the other side of a
@@ -685,14 +694,45 @@ async function ccParts(
   return line(said, files);
 }
 
+/** An error as a surface reads it, tag and all. */
+function errorLine(e: ErrorEvent, w: Words): string {
+  const { error, refusal, failed } = e.parts[0].data;
+  const said = refusal ? refusalText(refusal, w) : failed ? failureText(failed, error, w) : error;
+  return `\`[${w.system}]\` ${said}`;
+}
+
 /** A model call that failed past its retries, in the surface's tongue: no status means the
  *  request never reached the provider, weather the retries covered means it is overloaded,
  *  and anything else is the request's own fault. The provider's words ride along. */
-function failureText({ status, tries }: CallFailure, said: string, w: Words): string {
+function failureText({ status, tries }: CallFailure, error: string, w: Words): string {
+  const said = providerWords(error);
   if (status === undefined) return w.failed.unreached(tries, said);
-  return retryable(status, said)
+  return retryable(status, error)
     ? w.failed.busy(status, tries, said)
     : w.failed.refused(status, said);
+}
+
+/** The provider's own sentence out of an API error. The SDK writes one as its status and
+ *  the response body (`400 {"type":"error","error":{"message":…},"request_id":…}`): the
+ *  status is the line's already, and the request id is the log's. Anything else is
+ *  already words. */
+function providerWords(error: string): string {
+  const body = /^\d{3} (\{[\s\S]*\})$/.exec(error)?.[1];
+  if (body === undefined) return error;
+  try {
+    const parsed = JSON.parse(body);
+    const message = parsed?.error?.message ?? parsed?.message;
+    return typeof message === "string" && message ? message : error;
+  } catch {
+    return error;
+  }
+}
+
+/** Did the model answer? Its thinking, its call, its voice or its silence, or presence
+ *  saying it began: a call reached it, so the failure before is over. */
+function answered(e: Event): boolean {
+  return e.type === "thinking" || e.type === "tool_use" || e.type === "delta" ||
+    (e.type === "message" && e.payload?.turn_id !== undefined);
 }
 
 /** A principal's row on a surface: the same tag shape as the voice, saying where it was
