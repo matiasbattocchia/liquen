@@ -33,7 +33,8 @@ export type Emission =
 export interface StepInput extends RenderedRequest {
   model: string;
   tools?: Anthropic.Tool[]; // omit ⇒ a toolless call (wiring, not a knob — tools are code)
-  /** `none`: the tools ride the request, so its prefix is the think's, and none is called. */
+  /** `none`: the tools ride the request and none is called. Gemini leaves the tools out of
+   *  the prompt under it, so there the request shares no cached prefix with a think's. */
   toolChoice?: "none";
   maxTokens?: number; // API-required output cap; default: the catalog's (§9)
   effort?: Effort; // adaptive thinking depth; omit ⇒ the model's default

@@ -1925,21 +1925,22 @@ layer**:
   window the checkpoint works from carries a dead turn's tool calls, their outcomes and
   the error that ended it for the same reason — inside a loop they ARE the content.
   A checkpoint that cannot be written is an error event, not a record — the model wrote it
-  badly (cut at the output cap or at the end of the context window, or empty), the API
-  refused the request as too long, or the call never completed. The turn ends on it,
-  unstamped: the window stays uncovered whichever it was, and a turn taken over it would
-  cost more and say less. **Three tries**: a call that answered without a record, or was
-  refused for its size, is a try (`attempt` on the error, counted since the floor) and
-  wakes its session at once. The first try is the window as the thinks read it, which
-  keeps the cache; the second is the window **lean**, at low effort (no thinking, each
-  call and its outcome one `<system kind="tool_result">` line clipped at 500 characters a
-  side; words, the world's lines, media and the previous checkpoint as always); the third
-  makes no call: the record is the previous one and a line saying what the span holds and
-  from when, which the tag's `before` closes for `search`. So the floor moves within three
-  looks whatever the window, and the agent is idle again. A call that never completed
-  (weather, past nu's retries) cost nothing and is no try: the tick retries it. The output
-  cap is half the span a record replaces, `(compactAt − keepRecent) / 2`, under the
-  agent's own `maxTokens`, so a record that lands leaves the window well under `compactAt`.
+  badly (cut at the output cap or at the end of the context window, empty, or a tool call
+  in its place), the API refused the request as too long, or the call never completed. The
+  turn ends on it, unstamped: the window stays uncovered whichever it was, and a turn taken
+  over it would cost more and say less. **Three tries**: a call that answered without a
+  record, or was refused for its size, is a try (`attempt` on the error, counted since the
+  floor) and wakes its session at once. The first try is the window as the thinks read it,
+  which keeps the cache; the second is the window **lean**, at low effort, with the tools
+  offered and none callable (no thinking, each call and its outcome one `<system
+  kind="tool_result">` line clipped at 500 characters a side; words, the world's lines,
+  media and the previous checkpoint as always); the third makes no call: the record is the
+  previous one and a line saying what the span holds and from when, which the tag's
+  `before` closes for `search`. So the floor moves within three looks whatever the window,
+  and the agent is idle again. A call that never completed (weather, past nu's retries)
+  cost nothing and is no try: the tick retries it. The output cap is half the span a record
+  replaces, `(compactAt − keepRecent) / 2`, under the agent's own `maxTokens`, so a record
+  that lands leaves the window well under `compactAt`.
 - **Unload: the facts go to docs before the gist goes to the record.** A checkpoint keeps
   the gist; what a span taught as fact (who someone is, what they prefer, what was
   promised) belongs in a doc, as `70-memory` says, and the turn that writes it is the
@@ -1974,18 +1975,23 @@ layer**:
   name; a doc that is gone is a checkpoint that cannot be written, on the error path a cut
   or empty one already takes. One unified instruction covers first-checkpoint and fold
   (it branches on the `<checkpoint>` block itself, so the code doesn't).
-- **The request is the think's.** The checkpoint call carries the think's tools (offered
-  with `tool_choice: none`, none called), the system prefix the think reads — instructions,
-  memories, environment — and the window as render laid it out for the thinks, through the
-  cut and no further, closing on the instruction: the position is the boundary, with no
-  anchor and nothing past the cut. The model sees what already stands in the agent's
-  prompt and leaves it out of the record, and it reads the conversation in the form it
-  works from. And the request reads its span from the cache: the tools, the system, then
-  the window through the cut, all byte-identical to the thinks' and marked at the cut by
-  each of them, so only the instruction is written. After the agent's own words the
-  instruction is a user turn of `<system kind="checkpoint">` text, since the API takes a
-  `mid_conv_system` block only after other content in a user turn; after a user turn (an
-  error, a cancel) it is that block. After a failed try the window goes lean (above).
+- **The request is the think's.** The checkpoint call carries the think's tools, offered as
+  the think offers them (a tool choice the thinks never send changes the cached prefix:
+  Gemini's `none` takes the tools out of the prompt; a span cut inside a running turn,
+  mid-loop, takes `none` all the same, since a call is the likelier answer there), the
+  system prefix the think reads — instructions, memories, environment — and the window as
+  render laid it out for the thinks, through the cut and no further, closing on the
+  instruction: the position is the boundary, with no anchor and nothing past the cut. The
+  model sees what already stands in the agent's prompt and leaves it out of the record, and
+  it reads the conversation in the form it works from. And the request reads its span from
+  the cache: the tools, the system, then the window through the cut, all byte-identical to
+  the thinks' and marked at the cut by each of them, so only the instruction is written.
+  That is Anthropic's cache; Gemini's implicit one reads back only as far as an earlier
+  request ran, and no think ends at the cut, so there the tools and the system are the
+  cached part. After the agent's own words the instruction is a user turn of `<system
+  kind="checkpoint">` text, since the API takes a `mid_conv_system` block only after other
+  content in a user turn; after a user turn (an error, a cancel) it is that block. After a
+  failed try the window goes lean (above).
 - **Prompt shape** = open ends, not a record: what is still open (each by the name and
   address the window shows, whose move it is, with the figures that move needs) · what a
   principal said here that the prefix does not already say. Closed threads, standing facts

@@ -7,13 +7,16 @@
  * CLOSED turns — whole ones: a span ends where a turn ends, or at a step's end inside a
  * turn that died, which nothing continues — published as
  * a `summary` event with `covers: [from, to]`. The call is the think's own request — its
- * tools (offered, none called), its system prefix, the window as render lays it out — cut
- * where the span ends and closing on the instruction: the position is the boundary, and
- * the model reads the span in the form it works from. The cut is pinned well before the
- * checkpoint is due, and every think marks it, so the span is a cache read. A call that
- * brings back no record (refused as too long, cut at its cap, or empty) is a try: after
- * one the span goes lean (no thinking, each call clipped), after two it is recorded with
- * no call, as the stretch `search` reads back. Iterative: a later compaction folds the previous summary in (pi's update rule), and
+ * tools, offered as the think offers them, its system prefix, the window as render lays it
+ * out — cut where the span ends and closing on the instruction: the position is the
+ * boundary, and the model reads the span in the form it works from. The cut is pinned well
+ * before the checkpoint is due, and every think marks it, so on Anthropic's wire the span
+ * is a cache read. Gemini's implicit cache reads back only as far as an earlier request
+ * ran, and no think ends at the cut, so there the tools and system are the cached part. A
+ * call that brings back no record (refused as too long, cut at its cap, empty, or a call
+ * in its place) is a try: after one the span goes lean (no thinking, each call clipped,
+ * the tools offered and none callable, as in a span cut inside a running turn), after two it is recorded with no call, as the
+ * stretch `search` reads back. Iterative: a later compaction folds the previous summary in (pi's update rule), and
  * `covers` chains from the previous summary's start so survivors get re-covered.
  *
  * A checkpoint runs BETWEEN turns (§5): a thinking block's signature binds everything its
@@ -55,8 +58,10 @@ export interface CompactInput {
   /** The prefix the agent's think reads (its instructions, memories, environment): the
    *  checkpoint is written against it, so what the prefix already says is not carried. */
   system?: Anthropic.TextBlockParam[];
-  /** The think's tools, offered and never called: the cached prefix is tools, then system,
-   *  so only the think's own tools let the checkpoint read the think's cache entry. */
+  /** The think's tools, offered as the think offers them: the cached prefix is tools, then
+   *  system, and a tool choice the think never sends changes it (Gemini's `none` takes the
+   *  tools out of the prompt), so only the think's own tools and choice let the checkpoint
+   *  read the think's cache entry. */
   tools?: Anthropic.Tool[];
   /** The window as the thinks read it, up to the cut and closing on the instruction
    *  (render.ts `Archive`): byte for byte their messages up to the block every think
@@ -477,7 +482,9 @@ export async function buildSummary(
     effort: lean ? "low" : input.effort,
     maxTokens: summaryCap(input.compactAt, input.keepRecent, input.maxTokens),
     tools: input.tools ?? [],
-    ...(input.tools?.length ? { toolChoice: "none" as const } : {}),
+    // the call is forbidden where an offered one is the likelier answer, a turn cut while
+    // it runs, and where forbidding it costs no cache read, the lean window
+    ...((lean || span.running) && input.tools?.length ? { toolChoice: "none" as const } : {}),
     turnId: input.turnId,
     signal: input.signal,
   });
@@ -488,6 +495,8 @@ export async function buildSummary(
   if (res.stop === "model_context_window_exceeded") {
     return failed("cut off at the end of the context window", true);
   }
+  // words beside a call are the model's lead-in to acting, not a record
+  if (res.stop === "tool_use") return failed("the model called a tool", true);
   const summary = res.emissions.filter((e) => e.kind === "assistant")
     .map((e) => e.text).join("\n").trim();
   if (summary.length === 0) return failed("the model wrote nothing", true);

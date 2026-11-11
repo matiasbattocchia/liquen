@@ -6549,6 +6549,29 @@ all of it.
   whole.
 - **`liquen log turns`** puts such a record on the turn it was written inside.
 
+### A checkpoint on Gemini reads the tools and system from the cache (2026-11-11) — LANDED
+
+Over seven days in production a checkpoint call read the cache on Turtle 17 of 233, Lunar 7
+of 65, Nebula 0 of 47 and Hare 0 of 29, while thinks read it routinely; the local Turtle
+log showed it within 20–90 s of the think before it, so the entry had not expired. Probes on
+`gemini-4-argon` (Interactions, stateless, 55K-token think: 7K system, 5K tools, the rest
+window; each probe in a fresh prefix) put it down to two facts of the wire:
+
+- **`tool_choice: none` takes the tools out of the prompt.** The same checkpoint request
+  counted 45,983 input tokens without it and 40,877 with it, and with it read 0 cached
+  after thinks that had cached 53K. A request with no tools at all then read 38,809 from
+  the `none` one's entry. The checkpoint now offers the tools as the think does; the lean
+  try, whose window is not the thinks' anyway, and a span cut inside a running turn,
+  mid-loop where a call is the likelier answer, keep `none`. A call in place of the record
+  is a try.
+- **The implicit cache reads back only as far as an earlier request ran.** With the
+  think's own tools and choice, a checkpoint cut 9K tokens before the thinks' end read
+  12,106 (the system and tools) and one cut 6K before it read 0; after a request that
+  ended just past the cut, the same checkpoint read 43,933 of 45,982. No think ends at the
+  pinned cut, so on Gemini the head is the cached part, ~13K of a ~17K checkpoint at
+  Turtle's size. A `thinking_level` the thinks did not send read 0 (the lean try's `low`);
+  `max_output_tokens` changes nothing.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

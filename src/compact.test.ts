@@ -564,6 +564,7 @@ const ladder = async (
   events: Event[],
   answer: () => Promise<Anthropic.Message> = () =>
     Promise.resolve(canned([{ kind: "assistant", text: "## Open\n- informe" }])),
+  tools?: Anthropic.Tool[],
 ) => {
   const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
   const out = await buildSummary(
@@ -576,6 +577,7 @@ const ladder = async (
       compactAt: 1,
       keepRecent: 400,
       prompt: PROMPT,
+      ...(tools ? { tools } : {}),
     },
     stepping((p) => {
       seen.push(p);
@@ -637,6 +639,56 @@ Deno.test("buildSummary: a cut or empty record is a try", async () => {
     } as unknown as Anthropic.Message));
   assert(full.out !== null && full.out.type === "error");
   assertEquals(full.out.parts[0].data.attempt, true);
+});
+
+Deno.test("buildSummary: the first try offers the tools as the think does, a call in place of the record is a try, and the lean try forbids the call", async () => {
+  const tools: Anthropic.Tool[] = [{ name: "bash", input_schema: { type: "object" } }];
+  const events: Event[] = [msg("hacé el informe", false), ...step(1), errorEv("overloaded")];
+  const first = await ladder(
+    events,
+    () =>
+      Promise.resolve(canned([
+        { kind: "assistant", text: "Let me check first." },
+        { kind: "tool_use", name: "bash", input: { command: "ls" } },
+      ], "tool_use")),
+    tools,
+  );
+  // the think's tools and the think's choice: a `none` would change the cached prefix
+  assertEquals(first.seen[0].tools, tools);
+  assertEquals(first.seen[0].tool_choice, undefined);
+  assert(first.out !== null && first.out.type === "error");
+  assertEquals(first.out.parts[0].data.attempt, true);
+  const lean = await ladder([...events, triedEv("the model called a tool")], undefined, tools);
+  assertEquals(lean.seen[0].tools, tools);
+  assertEquals(lean.seen[0].tool_choice, { type: "none" });
+  assert(lean.out !== null && lean.out.type === "summary");
+});
+
+Deno.test("buildSummary: a turn cut while it runs is offered the tools with none callable — mid-loop, a call is the likelier answer", async () => {
+  const tools: Anthropic.Tool[] = [{ name: "bash", input_schema: { type: "object" } }];
+  const events: Event[] = [msg("hacé el informe", false)];
+  for (let k = 1; k <= 20; k++) events.push(...step(k));
+  const compactAt = Math.floor(estTokens(events) / RUNAWAY) - 1;
+  const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const out = await buildSummary(
+    {
+      events,
+      window: windowOf(events),
+      session: SESSION,
+      model: "claude-x",
+      compactAt,
+      keepRecent: estTokens(events.slice(-3)),
+      prompt: PROMPT,
+      tools,
+    },
+    stepping((p) => {
+      seen.push(p);
+      return Promise.resolve(canned([{ kind: "assistant", text: "## Open\n- informe" }]));
+    }),
+  );
+  assert(out !== null && out.type === "summary");
+  assertEquals(out.payload.running, true);
+  assertEquals(seen[0].tool_choice, { type: "none" });
 });
 
 Deno.test("summaryCap: half the span a record replaces, never past the agent's own cap", () => {

@@ -357,7 +357,7 @@ Deno.test("checkpoint: a window under budget is nothing to do — no call, no ev
   assertEquals(out, []);
 });
 
-Deno.test("checkpoint: its request opens on the think's prefix — the same tools, offered and none called", async () => {
+Deno.test("checkpoint: its request opens on the think's prefix — the same tools, offered as the think offers them", async () => {
   const events = Array.from({ length: 6 }, (_, i) => exchange(i)).flat();
   const tools: Anthropic.Tool[] = [{ name: "send", input_schema: { type: "object" } }];
   // the window one token over budget, the cut pinned at the first exchange's end
@@ -380,7 +380,7 @@ Deno.test("checkpoint: its request opens on the think's prefix — the same tool
   const [think, check] = seen;
   assertEquals(check.tools, think.tools);
   assertEquals(check.system, think.system);
-  assertEquals(check.tool_choice, { type: "none" });
+  assertEquals(check.tool_choice, undefined);
   assertEquals(think.tool_choice, undefined);
   // and the window: the think's messages through the cut it marked, then the instruction —
   // the request reads the entry the thinks kept warm

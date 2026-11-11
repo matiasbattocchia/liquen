@@ -80,7 +80,9 @@ export function toRequest(params: Anthropic.MessageCreateParamsNonStreaming): Re
       // the wire takes `auto` or `none`; `auto` is the one that returns summaries
       thinking_summaries: "auto",
       ...(effort ? { thinking_level: THINKING_LEVEL[effort] } : {}),
-      // the one choice the harness makes: the tools offered, none called (mu.ts)
+      // the one choice the harness makes: the tools offered, none called (mu.ts). Under
+      // `none` the API leaves the declarations out of the prompt, so the request's cached
+      // prefix is a toolless one's
       ...(params.tool_choice?.type === "none" ? { tool_choice: "none" } : {}),
     },
   };
