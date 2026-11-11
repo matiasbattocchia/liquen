@@ -46,6 +46,9 @@ Deno.test("toRequest: tools, output cap and effort take the wire's names", () =>
     "none",
   );
   assertEquals("tool_choice" in toRequest(params()).generation_config, false);
+  // a request that abstains keeps the tools in the prompt: this wire's `none` drops them
+  const abstains = toRequest(params({ tool_choice: { type: "none" } }), { abstain: true });
+  assertEquals("tool_choice" in abstains.generation_config, false);
   // the catalog's five depths collapse onto the wire's top from `high` up
   assertEquals(THINKING_LEVEL.xhigh, "high");
   assertEquals(THINKING_LEVEL.max, "high");

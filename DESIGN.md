@@ -1975,10 +1975,12 @@ layer**:
   name; a doc that is gone is a checkpoint that cannot be written, on the error path a cut
   or empty one already takes. One unified instruction covers first-checkpoint and fold
   (it branches on the `<checkpoint>` block itself, so the code doesn't).
-- **The request is the think's.** The checkpoint call carries the think's tools, offered as
-  the think offers them (a tool choice the thinks never send changes the cached prefix:
-  Gemini's `none` takes the tools out of the prompt; a span cut inside a running turn,
-  mid-loop, takes `none` all the same, since a call is the likelier answer there), the
+- **The request is the think's.** The checkpoint call carries the think's tools with no
+  call wanted (`abstain`): on Anthropic's wire that is `tool_choice: none`, which keeps the
+  tools in the prompt; Gemini's `none` takes them out of it, so there they ride with no
+  choice, as the think's do, and a call in place of the record is a try. A span cut inside
+  a running turn, mid-loop where a call is the likelier answer, forbids it outright
+  (`none`), as the lean try does. Then the
   system prefix the think reads — instructions, memories, environment — and the window as
   render laid it out for the thinks, through the cut and no further, closing on the
   instruction: the position is the boundary, with no anchor and nothing past the cut. The

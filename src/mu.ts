@@ -33,9 +33,12 @@ export type Emission =
 export interface StepInput extends RenderedRequest {
   model: string;
   tools?: Anthropic.Tool[]; // omit ⇒ a toolless call (wiring, not a knob — tools are code)
-  /** `none`: the tools ride the request and none is called. Gemini leaves the tools out of
-   *  the prompt under it, so there the request shares no cached prefix with a think's. */
-  toolChoice?: "none";
+  /** `none`: no tool can be called, whatever that leaves in the prompt. `abstain`: the tools
+   *  ride the request as the think's do, so its prefix is the think's, and none is wanted.
+   *  On Anthropic's wire the two are one (its `none` keeps the tools in the prompt); Gemini's
+   *  `none` takes them out, so there `abstain` offers them with no choice, and a call that
+   *  comes back is the caller's to refuse. */
+  toolChoice?: "none" | "abstain";
   maxTokens?: number; // API-required output cap; default: the catalog's (§9)
   effort?: Effort; // adaptive thinking depth; omit ⇒ the model's default
   turnId?: string; // the turn this call IS — rides past the params, to the meter (§2)
@@ -73,10 +76,13 @@ export type ModelTransport = (
 ) => Promise<Anthropic.Message>;
 
 /** What the call is FOR, for whoever wraps the transport. Not part of the request — the
- *  provider never sees it; the metering wrapper does (§2: spend, joinable to the log). */
+ *  provider never sees it; the metering wrapper does (§2: spend, joinable to the log), and a
+ *  transport whose wire cannot say the request whole reads what it is for. */
 export interface CallMeta {
   turn_id?: string;
   kind?: CallKind;
+  /** The request's `tool_choice: none` is `abstain` (`StepInput.toolChoice`). */
+  abstain?: true;
 }
 
 /** Build `mu` over a transport. Returns the step function nu calls each invocation. */
@@ -90,7 +96,7 @@ export async function mu(
     max_tokens: input.maxTokens ?? DEFAULT_MAX_TOKENS,
     messages: input.messages,
     tools: input.tools ?? [],
-    ...(input.toolChoice ? { tool_choice: { type: input.toolChoice } } : {}),
+    ...(input.toolChoice ? { tool_choice: { type: "none" } } : {}),
     // modern models reason adaptively (§2); the summary is the log's only view of that
     // reasoning, and it bills the same as the empty block the models return by default
     thinking: { type: "adaptive", display: "summarized" },
@@ -103,6 +109,7 @@ export async function mu(
     message = await transport(params, emit, {
       turn_id: input.turnId,
       kind: input.kind,
+      ...(input.toolChoice === "abstain" ? { abstain: true } : {}),
     }, input.signal);
   } catch (err) {
     // the HTTP status rides along when the failure has one: nu's retry classifies on it

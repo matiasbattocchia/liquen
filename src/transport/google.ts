@@ -18,11 +18,11 @@ import { assemble, type Event, failure, toMessage, toRequest } from "./steps.ts"
 
 /** Wrap a Google client as a `ModelTransport`. */
 export function googleTransport(client: GoogleGenAI): ModelTransport {
-  return async (params, emit, _meta, signal) => {
+  return async (params, emit, meta, signal) => {
     let stream: AsyncIterable<Event>;
     try {
       stream = await client.interactions.create(
-        { ...toRequest(params), stream: true, store: false },
+        { ...toRequest(params, meta), stream: true, store: false },
         signal ? { fetch_options: { signal } } : undefined,
       ) as unknown as AsyncIterable<Event>;
     } catch (err) {

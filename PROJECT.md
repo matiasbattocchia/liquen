@@ -6560,10 +6560,12 @@ window; each probe in a fresh prefix) put it down to two facts of the wire:
 - **`tool_choice: none` takes the tools out of the prompt.** The same checkpoint request
   counted 45,983 input tokens without it and 40,877 with it, and with it read 0 cached
   after thinks that had cached 53K. A request with no tools at all then read 38,809 from
-  the `none` one's entry. The checkpoint now offers the tools as the think does; the lean
-  try, whose window is not the thinks' anyway, and a span cut inside a running turn,
-  mid-loop where a call is the likelier answer, keep `none`. A call in place of the record
-  is a try.
+  the `none` one's entry. A checkpoint now abstains (`toolChoice: abstain`): Anthropic's
+  wire says it with `none`, which keeps the tools in the prompt (the Anthropic orgs'
+  checkpoints read the cache all along), and Gemini's offers the tools with no choice, as
+  the think does. The lean try, whose window is not the thinks' anyway, and a span cut
+  inside a running turn, mid-loop where a call is the likelier answer, forbid the call
+  (`none`). A call in place of the record is a try.
 - **The implicit cache reads back only as far as an earlier request ran.** With the
   think's own tools and choice, a checkpoint cut 9K tokens before the thinks' end read
   12,106 (the system and tools) and one cut 6K before it read 0; after a request that

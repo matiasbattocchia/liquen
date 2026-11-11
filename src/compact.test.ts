@@ -20,6 +20,7 @@ import type {
   ToolUseEvent,
 } from "./types.ts";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { CallMeta } from "./mu.ts";
 import { canned, stepping } from "./testing.ts";
 
 let n = 0;
@@ -567,6 +568,7 @@ const ladder = async (
   tools?: Anthropic.Tool[],
 ) => {
   const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const metas: (CallMeta | undefined)[] = [];
   const out = await buildSummary(
     {
       events,
@@ -579,12 +581,13 @@ const ladder = async (
       prompt: PROMPT,
       ...(tools ? { tools } : {}),
     },
-    stepping((p) => {
+    stepping((p, _emit, meta) => {
       seen.push(p);
+      metas.push(meta);
       return answer();
     }),
   );
-  return { out, seen };
+  return { out, seen, metas };
 };
 
 Deno.test("tries: the checkpoints since the floor that answered without a record", () => {
@@ -641,7 +644,7 @@ Deno.test("buildSummary: a cut or empty record is a try", async () => {
   assertEquals(full.out.parts[0].data.attempt, true);
 });
 
-Deno.test("buildSummary: the first try offers the tools as the think does, a call in place of the record is a try, and the lean try forbids the call", async () => {
+Deno.test("buildSummary: the first try abstains, a call in place of the record is a try, and the lean try forbids the call", async () => {
   const tools: Anthropic.Tool[] = [{ name: "bash", input_schema: { type: "object" } }];
   const events: Event[] = [msg("hacé el informe", false), ...step(1), errorEv("overloaded")];
   const first = await ladder(
@@ -653,14 +656,17 @@ Deno.test("buildSummary: the first try offers the tools as the think does, a cal
       ], "tool_use")),
     tools,
   );
-  // the think's tools and the think's choice: a `none` would change the cached prefix
+  // the think's tools, no call wanted: Anthropic's `none`, which keeps them in the prompt,
+  // and the wire whose `none` drops them reads `abstain`
   assertEquals(first.seen[0].tools, tools);
-  assertEquals(first.seen[0].tool_choice, undefined);
+  assertEquals(first.seen[0].tool_choice, { type: "none" });
+  assertEquals(first.metas[0]?.abstain, true);
   assert(first.out !== null && first.out.type === "error");
   assertEquals(first.out.parts[0].data.attempt, true);
   const lean = await ladder([...events, triedEv("the model called a tool")], undefined, tools);
   assertEquals(lean.seen[0].tools, tools);
   assertEquals(lean.seen[0].tool_choice, { type: "none" });
+  assertEquals(lean.metas[0]?.abstain, undefined);
   assert(lean.out !== null && lean.out.type === "summary");
 });
 

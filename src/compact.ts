@@ -7,8 +7,8 @@
  * CLOSED turns — whole ones: a span ends where a turn ends, or at a step's end inside a
  * turn that died, which nothing continues — published as
  * a `summary` event with `covers: [from, to]`. The call is the think's own request — its
- * tools, offered as the think offers them, its system prefix, the window as render lays it
- * out — cut where the span ends and closing on the instruction: the position is the
+ * tools, offered with no call wanted (`abstain`, mu.ts), its system prefix, the window as
+ * render lays it out — cut where the span ends and closing on the instruction: the position is the
  * boundary, and the model reads the span in the form it works from. The cut is pinned well
  * before the checkpoint is due, and every think marks it, so on Anthropic's wire the span
  * is a cache read. Gemini's implicit cache reads back only as far as an earlier request
@@ -58,10 +58,9 @@ export interface CompactInput {
   /** The prefix the agent's think reads (its instructions, memories, environment): the
    *  checkpoint is written against it, so what the prefix already says is not carried. */
   system?: Anthropic.TextBlockParam[];
-  /** The think's tools, offered as the think offers them: the cached prefix is tools, then
-   *  system, and a tool choice the think never sends changes it (Gemini's `none` takes the
-   *  tools out of the prompt), so only the think's own tools and choice let the checkpoint
-   *  read the think's cache entry. */
+  /** The think's tools, offered with no call wanted (`abstain`): the cached prefix is tools,
+   *  then system, so only the think's own tools, kept in the prompt, let the checkpoint read
+   *  the think's cache entry. */
   tools?: Anthropic.Tool[];
   /** The window as the thinks read it, up to the cut and closing on the instruction
    *  (render.ts `Archive`): byte for byte their messages up to the block every think
@@ -482,9 +481,12 @@ export async function buildSummary(
     effort: lean ? "low" : input.effort,
     maxTokens: summaryCap(input.compactAt, input.keepRecent, input.maxTokens),
     tools: input.tools ?? [],
-    // the call is forbidden where an offered one is the likelier answer, a turn cut while
-    // it runs, and where forbidding it costs no cache read, the lean window
-    ...((lean || span.running) && input.tools?.length ? { toolChoice: "none" as const } : {}),
+    // no call is wanted; it is forbidden outright where an offered one is the likelier
+    // answer, a turn cut while it runs, and where forbidding it costs no cache read, the
+    // lean window
+    ...(input.tools?.length
+      ? { toolChoice: lean || span.running ? "none" as const : "abstain" as const }
+      : {}),
     turnId: input.turnId,
     signal: input.signal,
   });

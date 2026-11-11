@@ -380,7 +380,7 @@ Deno.test("checkpoint: its request opens on the think's prefix — the same tool
   const [think, check] = seen;
   assertEquals(check.tools, think.tools);
   assertEquals(check.system, think.system);
-  assertEquals(check.tool_choice, undefined);
+  assertEquals(check.tool_choice, { type: "none" }); // abstains: the tools stay in the prompt
   assertEquals(think.tool_choice, undefined);
   // and the window: the think's messages through the cut it marked, then the instruction —
   // the request reads the entry the thinks kept warm

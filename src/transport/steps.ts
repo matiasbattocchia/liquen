@@ -27,6 +27,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Interactions } from "@google/genai";
 import type { Effort } from "../types.ts";
+import type { CallMeta } from "../mu.ts";
 
 export type Step = Interactions.Step;
 export type Event = Interactions.InteractionSSEEvent;
@@ -54,7 +55,10 @@ export const THINKING_LEVEL: Record<Effort, Interactions.ThinkingLevel> = {
   max: "high",
 };
 
-export function toRequest(params: Anthropic.MessageCreateParamsNonStreaming): Request {
+export function toRequest(
+  params: Anthropic.MessageCreateParamsNonStreaming,
+  meta?: CallMeta,
+): Request {
   const effort = params.output_config?.effort as Effort | undefined;
   const system = typeof params.system === "string"
     ? params.system
@@ -80,10 +84,10 @@ export function toRequest(params: Anthropic.MessageCreateParamsNonStreaming): Re
       // the wire takes `auto` or `none`; `auto` is the one that returns summaries
       thinking_summaries: "auto",
       ...(effort ? { thinking_level: THINKING_LEVEL[effort] } : {}),
-      // the one choice the harness makes: the tools offered, none called (mu.ts). Under
-      // `none` the API leaves the declarations out of the prompt, so the request's cached
-      // prefix is a toolless one's
-      ...(params.tool_choice?.type === "none" ? { tool_choice: "none" } : {}),
+      // the one choice the harness makes: no call (mu.ts). Under `none` the API leaves the
+      // declarations out of the prompt, so the request's cached prefix is a toolless one's;
+      // a request that abstains keeps them, and with them the think's prefix
+      ...(params.tool_choice?.type === "none" && !meta?.abstain ? { tool_choice: "none" } : {}),
     },
   };
 }
