@@ -120,3 +120,20 @@ Deno.test("reached: an ingest names itself through the edge, and anything else i
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("reached: each check dials afresh, so a connection gone dead carries none into the next", async () => {
+  const ports: number[] = [];
+  const server = Deno.serve({ port: 0, onListen: () => {} }, (_req, info) => {
+    ports.push((info.remoteAddr as Deno.NetAddr).port);
+    return new Response("acme");
+  });
+  const base = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+  try {
+    assertEquals(await reached(ingestAddress(base, "acme"), "acme"), null);
+    assertEquals(await reached(ingestAddress(base, "acme"), "acme"), null);
+    assertEquals(ports.length, 2);
+    assertEquals(new Set(ports).size, 2);
+  } finally {
+    await server.shutdown();
+  }
+});

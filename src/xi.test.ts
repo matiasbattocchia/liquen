@@ -127,6 +127,30 @@ Deno.test("downOn: one shape for every reason, and a connector gone silent outra
   assertEquals(downOn([{ service: "github", address: "github" }], "UTC", now), []);
 });
 
+Deno.test("downOn: silence the machine slept through says nothing until a beat is owed past the wake", () => {
+  // asleep 9:33 to 10:04: the last beats are half an hour old, and nobody was awake to beat
+  const slept = [
+    {
+      service: "whatsapp",
+      address: "549",
+      extra: { state: "connected", heard_at: "2026-11-11T09:33:20Z" },
+    },
+    {
+      service: "google",
+      address: "bo@x.io",
+      extra: { state: "connected", connected_at: "2026-11-11T09:00:00Z" },
+    },
+  ];
+  const woke = Date.parse("2026-11-11T10:04:27Z");
+  assertEquals(downOn(slept, "UTC", Date.parse("2026-11-11T10:04:40Z"), woke), []);
+  // still silent two minutes past the wake: down, since the last beat it gave
+  assertEquals(downOn(slept, "UTC", Date.parse("2026-11-11T10:06:40Z"), woke), [
+    "down — 2 connections:",
+    "· 549 — whatsapp, connector down since 11 Nov 9:33",
+    "· bo@x.io — google, connector down, never heard since 11 Nov 9:00",
+  ]);
+});
+
 Deno.test("gateOf: the default asks for send and for nothing else — bash by rule, not by name", () => {
   const gate = gateOf();
   assertEquals(gate("send", {}), "ask");
