@@ -6512,6 +6512,22 @@ agent acts on the account through Mercado Pago's own CLI, `mpcli`, which reads
   `data-ready` with no file for over twenty minutes — a day's latency at best, so the
   connector leaves transfers out to banks unread. Money received is what it is for.
 
+### The voice speaks the locale's language (2026-11-11) — LANDED
+
+On 10 Nov an agent paying a debt wrote two working notes between calls, in English, and
+both crossed to its principal's self-chat. Its answers to them were in Spanish: the core
+instruction said only "Bare text is your own voice", and the prefix names the locale only
+among the env lines. `10-core` now says the principal reads every line of that voice as it
+is written, in their chat, so it goes in the language the `locale` names, and notes to
+oneself go in the thinking.
+
+The same turn ran a blind dedupe on its memory doc: a checkpoint had folded away the
+unload that appended two entries, and the agent, unsure it had not written them twice,
+ran `awk '!seen[$0]++'` before looking. There were no duplicates; the awk took the header's
+closing `---`, the one line equal to an earlier one, and the agent put it back. A model
+slip, not a harness one; if it recurs, `70-memory` wants a line on looking before
+rewriting.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
