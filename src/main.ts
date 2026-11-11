@@ -74,6 +74,7 @@ import { openCloudflareSandbox, openLocalSandbox, type SessionUpdate } from "./s
 import { whatsappContact } from "./connect/whatsapp/contact.ts";
 import { whatsappRooms } from "./connect/whatsapp/rooms.ts";
 import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
+import { machine } from "./awake.ts";
 import { slackRooms } from "./connect/slack/rooms.ts";
 import { slackTokenFor } from "./connect/slack/dispatch.ts";
 import { teamsRooms } from "./connect/microsoft/rooms.ts";
@@ -726,6 +727,7 @@ export async function start(
   };
   let beating: Promise<unknown> | undefined;
   const ticker = setInterval(() => {
+    machine.look(); // a wake is stamped within a tick even when no turn reads it (awake.ts)
     beating ??= tick(log, clock)
       .then(
         (beat) => {

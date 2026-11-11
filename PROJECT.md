@@ -6610,6 +6610,27 @@ against a turn's $0.10–0.79.
   A failed checkpoint try writes no summary, so its call has no turn to join and stands
   as its own row.
 
+### A suspend is no outage (2026-11-11) — LANDED
+
+On 11 Nov the laptop running `new` slept from 9:33 to 10:04. Thirteen seconds after it
+woke, a turn's anchor read every row's last beat as half an hour old and listed all
+three connections as `connector down since 9:33`; the agent told its principal so. Then
+Mercado Pago's own probe of its public ingest timed out every beat from 10:05 on, while
+the same address answered a shell in 0.3s and the tunnel had re-registered at 10:04:31:
+`tunnel down`, for as long as that process lived.
+
+- **Silence counts from the wake.** `awake.ts` compares the wall clock with the monotonic
+  one, whose gap grows only while the machine sleeps; a gap grown past `SLEPT_MS` stamps
+  a wake. `downOn` counts a row's silence from the later of its last beat and the wake
+  (or the process's start), so a connector still silent two minutes past either reads
+  down, since its last beat as before. A read looks first; the clock's tick looks too.
+- **Each probe dials afresh.** `reached` fetches on a client of its own and closes it.
+  The wedged probe is read as a pooled connection the suspend left dead, which every later
+  fetch reused into the 10s timeout; the live process was not probed to confirm it.
+
+Open: the turn that said so took five minutes, 10:04:40 to 10:09:49, likely a model call
+on the same dead network; how long the SDK waits before it gives up is not traced.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

@@ -70,6 +70,7 @@ import {
   type Resolve,
 } from "./describe.ts";
 import { PROCESSOR_TIMEOUT_MS } from "./processors.ts";
+import { machine } from "./awake.ts";
 import type { Appender, Reader } from "./store/log.ts";
 import type { AgentRow, Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
@@ -1305,7 +1306,7 @@ async function think(
   const org = await company(config, ports);
   const ambient = [
     ...(ports.ambient ? await ports.ambient() : []),
-    ...downOn(surfaces, config.timezone),
+    ...downOn(surfaces, config.timezone, Date.now(), machine.since()),
     ...(await dayOn(config, ports, cascade, docs)),
     ...waitingOn(
       await ports.log.gates({ agentId: config.agentId, sessionId: config.sessionId }),
@@ -1561,19 +1562,24 @@ async function company(
  *  every surface is up. No handle — nothing in the model's hands acts on it; the principal
  *  re-pairs or re-grants. Named the way every line is: the account's name, its address only
  *  when it has none — the prefix's `connections:` line is where the address and whose
- *  voice it is are stated. */
-export function downOn(surfaces: ConnectionRow[], zone?: string, now = Date.now()): string[] {
+ *  voice it is are stated. Silence counts from `awake` at the earliest (`awake.ts`): a
+ *  machine that slept, or a harness that was not running, heard nothing because nobody
+ *  was there to beat, the connectors included. */
+export function downOn(
+  surfaces: ConnectionRow[],
+  zone?: string,
+  now = Date.now(),
+  awake = 0,
+): string[] {
   const words = (state: string) => state.replaceAll("_", " ");
+  const silent = (since: string) => now - Math.max(Date.parse(since), awake) > SILENT_AFTER_MS;
   const down = surfaces.flatMap((c) => {
     const heard = c.extra?.heard_at;
-    if (typeof heard === "string" && now - Date.parse(heard) > SILENT_AFTER_MS) {
+    if (typeof heard === "string" && silent(heard)) {
       return [{ c, said: words("connector_down"), since: heard }];
     }
     const linked = c.extra?.connected_at;
-    if (
-      heard === undefined && typeof linked === "string" &&
-      now - Date.parse(linked) > SILENT_AFTER_MS
-    ) {
+    if (heard === undefined && typeof linked === "string" && silent(linked)) {
       return [{ c, said: `${words("connector_down")}, never heard`, since: linked }];
     }
     // the path the service pushes over is down: the account's own word waits behind it

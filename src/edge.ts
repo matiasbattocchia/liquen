@@ -122,15 +122,19 @@ export function createEdge(root: string): (req: Request) => Promise<Response> {
  *  root (`serveIngest`), so a tunnel that is down, aimed at another port or in front of
  *  another org each answer with something else. Null when it does; else what it said. */
 export async function reached(address: string, service: string): Promise<string | null> {
-  let res: Response;
+  // a client of its own, closed after: a pooled connection the network dropped under it,
+  // as a suspend does, would otherwise carry every later check into the same timeout
+  const client = Deno.createHttpClient({});
   try {
-    res = await fetch(address, { signal: AbortSignal.timeout(REACH_TIMEOUT_MS) });
+    const res = await fetch(address, { client, signal: AbortSignal.timeout(REACH_TIMEOUT_MS) });
+    const said = (await res.text()).trim();
+    if (res.ok && said === service) return null;
+    return `HTTP ${res.status}${said ? ` "${said.slice(0, 80)}"` : ""}`;
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
+  } finally {
+    client.close();
   }
-  const said = (await res.text()).trim();
-  if (res.ok && said === service) return null;
-  return `HTTP ${res.status}${said ? ` "${said.slice(0, 80)}"` : ""}`;
 }
 const REACH_TIMEOUT_MS = 10_000;
 

@@ -11,9 +11,10 @@
  *
  * The heartbeat is what a connector says by being there: every `HEARD_EVERY_MS` it stamps
  * `extra.heard_at` on its service's live rows, and the anchor reads a row unstamped for
- * `SILENT_AFTER_MS` as `connector_down` since the last stamp. Nothing else can say it —
- * the supervisor never opens the log, and a dead process says nothing. The first beat
- * waits one interval, so a connector that dies at boot over and over never stamps.
+ * `SILENT_AFTER_MS` of the machine's waking time (`awake.ts`) as `connector_down` since the
+ * last stamp. Nothing else can say it — the supervisor never opens the log, and a dead
+ * process says nothing. The first beat waits one interval, so a connector that dies at
+ * boot over and over never stamps.
  *
  * A connector the service pushes to over the internet also checks, each beat, that its
  * own public address answers as it (`reached`, edge.ts) — the path the service dials,

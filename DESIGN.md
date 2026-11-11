@@ -1825,12 +1825,16 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   opens the log and a dead process says nothing, so the silence is the signal. A row its
   door linked (`connected_at`) two minutes ago or more, and never stamped, reads
   `connector down, never heard` since the link: a connector that dies before its first
-  beat shows as one that stopped beating does. It outranks the row's own word, which
-  nobody is there to keep true. Next comes the path a
-  pushed service dials (GitHub's webhooks, Graph's Teams notifications): its connector
-  fetches its own public ingest each beat, and three misses in a row put `tunnel_down` on
-  its rows, or `edge_down` when this machine's edge does not answer either
-  (`extra.inbound`, stamped `inbound_at`); the first answer takes it off. It sits beside
+  beat shows as one that stopped beating does. The silence counts from the harness's own
+  start or the machine's last wake at the earliest (`awake.ts`): a suspend stops every
+  process at once, the reader included, so a beat it slept through is no beat missed.
+  `connector_down` outranks the row's own word, which nobody is there to keep true. Next
+  comes the path a pushed service dials (GitHub's webhooks, Graph's Teams notifications):
+  its connector fetches its own public ingest each beat, on a connection of its own each
+  time, so one the network dropped under it never wedges the next, and three misses in a
+  row put `tunnel_down` on its rows, or `edge_down` when this machine's edge does not
+  answer either (`extra.inbound`, stamped `inbound_at`); the first answer takes it off.
+  It sits beside
   the row's word rather than in it, since it says nothing of the account. Its line is
   `· <name> — <service>, <state> since <stamp>`: every item in the block is named the
   same way, by the name the service shows and by the address only when there is none. Better than Claude Code's session-start env snapshot: we re-render
