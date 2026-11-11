@@ -4,6 +4,8 @@ import {
   compactionSpan,
   overflowed,
   pinnedCut,
+  RUNAWAY,
+  runaway,
   summaryCap,
   tries,
   turnOver,
@@ -317,7 +319,7 @@ const errorEv = (error: string): Event => ({
   parts: [{ type: "data", kind: "error", data: { error } }],
 });
 
-Deno.test("span: a running turn is never cut, whatever it weighs — not even its closed history", () => {
+Deno.test("span: a running turn is never cut short of a runaway — not even its closed history", () => {
   // a thinking block's signature binds everything its request held before it, and a
   // summary lands at the head of the window: written now, it would sit under every block
   // the turn replays on its next request (measured: `thinking_dropped … prefix_binding_
@@ -328,7 +330,10 @@ Deno.test("span: a running turn is never cut, whatever it weighs — not even it
     msg("hacé el informe", false),
   ];
   for (let k = 1; k <= 8; k++) events.push(...step(k));
-  assertEquals(compactionSpan(events, SESSION, 1, 0), null);
+  // over compactAt, and within RUNAWAY times it
+  const heavy = Math.ceil(estTokens(events) / RUNAWAY);
+  assertEquals(runaway(events, SESSION, heavy), false);
+  assertEquals(compactionSpan(events, SESSION, heavy, 1), null);
   assertEquals(turnOver(events, SESSION), false);
   // the moment it closes, the same window compacts — and the whole turn is closed history:
   // a span whose weight falls inside it takes it whole, through the closing
@@ -438,6 +443,61 @@ Deno.test("span: a dead turn is cut at a step's end, and leaves keepRecent like 
   const partial = compactionSpan(waiting, SESSION, 1, 0);
   assert(partial !== null);
   assert(!partial.covered.some((e) => e.payload?.turn_id === "T9"));
+});
+
+Deno.test("span: a turn that ran away is cut at a step's end, leaves keepRecent, and never folds what it has not read", () => {
+  const events: Event[] = [
+    msg("uno", false),
+    msg("respuesta uno", true),
+    msg("hacé el informe", false),
+  ];
+  for (let k = 1; k <= 20; k++) events.push(...step(k));
+  const light = Math.floor(estTokens(events) / RUNAWAY) - 1; // RUNAWAY times over it
+  const keepRecent = estTokens(events.slice(-3)); // the last step
+  assert(keepRecent < light);
+  assertEquals(runaway(events, SESSION, light), true);
+  const span = compactionSpan(events, SESSION, light, keepRecent);
+  assert(span !== null);
+  assertEquals(span.running, true);
+  const last = span.covered.at(-1)!;
+  assertEquals(last.type, "tool_result"); // a step's end
+  assert(events.slice(events.indexOf(last) + 1).some((e) => e.type === "tool_use")); // kept
+  // a line that landed while the last step ran is input the turn has not read: it stays out
+  const ninth = use("T9", "step 9");
+  const landed = msg("¿y el informe?", false);
+  const late = [...events, think("T9"), ninth, landed, result("T9", ninth.id, "out 9")];
+  const unread = compactionSpan(late, SESSION, light, 0);
+  assert(unread !== null);
+  assert(!unread.covered.includes(landed));
+  // a call still waiting for its result: the step is not whole, nothing is cut
+  const waiting = [...events, think("T9"), use("T9", "step 9")];
+  assertEquals(runaway(waiting, SESSION, light), false);
+  assertEquals(compactionSpan(waiting, SESSION, light, keepRecent), null);
+});
+
+Deno.test("render: behind a checkpoint written inside the turn, its steps are narration and the steps after it keep their thinking", () => {
+  const events: Event[] = [msg("hacé el informe", false)];
+  for (let k = 1; k <= 3; k++) events.push(...step(k));
+  const floor = summaryEv([events[0].id, events[3].id], "## Open\n- informe"); // step 1
+  floor.payload = { ...floor.payload, running: true };
+  const after = step(4); // written after the record, against its prefix
+  const draw = (record: SummaryEvent) =>
+    JSON.stringify(
+      render({
+        events: [record, ...events.slice(4), ...after],
+        docs: [],
+        session: SESSION,
+        now: "2026-07-20T10:05:00Z",
+      }).messages,
+    );
+  const drawn = draw(floor);
+  assertStringIncludes(drawn, '<system kind=\\"tool_result\\">bash(step 2) → out 2</system>');
+  assert(!drawn.includes('"command":"step 2"'), drawn); // step 2 is no call
+  assertStringIncludes(drawn, '"tool_use"'); // step 4 is
+  assertStringIncludes(drawn, '"thinking"');
+  // a record written between turns leaves a live turn's calls as calls
+  const between = { ...floor, payload: { covers: floor.payload.covers } } as SummaryEvent;
+  assertStringIncludes(draw(between), '"name":"bash","input":{"command":"step 2"}');
 });
 
 Deno.test("render: behind the checkpoint, a dead turn's steps are told as narration — no open call goes out without its thinking", () => {

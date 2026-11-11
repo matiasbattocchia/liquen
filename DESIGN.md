@@ -793,7 +793,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `thinking` | **model → assistant** | **assistant** *(live turn only; dropped after)* | ignore | parts(data:{thinking,signature}) · payload{turn_id} |
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; `<permission_response re verdict>` in the session room — the ask itself draws nothing, its `pending_approval` result carries the handle | act on an allow; think on the principal's deny; a lapse wakes nobody | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
-| `summary` | nu, in the idle gap after a turn (§5) | leading text block (§5) | look again (idle, or the think a dead turn left owed) | parts(text) · payload{covers} |
+| `summary` | nu, in the idle gap after a turn, or inside a turn that ran away (§5) | leading text block (§5) | look again (idle, the think a dead turn left owed, or the running turn's next step) | parts(text) · payload{covers, running?} |
 | `alarm` | the clock, firing a timer row (§10) · task (stall-retry) · xi, raising an unload in the idle gap (§5) | `<system kind="alarm">` carrying the note; an unload's `<system kind="unload" since="…">` | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} · extra{timer} or extra{unload: {since, through}} |
 | `error` | nu · xi · the checkpoint · the mirror | **system** + Stream | ignore | parts(data:{error}) · extra{consumed} — what a failed request read (the model's, a checkpoint's) · payload{ref_id} — the call a word is said of, or the line that settled no card |
 | `delta` | main (presence, §9): the mind has started a kind of work | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint · working}) |
@@ -1885,8 +1885,13 @@ layer**:
   window: written while a turn runs — even over closed history only — it sits under every
   block the turn replays, and the API drops them all, on every step to the turn's end
   (measured 2026-09-26: nine blocks a request, for the last hundred seconds of a five-minute
-  turn). So the span is null while the trailing chain is live, whatever the window weighs,
-  and `compactAt` is a soft budget: a window over it waits for the turn to end. And the
+  turn). So the span is null while the trailing chain is live, and `compactAt` is a soft
+  budget: a window over it waits for the turn to end — until the turn **runs away**, its
+  window more than `RUNAWAY` (10) times `compactAt` with its last step whole. Then the
+  checkpoint is written inside the turn, cut at a step's end below any line the turn has
+  not read, and the record carries `running`: the turn's steps it leaves render behind it
+  as narration, as a dead turn's do (below), and the steps after it are signed over the
+  new prefix, so no block is dropped. And the
   verdict comes after every other derivation — pending calls, a continuation, an unclosed
   chain, unanswered news — so input never waits behind a checkpoint: a wish arriving over a
   heavy window is answered first, and the gap after that answer compacts. The one hard

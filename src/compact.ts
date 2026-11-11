@@ -16,11 +16,14 @@
  * no call, as the stretch `search` reads back. Iterative: a later compaction folds the previous summary in (pi's update rule), and
  * `covers` chains from the previous summary's start so survivors get re-covered.
  *
- * A checkpoint runs only BETWEEN turns (§5): a thinking block's signature binds everything
- * its request held before it, and a summary lands at the head of the window, so one written
+ * A checkpoint runs BETWEEN turns (§5): a thinking block's signature binds everything its
+ * request held before it, and a summary lands at the head of the window, so one written
  * while a turn runs changes the prefix under every thinking block the turn replays. The
- * span is therefore null while a turn is running, whatever the window weighs; `decide`
- * asks for it only once the turn is over (its closing, or the error or cancel that ended it).
+ * span is therefore null while a turn is running, until the turn runs away: a window
+ * `RUNAWAY` times over `compactAt`, its last step whole. Then the checkpoint is written
+ * inside the turn, cut at a step's end, and the record says so (`running`): the turn's
+ * steps it leaves uncovered render behind it as narration, as a dead turn's do, and the
+ * steps after it are signed over the new prefix.
  *
  * The call itself comes from nu, as a `StepCall`: nu owns the retry ladder and the stream,
  * so the checkpoint is attempted exactly like a think and streams like one. A checkpoint
@@ -110,6 +113,27 @@ export function turnOver(events: Event[], session: Session): boolean {
   );
 }
 
+/** How many times over `compactAt` a running turn's window may weigh before a checkpoint
+ *  is written inside it (`runaway`). */
+export const RUNAWAY = 10;
+
+/** The turn the window ends on is still running, its window weighs more than `RUNAWAY`
+ *  times `compactAt`, and its last step is whole — every call answered — so a cut can
+ *  fall at that step's end. */
+export function runaway(
+  events: Event[],
+  session: Session,
+  compactAt = DEFAULT_COMPACT_AT,
+): boolean {
+  events = applySummary(events);
+  if (turnOver(events, session)) return false;
+  if (weightOf(events, session) <= compactAt * RUNAWAY) return false;
+  const answered = new Set(
+    events.filter((e) => e.type === "tool_result").map((e) => e.payload.ref_id),
+  );
+  return events.every((e) => e.type !== "tool_use" || !ownVoice(e, session) || answered.has(e.id));
+}
+
 /** Nothing continues the turn the window ends on: a terminal error, or a cut standing. */
 function dead(events: Event[], session: Session): boolean {
   return events.at(-1)?.type === "error" || cutStands(events, session);
@@ -194,13 +218,14 @@ function stepEnds(events: Event[], session: Session): (i: number) => boolean {
 const weightOf = (es: Event[], session: Session) => estTokens(es) + mediaTokens(es, session);
 
 /** Decide the covered span: everything up to the cut (`cutIndex`). Null ⇒ nothing to do:
- *  under the threshold, a turn still running, or nothing coverable yet. */
+ *  under the threshold, a turn still running short of `runaway`, or nothing coverable yet.
+ *  `running` ⇒ the span was cut inside the turn the window ends on. */
 export function compactionSpan(
   events: Event[],
   session: Session,
   compactAt = DEFAULT_COMPACT_AT,
   keepRecent = DEFAULT_KEEP_RECENT,
-): { covered: Event[]; covers: [string, string] } | null {
+): { covered: Event[]; covers: [string, string]; running?: true } | null {
   // measure and span the VISIBLE window (latest summary applied): the read starts at the
   // floor's covered end, so an older checkpoint the floor folded in can still be in it.
   // Chaining survives: the summary sits first in the visible window, so a new span covers
@@ -208,9 +233,10 @@ export function compactionSpan(
   events = applySummary(events);
   // the ceiling that counts is the API's: a window it refused shrinks whatever it estimates
   if (weightOf(events, session) <= compactAt && !overflowed(events)) return null;
-  // never under a running turn (see the header): its replayed thinking is bound to the
-  // prefix as it stands
-  if (!turnOver(events, session)) return null;
+  // never under a running turn short of a runaway (see the header): its replayed thinking
+  // is bound to the prefix as it stands
+  const running = !turnOver(events, session);
+  if (running && !runaway(events, session, compactAt)) return null;
   const cut = cutIndex(events, session, compactAt, keepRecent, true);
   if (cut < 0) return null; // everything is recent, or nothing has ended — nothing coverable yet
   const covered = events.slice(0, cut + 1);
@@ -221,7 +247,7 @@ export function compactionSpan(
   // survivors are re-covered here, so the chain never breaks) to the newest event folded in
   const from = chain ? chain.payload.covers[0] : content[0].id;
   const to = content.reduce((m, e) => e.id > m ? e.id : m, content[0].id);
-  return { covered, covers: [from, to] };
+  return { covered, covers: [from, to], ...(running ? { running } : {}) };
 }
 
 /** The pinned cut (§5): the last event of the span the next checkpoint will cover, once the
@@ -243,8 +269,8 @@ export function pinnedCut(
  * PINNED: a turn end past a multiple of `compactAt − keepRecent`, so it stands still while
  * the window grows behind it, and every think from then on marks the same block. A
  * checkpoint due at `compactAt` leaves about `keepRecent` uncovered. `due` is the
- * checkpoint asking: a dead turn's steps are then cuts too, and a window with no pin yet
- * (one turn heavier than the span) cuts where the keep-recent tail allows.
+ * checkpoint asking: a dead or runaway turn's steps are then cuts too, and a window with no
+ * pin yet (one turn heavier than the span) cuts where the keep-recent tail allows.
  */
 function cutIndex(
   events: Event[],
@@ -275,14 +301,18 @@ function cutIndex(
   // too, and nothing continues it, so when the checkpoint asks, the cut may also fall at
   // the end of any of its steps: it leaves `keepRecent` like any window, and the steps it
   // leaves draw as narration behind the record (render.ts `deadSteps`), their thinking gone
-  // with the prefix it was bound to.
+  // with the prefix it was bound to. A RUNAWAY turn is cut the same way, and the input
+  // that landed since its last step's request opened is input still: the cut stays below it.
   const ended = due && dead(events, session);
+  const ranAway = due && !ended && runaway(events, session, compactAt);
   const safe = cutPoints(events);
   const ends = turnEnds(events, session);
   const steps = stepEnds(events, session);
   const cuttable = (c: number) =>
-    safe.has(c) && (c <= boundary ? ends(c) : ended && (ends(c) || steps(c)));
-  const firstDeferred = events.findIndex((e) => deferred.has(e));
+    safe.has(c) && (c <= boundary ? ends(c) : (ended || ranAway) && (ends(c) || steps(c)));
+  const firstDeferred = events.findIndex((e) =>
+    deferred.has(e) || (ranAway && unreadInTurn(events, session).has(e))
+  );
   const limit = firstDeferred === -1 ? events.length : firstDeferred;
   // the pins: the first turn end past each multiple of the span's weight, the summary the
   // window opens on weighing with it. The cut is the latest pin the window's weight has
@@ -313,6 +343,17 @@ function cutIndex(
   // — is covered whole: no think reads it until it shrinks
   if (ended) { for (let c = limit - 1; c >= 0; c--) if (cuttable(c)) return c; }
   return -1;
+}
+
+/** The world messages a running turn has not read yet: those that landed since its last
+ *  step's request opened (the step's first row), in flight or after. */
+function unreadInTurn(events: Event[], session: Session): Set<Event> {
+  const last = events.findLast((e) => e.type === "tool_use" && ownVoice(e, session));
+  if (!last) return new Set();
+  const opened = events.findIndex((e) => e.payload?.turn_id === last.payload?.turn_id);
+  return new Set(
+    events.slice(opened + 1).filter((e) => e.type === "message" && !ownVoice(e, session)),
+  );
 }
 
 /** How many checkpoints since the floor made their call and got no record from it (the
@@ -389,7 +430,11 @@ export async function buildSummary(
       connection_address: LOCAL_CONNECTION,
       conversation: { address: input.session.conversation },
     },
-    payload: { covers: span.covers, ...(input.turnId ? { turn_id: input.turnId } : {}) },
+    payload: {
+      covers: span.covers,
+      ...(input.turnId ? { turn_id: input.turnId } : {}),
+      ...(span.running ? { running: true as const } : {}),
+    },
     parts: [{ type: "text", kind: "text", text }],
   });
   const tried = tries(input.events);

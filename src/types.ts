@@ -642,7 +642,9 @@ export interface PermissionResponseEvent extends EventBase {
 export interface SummaryEvent extends EventBase {
   type: "summary";
   parts: TextPart[];
-  payload: Payload & { covers: [EventId, EventId] };
+  /** `running`: written inside a turn that ran away (compact.ts `runaway`), cut at a
+   *  step's end. */
+  payload: Payload & { covers: [EventId, EventId]; running?: true };
 }
 
 /**

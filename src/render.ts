@@ -1389,8 +1389,12 @@ function renderMessages(
   // A dead turn never closed, so its last call stands open, and both wires want an open
   // call's thinking beside it (Gemini refuses the cycle without its thought's signature).
   // Behind the checkpoint that thinking is gone, so the dead turn's steps there are told as
-  // narration, one line a call; a lean archive tells every step so, clipped.
-  const dead = checkpoint ? deadSteps(events, session) : new Set<string>();
+  // narration, one line a call; a lean archive tells every step so, clipped. A turn the
+  // checkpoint was written inside is told the same way: its calls behind the record are
+  // still the running turn's, and their thinking went with the prefix.
+  const dead = checkpoint
+    ? new Set([...deadSteps(events, session), ...runningSteps(events, session, checkpoint)])
+    : new Set<string>();
   const narrated = (e: Event) =>
     archive?.lean === true || (!signed(e) && dead.has(e.payload?.turn_id as string));
 
@@ -2372,6 +2376,19 @@ function told(e: ToolResultEvent, use?: ToolUseEvent, max = 0): string {
  *  continuation's advisory aside, which the turn goes on from) or the principal's cancel
  *  came before any closing message. */
 function deadSteps(events: Event[], session: Session): Set<string> {
+  return walkSteps(events, session).dead;
+}
+
+/** The tool steps of the turn a checkpoint was written inside (`running`, compact.ts
+ *  `runaway`): those still open in the log as it stood when the checkpoint landed. */
+function runningSteps(events: Event[], session: Session, checkpoint: SummaryEvent): string[] {
+  if (checkpoint.payload.running !== true) return [];
+  return walkSteps(events.filter((e) => e.id < checkpoint.id), session).open;
+}
+
+/** The session's tool steps, walked in log order: those of turns that died, and those of the
+ *  turn still open at the end. */
+function walkSteps(events: Event[], session: Session): { dead: Set<string>; open: string[] } {
   const tools = new Set(
     events.filter((e) => e.type === "tool_use").map((e) => e.payload?.turn_id),
   );
@@ -2394,7 +2411,7 @@ function deadSteps(events: Event[], session: Session): Set<string> {
       open = [];
     }
   }
-  return dead;
+  return { dead, open };
 }
 
 /** A script's call, or its answer (`Extra.bash`): the id of the bash call whose script made

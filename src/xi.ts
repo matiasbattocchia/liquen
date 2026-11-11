@@ -149,7 +149,7 @@ import {
 // ownVoice (§3) tells the model's output from EVERYTHING else — including its own
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { checkpoint, type ModelTransport, nu, type TurnConfig } from "./nu.ts";
-import { compactionSpan, overflowed, tooLong } from "./compact.ts";
+import { compactionSpan, overflowed, runaway, tooLong } from "./compact.ts";
 import { foldsUnread, unloadNotice, unloadSpan } from "./unload.ts";
 
 /* ── the poke, the class filter, and the owed-derivation ──────────────── */
@@ -249,7 +249,13 @@ export function decide(
   const idle = (patient: boolean): Decision => gap(events, session, wake, patient);
   if (justFailed(events)) return idle(false); // idle-after-error
   if (cutStands(events, session)) return idle(false); // the principal cut it: idle until news
-  if (unclosedChain(events, session)) return "think";
+  // a turn that ran away (compact.ts `runaway`) is checkpointed at its last step's end, when
+  // the window holds a cut, and the record's insert is the look that thinks on
+  if (unclosedChain(events, session)) {
+    const due = runaway(events, session, wake.compactAt) &&
+      compactionSpan(events, session, wake.compactAt, wake.keepRecent) !== null;
+    return due ? "compact" : "think";
+  }
   const v = attention(events, session, wake, now);
   return v === "ignore" ? idle(true) : v;
 }

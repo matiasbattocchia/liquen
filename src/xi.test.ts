@@ -18,6 +18,7 @@ import {
 import type { Draft, Envelope, Event, Session, ToolUseEvent } from "./types.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { estTokens } from "./render.ts";
+import { RUNAWAY } from "./compact.ts";
 import { localFiles } from "./store/media.ts";
 import { fileStorage } from "./store/storage.ts";
 import { parseDirect } from "./session.ts";
@@ -491,7 +492,12 @@ Deno.test("decide: nothing owed and the window over budget → unload, then comp
 Deno.test("decide: input never waits for a checkpoint — and a running turn is never cut", () => {
   assertEquals(decideOver([peerMsg(), selfMsg(), peerMsg()]), "think"); // input first
   assertEquals(decideOver([peerMsg(), use("u1")]), "act"); // its call first
-  assertEquals(decideOver([peerMsg(), use("u1"), result("u1")]), "think"); // its closing first
+  const chain = [peerMsg(), use("u1"), result("u1")];
+  const short: Wake = { compactAt: Math.ceil(estTokens(chain) / RUNAWAY), keepRecent: 0 };
+  assertEquals(decide(chain, SESSION, short), "think"); // its closing first
+  // …until the turn runs away: its last step whole, it is checkpointed where it stands
+  assertEquals(decideOver(chain), "compact");
+  assertEquals(decideOver([peerMsg(), use("u1")]), "act");
   assertEquals(
     decideOver([peerMsg(), selfMsg(), peerMsg(), use("u1"), result("u1"), selfMsg()]),
     "unload",

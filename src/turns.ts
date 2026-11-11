@@ -205,9 +205,10 @@ export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
     const step = stepOf(e, ref);
     if (step !== undefined) {
       if (e.type === "summary") {
-        // a checkpoint is written in the idle gap: it follows the turn that just ended
+        // a checkpoint is written in the idle gap, and follows the turn that just ended; one
+        // written inside a turn that ran away is that turn's
         const last = turns.at(-1);
-        if (last && last !== open) {
+        if (last && (last !== open || e.payload.running === true)) {
           last.checkpoint = { id: e.id, ts: e.ts, turn_id: step, tokens: zero() };
         }
         continue;

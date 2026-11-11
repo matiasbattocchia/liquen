@@ -6528,6 +6528,27 @@ closing `---`, the one line equal to an earlier one, and the agent put it back. 
 slip, not a harness one; if it recurs, `70-memory` wants a line on looking before
 rewriting.
 
+### A turn that runs away is checkpointed inside, at a step's end (2026-11-11) — LANDED
+
+A checkpoint waited for the turn to end, so one long turn grew its window unbounded: a
+production agent reading its own logs back at 50–250 KB a read ran a turn of 72 steps
+and an hour and forty minutes, its window near Gemini's 1M ceiling, every step re-sending
+all of it.
+
+- **`RUNAWAY` = 10.** A running turn whose visible window weighs more than ten times
+  `compactAt`, its last step whole (every call answered), is checkpointed where it stands:
+  `decide` answers `compact` instead of `think`, and the record's insert is the look that
+  thinks on. Short of that, a checkpoint still waits for the turn to end.
+- **The cut falls at a step's end**, as a dead turn's does, leaves `keepRecent`, and stays
+  below any world line that landed since the last step's request opened: the turn has not
+  read it.
+- **The record says so** (`payload.running`). The turn's steps it leaves uncovered render
+  behind it as narration, one `<system kind="tool_result">` line a call, as a dead turn's
+  do: their thinking went with the prefix, and the API wants a live turn's calls beside
+  theirs. The steps written after the record are signed over the new prefix and replay
+  whole.
+- **`liquen log turns`** puts such a record on the turn it was written inside.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

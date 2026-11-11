@@ -94,8 +94,10 @@ export const DEFAULT_PRESENCE: PresenceLevel = "waiting";
 // What moves it is less world traffic reaching the window at all.
 export const DEFAULT_COMPACT_AT = 50_000;
 export const DEFAULT_KEEP_RECENT = 20_000; // est. tokens a checkpoint leaves uncovered
-// A checkpoint runs only between turns, in an idle gap, so `compactAt` is a soft budget: a
-// window over it waits for the turn to end, and input never waits for a checkpoint. The
+// A checkpoint runs between turns, in an idle gap, so `compactAt` is a soft budget: a
+// window over it waits for the turn to end, and input never waits for a checkpoint. A turn
+// whose window outgrows it ten times over is checkpointed inside, at a step's end
+// (compact.ts `runaway`). The
 // one hard ceiling is the API's own: a request it refuses as too long is compacted before
 // the next think, whatever the estimate says (compact.ts `overflowed`).
 //
@@ -377,7 +379,8 @@ const AGENT: Entry[] = [
     key: "compactAt",
     value: DEFAULT_COMPACT_AT,
     doc: "est. tokens of raw event JSON and the pictures it inlines before a checkpoint " +
-      "runs, between turns; input never waits for one. Also the most a run of world lines between " +
+      "runs, between turns, or inside a turn ten times over it; input never waits for one. " +
+      "Also the most a run of world lines between " +
       "two turns may weigh in the prompt: past it, its rooms share it equally, newest lines " +
       "first, and the rest is left for search",
   },
