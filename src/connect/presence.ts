@@ -12,11 +12,18 @@
  * mind excludes the event by type — it renders nowhere, is not news, wakes nothing, and
  * `search` never finds it — so the mind never reads back a word it did not say.
  *
- * Three questions are this module's own:
+ * Four questions are this module's own:
  *
- *   - **WHAT** — the agent's `presence` level. `off` says nothing. `waiting` says each kind
- *     of work: thinking, compacting, and working, the model writing a call. `tools` leaves
- *     working to the calls themselves, which the mirror crosses by name.
+ *   - **WHAT** — the agent's `presence` level. `off` says nothing. `waiting` and `tools`
+ *     say thinking and compacting. The calls are the mirror's: each crosses as it lands,
+ *     as `[agent working...]` at `waiting` and by name at `tools`.
+ *   - **FOR WHOM** — work somebody asked for (`Cause`): the principal's word, or the
+ *     harness's own request. A stretch the world woke, a stranger's line in some group,
+ *     says nothing on the principal's surface. The cause belongs to the stretch, not the
+ *     turn: the unload and the checkpoint that follow a turn are its tail, and say what
+ *     it would have said however long they run. A word the principal speaks mid-stretch
+ *     makes it theirs, and what is running is said at once: that is when they wonder why
+ *     the answer is late.
  *   - **WHETHER** — only the mind's own session, and only while a surface of the agent's is
  *     bound: a fact nobody can hear is not worth a row.
  *   - **HOW OFTEN** — once per kind per turn.
@@ -24,7 +31,7 @@
 
 import { LOCAL_CONNECTION, MIND, sessionAddress } from "../session.ts";
 import type { AliasRow } from "../store/connections.ts";
-import type { Delta, DeltaEvent, DeltaKind, Draft, PresenceLevel } from "../types.ts";
+import type { Cause, Delta, DeltaEvent, DeltaKind, Draft, PresenceLevel } from "../types.ts";
 
 export interface PresenceDeps {
   /** The mirror's surfaces, live — read through, so a binding granted while the org runs
@@ -37,52 +44,74 @@ export interface PresenceDeps {
   onError?: (err: unknown) => void;
 }
 
-/** What main tells presence — the same two facts it hands the doors. */
+/** What main tells presence: each decision with its cause, the stream's deltas, and the
+ *  principal's word as it lands in the mind's room. The mirror asks it whether a stretch
+ *  was asked for. */
 export interface Presence {
-  status(agentId: string, sessionId: string, status: "busy" | "idle"): void;
+  status(agentId: string, sessionId: string, status: "busy" | "idle", cause?: Cause): void;
   delta(agentId: string, sessionId: string, delta: Delta): void;
+  heard(agentId: string): void;
+  asked(agentId: string): boolean;
 }
 
-/** The word a stream delta is at a level, if any: a `tool` delta is the model writing a
- *  call, which `tools` leaves to the call's own line. */
+/** The word a stream delta is at a level, if any. */
 export function presenceKind(kind: Delta["kind"], level: PresenceLevel): DeltaKind | undefined {
   if (level === "off") return undefined;
   if (kind === "thinking" || kind === "checkpoint") return kind;
-  if (kind === "tool" && level === "waiting") return "working";
+}
+
+/** An open turn: what it has said, and the work it is doing now, said or not. */
+interface Turn {
+  told: Set<DeltaKind>;
+  doing?: DeltaKind;
 }
 
 /**
  * Wire presence to the log.
  *
- * A busy edge MERGES rather than replaces — main discloses on every decision, so one turn
- * can announce itself more than once, and a fresh set would say `[agent thinking...]`
- * twice. The idle closes the turn; the next busy opens a new one, free to speak again.
+ * A busy decision MERGES rather than replaces — main discloses on every decision, so one
+ * turn can announce itself more than once, and a fresh set would say `[agent thinking...]`
+ * twice. The idle closes the turn; the next busy opens a new one, free to speak again. The
+ * cause outlives the idle: the tail that follows a turn opens with none of its own.
  */
 export function createPresence(deps: PresenceDeps): Presence {
-  // per open turn: the kinds it has already said
-  const turns = new Map<string, Set<DeltaKind>>();
+  const turns = new Map<string, Turn>();
+  const asked = new Map<string, boolean>(); // per agent: its stretch was asked for
+
+  const say = (agentId: string, turn: Turn, kind: DeltaKind) => {
+    if (turn.told.has(kind)) return;
+    // the deltas do not wait: the seat is claimed as soon as a surface is known to exist,
+    // and the line lands on its own time — one that did not is one nobody needed
+    deps.aliases()
+      .then((rows) => {
+        if (turn.told.has(kind) || !rows.some((a) => a.live && a.agentId === agentId)) return;
+        turn.told.add(kind);
+        return deps.publish(factOf(agentId, kind, new Date().toISOString()));
+      })
+      .catch((err) => deps.onError?.(err));
+  };
 
   return {
-    status(agentId, sessionId, status) {
+    status(agentId, sessionId, status, cause) {
       if (sessionId !== MIND) return; // a named session is mirrored nowhere
+      if (cause !== undefined) asked.set(agentId, cause === "asked");
       if (status === "idle") turns.delete(agentId);
-      else if (!turns.has(agentId)) turns.set(agentId, new Set());
+      else if (!turns.has(agentId)) turns.set(agentId, { told: new Set() });
     },
     delta(agentId, sessionId, delta) {
       if (sessionId !== MIND) return;
-      const told = turns.get(agentId);
+      const turn = turns.get(agentId);
       const kind = presenceKind(delta.kind, deps.level(agentId));
-      if (!told || !kind || told.has(kind)) return;
-      // the deltas do not wait: the seat is claimed as soon as a surface is known to exist,
-      // and the line lands on its own time — one that did not is one nobody needed
-      deps.aliases()
-        .then((rows) => {
-          if (told.has(kind) || !rows.some((a) => a.live && a.agentId === agentId)) return;
-          told.add(kind);
-          return deps.publish(factOf(agentId, kind, new Date().toISOString()));
-        })
-        .catch((err) => deps.onError?.(err));
+      if (!turn || !kind) return;
+      turn.doing = kind;
+      if (asked.get(agentId)) say(agentId, turn, kind);
     },
+    heard(agentId) {
+      asked.set(agentId, true);
+      const turn = turns.get(agentId);
+      if (turn?.doing) say(agentId, turn, turn.doing);
+    },
+    asked: (agentId) => asked.get(agentId) ?? false,
   };
 }
 

@@ -26,6 +26,8 @@ const TONGUES = {
     system: "system",
     // an unload's label (§5): the turn that writes down a span before a checkpoint folds it
     unload: "agent memorizing...",
+    // a call below `tools` (§9): the call's line, unnamed
+    working: "agent working...",
     approve: "approve",
     hint:
       "reply /y to approve · /n <reason> to refuse · or react 👍 / 👎 · 🤖 approves the whole conversation",
@@ -63,7 +65,6 @@ const TONGUES = {
     presence: {
       thinking: "agent thinking...",
       checkpoint: "agent compacting...",
-      working: "agent working...",
     } as Record<
       DeltaKind,
       string
@@ -101,6 +102,7 @@ const TONGUES = {
     asks: "agente pregunta",
     system: "sistema",
     unload: "agente memorizando...",
+    working: "agente trabajando...",
     approve: "aprobar",
     hint:
       "responder /y para aprobar · /n <motivo> para rechazar · o reaccionar 👍 / 👎 · 🤖 aprueba toda la conversación",
@@ -134,7 +136,6 @@ const TONGUES = {
     presence: {
       thinking: "agente pensando...",
       checkpoint: "agente compactando...",
-      working: "agente trabajando...",
     },
     refusal: {
       notVerdict: "eso no es una respuesta — /y[once|conv|conn|always|all] [tarjeta] [motivo]",

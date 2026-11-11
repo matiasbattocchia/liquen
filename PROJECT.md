@@ -6574,6 +6574,29 @@ window; each probe in a fresh prefix) put it down to two facts of the wire:
   Turtle's size. A `thinking_level` the thinks did not send read 0 (the lean try's `low`);
   `max_output_tokens` changes nothing.
 
+### Presence speaks for work somebody asked for (2026-11-11) — LANDED
+
+Presence once spoke only when the principal had written in the minute before a turn, so
+the checkpoint after a memorizing turn longer than that minute went unsaid. Then every
+turn spoke, and a stranger's line in a busy group painted `[agente pensando...]` on the
+principal's self-chat.
+
+- **A cause per decision.** `causeOf` reads the news a decision answers: `asked` when the
+  principal spoke in the mind's room or the harness asked there (a reminder, a ruling),
+  `world` when only other rooms did. A checkpoint, an unload, the turn over its notice, a
+  cut turn going on and an act finishing its calls carry none. `onDecision` hands it to
+  main with each decision, not only the edges.
+- **The stretch keeps it.** Presence holds the last cause per agent across idles, so the
+  memorizing and compacting after a turn say what it would have said. The mirror's
+  `[agente memorizando...]` asks presence the same question (`asked`).
+- **A word mid-stretch.** The principal's line landing in the mind's room makes the stretch
+  theirs, and the kind of work running is said at once.
+- **A working line per call.** `[agente trabajando...]` was said once a turn as the model
+  began a call, so it came before the text that call's step wrote, and a second call
+  passed unmarked: a memory edit between two messages showed nothing between them. Now the
+  mirror crosses each `tool_use` at `waiting` as the line, where the call lands, the
+  `tools` line unnamed. Presence keeps thinking and compacting.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

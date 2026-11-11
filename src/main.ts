@@ -41,7 +41,7 @@ import {
   xi,
   type XiPorts,
 } from "./xi.ts";
-import { ownComplex } from "./render.ts";
+import { ownComplex, ownVoice, silenced } from "./render.ts";
 import { LOCAL_CONNECTION, MIND, sessionAddress } from "./session.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
 import {
@@ -88,7 +88,7 @@ import { type DoorAgent, installDoors, type Status, type Tune } from "./door.ts"
 import { readTurns, turnLine } from "./turns.ts";
 import { loadMediaBlock, memoizedLoader } from "./store/media.ts";
 import { collect } from "./store/storage.ts";
-import type { Delta, Event, PresenceLevel } from "./types.ts";
+import type { Cause, Delta, Event, PresenceLevel } from "./types.ts";
 import { checkToolDocs } from "./tooldoc.ts";
 import { type BashInput, bashShape } from "./exec/bash.ts";
 import { partialToolHomes } from "./exec/bubble.ts";
@@ -348,6 +348,13 @@ export async function start(
     sessionId: string,
     line: Status,
   ) => void = () => {};
+  // every decision with its cause, not only the edges: presence keeps who asked for a stretch
+  let castDecision: (
+    agentId: string,
+    sessionId: string,
+    verdict: Decision,
+    cause?: Cause,
+  ) => void = () => {};
   // the status push is EDGE-triggered (§2): one line per change of what the daemon would
   // say — per SESSION, so siblings' edges never collide — and a quiet org tails quietly:
   // the ticker's steady `ignore`s all collapse here
@@ -429,7 +436,10 @@ export async function start(
     ...(contact ? { contact } : {}),
     ...(rooms ? { rooms } : {}),
     onDelta: (agentId, sessionId, d) => cast(agentId, sessionId, d),
-    onDecision: (agentId, sessionId, v, cursor) => disclose(agentId, sessionId, v, cursor),
+    onDecision: (agentId, sessionId, v, cursor, cause) => {
+      disclose(agentId, sessionId, v, cursor);
+      castDecision(agentId, sessionId, v, cause);
+    },
   };
   const build = (p: AgentRow, sessionId: string): Runner =>
     runnerFor(host, p, sessionId, seamsOf(p.agentId));
@@ -617,12 +627,23 @@ export async function start(
     presence.delta(agentId, sessionId, delta);
   };
   castUsage = (agentId, row) => doors.usage(agentId, row);
-  castStatus = (agentId, sessionId, line) => {
-    doors.status(agentId, sessionId, line);
-    presence.status(agentId, sessionId, line.status);
-  };
+  castStatus = (agentId, sessionId, line) => doors.status(agentId, sessionId, line);
+  castDecision = (agentId, sessionId, v, cause) =>
+    presence.status(agentId, sessionId, v === "ignore" ? "idle" : "busy", cause);
 
   const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
+  // the principal's word in the mind's room, the moment it lands: a stretch they did not
+  // ask for becomes theirs, and presence says what is running (§9)
+  unsubs.push(log.subscribe((e) => {
+    if (e.type !== "message" || silenced(e)) return;
+    for (const a of agents) {
+      const home = sessionAddress(a.config.agentId, MIND);
+      const session = { agentId: a.config.agentId, id: MIND, conversation: home };
+      if (e.envelope.conversation.address === home && !ownVoice(e, session)) {
+        presence.heard(a.config.agentId);
+      }
+    }
+  }));
   // the named sessions ride the RAW log (§4): reactive, no subscription of their own —
   // the trigger's address names the session to invoke, and main builds its runner on
   // first contact, so a quiet session costs nothing
@@ -682,6 +703,7 @@ export async function start(
     principalsOf: (id) => log.principalsOf(id),
     locale: catalog?.shared.locale,
     presence: presenceOf,
+    asked: (id) => presence.asked(id),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     onError: (e, err) => console.error(`mirror FAILED on ${e.envelope.conversation.address}:`, err),
   }));
