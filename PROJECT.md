@@ -6503,6 +6503,14 @@ agent acts on the account through Mercado Pago's own CLI, `mpcli`, which reads
   publishes that, so a forged notification publishes nothing that is not the account's
   own.
 - `poll.ts`'s `appPrefix` is optional: these grants have no client rows beside them.
+- **What the search reaches**, on the live account (2026-11-11): a $2 transfer in from the
+  owner's own bank (`account_fund`) landed 36 seconds after Mercado Pago stamped it. A $1
+  transfer out to a bank alias is in no endpoint the token reads: not
+  `/v1/payments/search`, and `/mercadopago_account/movements/search` answers 403 "Public
+  access not allowed". The release report (`/v1/account/release_report`, configured
+  unscheduled on that account) lists withdrawals per its docs, but a manual report sat at
+  `data-ready` with no file for over twenty minutes — a day's latency at best, so the
+  connector leaves transfers out to banks unread. Money received is what it is for.
 
 ### What is open (2026-10-20)
 
@@ -6571,7 +6579,9 @@ their entries.
 - Mercado Pago (2026-11-10): what a payment link's `notification_url` delivers, on a live
   payment — the ingest reads the webhook shape (`type`, `data.id`, `user_id`); a delivery
   in IPN's (`?topic=payment&id=`) is acknowledged and dropped, and the poll reads that
-  payment a minute later.
+  payment a minute later. And how money from someone else lands: only the owner's own
+  top-up has been seen; a third party's transfer into the CVU, by bank or by alias, has
+  not.
 
 **Not traced against the code**
 
