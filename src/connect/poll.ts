@@ -98,9 +98,10 @@ export interface PollerDeps {
    *  `failing` while any of them fails — not whichever spoke last. */
   name: string;
   /** The vault namespace of this service's grants, and of its app rows within it: the app
-   *  rows are the client's credentials, not accounts, and are never polled. */
+   *  rows are the client's credentials, not accounts, and are never polled. A service
+   *  whose grants stand alone, with no client rows beside them, names no `appPrefix`. */
   grantPrefix: string;
-  appPrefix: string;
+  appPrefix?: string;
   creds: Pick<Credentials, "list">;
   /** The connections map (§4): a grant's state is written on the transition, against the
    *  row as stored (`connect/health.ts`) — `signed_out` when its issuer ended the access,
@@ -152,7 +153,7 @@ export function createPoller(deps: PollerDeps): { tick(): Promise<void> } {
   };
   const sweep = async (): Promise<void> => {
     const grants = (await deps.creds.list(deps.grantPrefix))
-      .filter((r) => !r.key.startsWith(deps.appPrefix))
+      .filter((r) => deps.appPrefix === undefined || !r.key.startsWith(deps.appPrefix))
       .filter((r) => deps.watches?.(r) ?? true);
     for (const grant of grants) {
       let failure: string | undefined;

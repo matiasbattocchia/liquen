@@ -59,6 +59,7 @@ Deno.test("available = shipped + custom doors, doorless connectors excluded", as
       "whatsapp",
       "github",
       "microsoft",
+      "mercadopago",
       "token",
       "ai",
       "acme",

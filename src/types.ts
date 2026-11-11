@@ -248,7 +248,8 @@ export type Service =
   | "teams"
   | "github"
   | "google"
-  | "microsoft";
+  | "microsoft"
+  | "mercadopago";
 
 /** Delivery bookkeeping — a mutable field, not events (§3). Render marks `failed` only. */
 export type DeliveryStatus =
