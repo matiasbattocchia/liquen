@@ -2866,6 +2866,7 @@ const FIRST_CONTACT: Record<string, Shape[]> = {
   email: ["mail"],
   slack: [],
   github: [],
+  mercadopago: [],
   instagram: [],
   teams: [],
   local: [],

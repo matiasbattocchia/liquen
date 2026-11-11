@@ -6473,6 +6473,31 @@ the window's last event, and the overdue digest fires on whatever lands next, so
 chat wakes a failing mind on every line. The refused calls cost nothing, but each is a
 round trip.
 
+### Mercado Pago: the account's payments come in (2026-11-10) — LANDED
+
+`src/connect/mercadopago/` ingests an account's payments, both ways, by webhook and by
+poll. It has no dispatch: an agent acts on the account through Mercado Pago's own CLI,
+`mpcli`, which reads `MP_ACCESS_TOKEN`, and the door's grant fronts that variable toward
+`api.mercadopago.com`.
+
+- **The door** takes an application's production Access Token, checked with
+  `/users/me`, and optionally the webhook's secret signature. One vault row,
+  `mercadopago:<user_id>`, holds both; one connection row maps the account to its owner.
+  The webhook is configured by hand in the application's panel; the door prints the URL.
+- **A row per state.** `external_id` is the payment id with `status` and
+  `status_detail`: an authorization, its capture, a partial refund and a chargeback
+  (`in_mediation`, `charged_back`) are each an event, and the same state read again merges.
+- **A conversation per counterparty**, by Mercado Pago user id, a `broadcast`. The wire
+  carries no names or phones; a payer's email comes on money in, a payee is its id alone,
+  and the conversation is called by the email or else the `/users/<id>` nickname. The
+  counterparty speaks on money in, the account on money out. A processor's merchants
+  share its id, and so its conversation. Test-mode payments are dropped.
+- **The webhook is a pointer**: it reads the payment back with the grant and publishes
+  that, so a forged notification publishes nothing that is not the account's own.
+- **The poll** reads `/v1/payments/search` by `date_last_updated` every minute, ten
+  minutes behind its cursor; a first run seeds the cursor at now and imports nothing.
+- `poll.ts`'s `appPrefix` is optional: these grants have no client rows beside them.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
@@ -6537,6 +6562,9 @@ their entries.
   its own removal from a group chat. A new channel named as an agent waits for the next
   hourly listing, as its subscription does.
 - Slack: which of the leave and archive events reach the bot.
+- Mercado Pago (2026-11-10): which payments the application's `payment` webhook notifies
+  — what the account pays, and transfers into it, or only what it collects through the
+  application. The poll reads all of them either way.
 
 **Not traced against the code**
 

@@ -309,7 +309,8 @@ who minted a path, never that the path is innocent.
 Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispatch.ts` ·
 `oauth.ts` · `connect.ts`):
 
-- **Shipped** — `src/connect/<service>/` (slack, google, whatsapp, github, microsoft).
+- **Shipped** — `src/connect/<service>/` (slack, google, whatsapp, github, microsoft,
+  mercadopago).
   Cross-service helpers (`flavor.ts`, `mentions.ts`, `mirror.ts`, `errors.ts`, `status.ts`)
   and the grammars a kind of connector shares (`poll.ts`, `calendar.ts`, `mail.ts`) live at
   `src/connect/` root.
