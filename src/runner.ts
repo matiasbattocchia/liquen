@@ -93,6 +93,7 @@ export function configOf(row: AgentRow, sessionId: string): AgentConfig {
     ...(row.email ? { email: row.email } : {}),
     ...(row.phone ? { phone: row.phone } : {}),
     ...row.settings,
+    cache: providerOf(row.provider).cache,
   };
 }
 

@@ -697,6 +697,62 @@ Deno.test("buildSummary: a turn cut while it runs is offered the tools with none
   assertEquals(seen[0].tool_choice, { type: "none" });
 });
 
+Deno.test("buildSummary: on an implicit cache the first try carries the window whole, and the record says how far it read", async () => {
+  const events: Event[] = [
+    msg("necesito el informe para el viernes", false),
+    msg("dale, lo agendo", true),
+    msg("gracias", false),
+    msg("de nada", true),
+  ];
+  const [compactAt, keepRecent] = pinAt(events, 1);
+  const run = async (more: Partial<Parameters<typeof buildSummary>[0]> = {}, es = events) => {
+    const seen: Anthropic.MessageCreateParamsNonStreaming[] = [];
+    const out = await buildSummary(
+      {
+        events: es,
+        window: windowOf(es),
+        session: SESSION,
+        model: "gemini-x",
+        compactAt,
+        keepRecent,
+        prompt: PROMPT,
+        cache: "implicit",
+        ...more,
+      },
+      stepping((p) => {
+        seen.push(p);
+        return Promise.resolve(canned([{ kind: "assistant", text: "## Open\n- informe" }]));
+      }),
+    );
+    return { out, seen };
+  };
+  const { out, seen } = await run();
+  assert(out !== null && out.type === "summary");
+  // the span is the same; the request runs to the window's end, past it
+  assertEquals(out.payload.covers, [events[0].id, events[1].id]);
+  assertEquals(out.payload.through, events[3].id);
+  const all = JSON.stringify(seen[0].messages);
+  for (const kept of ["gracias", "de nada"]) assertStringIncludes(all, kept);
+  assert(lastText(seen[0]).startsWith('<system kind="checkpoint">'));
+  // the tag says how far the record read
+  const drawn = JSON.stringify(
+    render({
+      events: [...events, { ...out, id: "e999" } as Event],
+      docs: [],
+      session: SESSION,
+      now: "2026-07-20T10:05:00Z",
+    })
+      .messages,
+  );
+  assertStringIncludes(drawn, `through=\\"${events[3].id.slice(-6)}\\"`);
+  // a marked cache keeps the cut, and so does the lean try
+  const marked = await run({ cache: "marked" });
+  assert(!JSON.stringify(marked.seen[0].messages).includes("gracias"));
+  assert(marked.out?.type === "summary" && marked.out.payload.through === undefined);
+  const lean = await run({}, [...events, triedEv("cut off at the output ceiling")]);
+  assert(!JSON.stringify(lean.seen[0].messages).includes("gracias"));
+});
+
 Deno.test("summaryCap: half the span a record replaces, never past the agent's own cap", () => {
   assertEquals(summaryCap(50_000, 20_000, 64_000), 15_000);
   assertEquals(summaryCap(150_000, 20_000, 64_000), 64_000);

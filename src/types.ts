@@ -643,8 +643,9 @@ export interface SummaryEvent extends EventBase {
   type: "summary";
   parts: TextPart[];
   /** `running`: written inside a turn that ran away (compact.ts `runaway`), cut at a
-   *  step's end. */
-  payload: Payload & { covers: [EventId, EventId]; running?: true };
+   *  step's end. `through`: the last row its request held, past the span (compact.ts
+   *  `whole`): the record was written having read the rows between too. */
+  payload: Payload & { covers: [EventId, EventId]; running?: true; through?: EventId };
 }
 
 /**

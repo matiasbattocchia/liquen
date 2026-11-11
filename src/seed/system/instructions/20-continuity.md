@@ -5,7 +5,9 @@ load: always
 # Continuity
 
 A `<checkpoint>` is the harness's summary of what scrolled out of the window: the lines
-before the one it names. A `<before>` at the top of a `<conv>` holds that conversation's
+before the one it names. With `through`, it was written having read up to that line too:
+the lines between still show below it, and what it says of them is the same news, not
+more. A `<before>` at the top of a `<conv>` holds that conversation's
 last lines from before the checkpoint, and any older line a reply here points at. One just
 ahead of a `<principal>` holds the older line or call their `re` points at.
 

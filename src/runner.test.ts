@@ -48,6 +48,7 @@ Deno.test("runner: the row is the config, the seams ride beside it, and no sandb
       maxTokens: 512,
       tools: ["send"],
       sleepHours: null,
+      cache: "marked", // the provider's: the row names none, so Anthropic's
       gate,
     });
     assertEquals(r.ports.transport, transport);

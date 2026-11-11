@@ -31,6 +31,7 @@ import type { MediaBlock } from "./store/media.ts";
 import { newId } from "./store/id.ts";
 import { LOCAL_CONNECTION, sessionAddress } from "./session.ts";
 import { buildSummary, pinnedCut } from "./compact.ts";
+import type { CacheKind } from "./transport/mod.ts";
 import {
   anchorDue,
   anchorText,
@@ -97,6 +98,9 @@ export interface TurnConfig {
   retryDelaysMs?: number[];
   compactAt?: number; // est. tokens before a checkpoint runs, between turns (§5; default 50K)
   keepRecent?: number; // est. tokens left uncovered by a checkpoint (default ~20K)
+  /** How the provider's cache reads a request back (transport/mod.ts `CacheKind`); unset ⇒
+   *  `marked`. It decides how far a checkpoint's request runs (compact.ts `whole`). */
+  cache?: CacheKind;
 }
 
 export interface TurnInput {
@@ -262,6 +266,7 @@ export async function checkpoint(
     compactAt: config.compactAt,
     keepRecent: config.keepRecent,
     maxTokens: config.maxTokens,
+    ...(config.cache ? { cache: config.cache } : {}),
     prompt: input.compactPrompt,
     turnId,
     signal: input.signal,

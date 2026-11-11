@@ -36,11 +36,18 @@ export interface Provider {
   name: ProviderName;
   efforts: readonly Effort[];
   models?: RegExp;
+  cache: CacheKind;
 }
 
-export const ANTHROPIC: Provider = { name: "anthropic", efforts: EFFORTS };
+/** How a provider's cache reads a request back. `marked`: from the blocks an earlier
+ *  request marked, wherever they fall (Anthropic's `cache_control`). `implicit`: only as far
+ *  as an earlier request ran, give or take its last couple of thousand tokens (Gemini). */
+export type CacheKind = "marked" | "implicit";
+
+export const ANTHROPIC: Provider = { name: "anthropic", efforts: EFFORTS, cache: "marked" };
 export const GOOGLE: Provider = {
   name: "google",
+  cache: "implicit",
   efforts: ["low", "medium", "high"], // `thinking_level`: minimal · low · medium · high
   models: /^gemini-/,
 };

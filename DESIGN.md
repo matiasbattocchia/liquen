@@ -1988,9 +1988,13 @@ layer**:
   it reads the conversation in the form it works from. And the request reads its span from
   the cache: the tools, the system, then the window through the cut, all byte-identical to
   the thinks' and marked at the cut by each of them, so only the instruction is written.
-  That is Anthropic's cache; Gemini's implicit one reads back only as far as an earlier
-  request ran, and no think ends at the cut, so there the tools and the system are the
-  cached part. After the agent's own words the instruction is a user turn of `<system
+  That is Anthropic's cache (`CacheKind` `marked`). Gemini's implicit one reads back only
+  as far as an earlier request ran, give or take its last couple of thousand tokens, and no
+  think ends at the cut; so there the first try carries the window **whole**, as the last
+  think read it — its anchor included, drawn where it was read — and closes on the same
+  instruction. The record still stands for the span, and says how far it read
+  (`through`, below). The lean try, a span cut inside a running turn (whose `none` takes
+  the tools out anyway) and a window the API refused keep the cut. After the agent's own words the instruction is a user turn of `<system
   kind="checkpoint">` text, since the API takes a `mid_conv_system` block only after other
   content in a user turn; after a user turn (an error, a cancel) it is that block. After a
   failed try the window goes lean (above).
@@ -2011,7 +2015,9 @@ layer**:
   transcript's worth of peers' words, and a mark typed by one of them stays text. `before`
   names the first row past `covers[1]` (the checkpoint's own row at the latest), and
   `search` takes a line's id as a bound, strict, so `search before=<id>` reads back exactly
-  what the checkpoint covers.
+  what the checkpoint covers. A record written from the whole window adds `through="<id>"`,
+  the last row its request held: the rows from `before` through it still show below, and
+  what the record says of them is the same news.
 - **Later**: the API's server-side compaction block (beta) could ride inside a summary
   event if we ever want it — noted, not planned.
 

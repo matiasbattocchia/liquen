@@ -334,6 +334,10 @@ export interface Archive {
    *  ceiling is a long tool loop, so the calls and the reasoning around them are its bulk;
    *  words, the world's lines, media and the previous checkpoint draw as they always do. */
   lean?: boolean;
+  /** The window to its end, as the last think drew it, the span still the record's: a
+   *  cache that reads back only as far as an earlier request ran (Gemini's) reads this one
+   *  from that think's. */
+  whole?: boolean;
 }
 
 /** How much of a call, and of its outcome, a lean archive keeps. */
@@ -1435,7 +1439,8 @@ function renderMessages(
   const cut = archive?.cut ?? pinned;
   let cutBlock: ContentBlockParam | undefined;
   const drawn = events.filter((e) =>
-    scripted(e) === undefined && (archive === undefined || archive.covered.has(e.id))
+    scripted(e) === undefined &&
+    (archive === undefined || archive.whole === true || archive.covered.has(e.id))
   );
   for (const e of weldOrder(drawn)) {
     if (e.type === "prefix") {
@@ -1515,7 +1520,8 @@ function renderMessages(
 
   if (archive) {
     // the checkpoint's request ends where the span does (§5): the position is the
-    // boundary. Its one mark is the cut, the entry every think kept warm. The API takes a
+    // boundary; a whole one ends where the window does. Its one mark is the cut, the entry
+    // every think kept warm. The API takes a
     // `mid_conv_system` block only after other content in a user turn, so after the
     // agent's own words the instruction is a user turn of text
     mark(cutBlock);
@@ -2328,7 +2334,10 @@ function thinkingBlock(
 function checkpointEl(e: SummaryEvent, window: Event[]): string {
   const end = e.payload.covers[1];
   const next = window.reduce<Event>((a, r) => r.id > end && r.id < a.id ? r : a, e);
-  return `<checkpoint before="${shortId(next.id)}">\n${escText(textOf(e))}\n</checkpoint>`;
+  const through = e.payload.through ? ` through="${shortId(e.payload.through)}"` : "";
+  return `<checkpoint before="${shortId(next.id)}"${through}>\n${
+    escText(textOf(e))
+  }\n</checkpoint>`;
 }
 
 /** The harness's own word to the model — an element, and its body escaped, so the tag is

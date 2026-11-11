@@ -6574,6 +6574,24 @@ window; each probe in a fresh prefix) put it down to two facts of the wire:
   Turtle's size. A `thinking_level` the thinks did not send read 0 (the lean try's `low`);
   `max_output_tokens` changes nothing.
 
+### On Gemini a checkpoint reads the window whole, and says how far (2026-11-11) — LANDED
+
+Gemini's implicit cache reads a request back only as far as an earlier one ran, so a
+checkpoint cut at the span read the tools and the system and nothing more. Measured on
+`gemini-4-argon` over a 107K-token window, one think then one checkpoint, each in a fresh
+prefix: the whole window and the unchanged instruction read 105,481 of 107,957 from the
+cache; the same without the last anchor, 105,480; cut three turns short of the end, as
+before, 11,795 of 94,801.
+
+- **`CacheKind`**, a provider fact: Anthropic's is `marked`, Gemini's `implicit`. The turn
+  config carries it, and only the checkpoint reads it.
+- **The first try carries the window whole** on an `implicit` provider: the last think's
+  request, its reply, the instruction. The record still covers the span (`covers`), so
+  `keepRecent` stays in the window word for word. The lean try, a span cut inside a running
+  turn, and a window the API refused keep the cut.
+- **`through`** on the summary and on the tag, `<checkpoint before through>`: the last row
+  the request held. `20-continuity.md` says what the overlap is.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

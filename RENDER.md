@@ -27,6 +27,7 @@ goes with its words. Each skill the system describes is one file under
 | Item | Described in system | Note |
 |---|---|---|
 | `<checkpoint before="…">` | ✓ | Reading it back: `search.md` |
+| `<checkpoint before="…" through="…">`, a record written from the whole window | ✓ | |
 | The checkpoint call's instruction, after the span: `<system kind="checkpoint">` text, or a system block | ✗ | It is `compaction.md` itself, read only by that call |
 | A dead turn's steps behind the checkpoint, and a running turn's behind one written inside it: one `<system kind="tool_result">` line a call, `call → outcome` | ✗ | The same line a late outcome is |
 | The lean checkpoint call (after a failed try): no thinking, every call a `<system kind="tool_result">` line clipped at 500 characters a side | ✗ | Read only by that call |

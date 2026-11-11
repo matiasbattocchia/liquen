@@ -48,6 +48,7 @@ import {
 } from "./render.ts";
 import type { StepCall, StepInput } from "./mu.ts";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { CacheKind } from "./transport/mod.ts";
 import { LOCAL_CONNECTION } from "./session.ts";
 
 import { DEFAULT_COMPACT_AT, DEFAULT_KEEP_RECENT, DEFAULT_MAX_TOKENS } from "./config.ts";
@@ -78,6 +79,9 @@ export interface CompactInput {
   compactAt?: number;
   keepRecent?: number;
   maxTokens?: number; // the agent's output cap, which a checkpoint's never passes (`summaryCap`)
+  /** How the provider's cache reads a request back (transport/mod.ts): `implicit` ⇒ the
+   *  first try carries the window whole (`whole`). Unset ⇒ `marked`. */
+  cache?: CacheKind;
   /** The invocation's turn (nu mints it): the checkpoint call's spend is metered under it,
    *  and the summary carries it — a checkpoint is a model turn like any other. */
   turnId?: string;
@@ -425,6 +429,15 @@ export async function buildSummary(
   const span = compactionSpan(input.events, input.session, input.compactAt, input.keepRecent);
   if (!span) return null;
 
+  // a cache that reads back only as far as an earlier request ran misses a request cut
+  // short of the window's end, so the first try carries the window whole, as the last think
+  // read it: the record still stands for the span, written having read the rest too (`through`)
+  const lean = tries(input.events) > 0;
+  const whole = input.cache === "implicit" && !lean && !span.running &&
+    !overflowed(input.events);
+  const through = whole
+    ? input.events.findLast((e) => e.type !== "anchor" && e.type !== "prefix")?.id
+    : undefined;
   const record = (text: string): Draft<SummaryEvent> => ({
     ts: new Date().toISOString(),
     type: "summary",
@@ -438,6 +451,7 @@ export async function buildSummary(
       covers: span.covers,
       ...(input.turnId ? { turn_id: input.turnId } : {}),
       ...(span.running ? { running: true as const } : {}),
+      ...(through && through > span.covers[1] ? { through } : {}),
     },
     parts: [{ type: "text", kind: "text", text }],
   });
@@ -464,14 +478,14 @@ export async function buildSummary(
   // the instruction is read lazily: only a window that actually compacts pays the read
   const instruction = await input.prompt();
   if (instruction === null) return failed("system/compaction.md is missing");
-  // the window as the think read it, up to the cut and closing on the instruction; lean
-  // once a try has failed
-  const lean = tried > 0;
+  // the window as the think read it, up to the cut (or whole) and closing on the
+  // instruction; lean once a try has failed
   const messages = input.window({
     covered: new Set(span.covered.map((e) => e.id)),
     cut: span.covered.at(-1)!.id,
     instruction,
     ...(lean ? { lean } : {}),
+    ...(whole ? { whole } : {}),
   });
 
   const res = await call({
