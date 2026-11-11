@@ -9,6 +9,7 @@ import {
   sessionsOfSteps,
   signatureOf,
   spendGroups,
+  turnsOfCalls,
   turnsOfRequests,
 } from "./views.ts";
 import { parseLogArgs } from "./log.ts";
@@ -221,6 +222,73 @@ Deno.test("spend sums per key and prices each call at its day's rate", () => {
   assertEquals(groups.map((g) => [g.key, g.calls, g.input, g.cost.usd, g.cost.unpriced]), [
     ["2026-10-18", 1, 1_000_000, 1, 0],
     ["2026-10-19", 2, 2_000_005, 2, 1],
+  ]);
+});
+
+Deno.test("spend by turn: a checkpoint's call is its turn's, in the turn's row", () => {
+  const said = (id: string, step: string, ts: string) =>
+    ({
+      id,
+      ts,
+      type: "message",
+      agent: self,
+      envelope: room,
+      payload: { turn_id: step, stop_reason: "end_turn" },
+      parts: [{ type: "text", kind: "text", text: "listo" }],
+    }) as unknown as Event;
+  const turns = turnsOf([
+    said("e1", "s1", "2026-10-19T09:00:00Z"),
+    {
+      id: "e2",
+      ts: "2026-10-19T09:00:05Z",
+      type: "summary",
+      agent: self,
+      envelope: room,
+      payload: { turn_id: "c1", covers: ["e1", "e1"] },
+      parts: [{ type: "text", kind: "text", text: "## Open" }],
+    } as unknown as Event,
+    said("e3", "s2", "2026-10-19T09:01:00Z"),
+    {
+      id: "e4",
+      ts: "2026-10-19T09:01:05Z",
+      type: "summary",
+      agent: self,
+      envelope: room,
+      payload: { turn_id: "c2", covers: ["e1", "e3"] },
+      parts: [{ type: "text", kind: "text", text: "## Open" }],
+    } as unknown as Event,
+    {
+      id: "e5",
+      ts: "2026-10-19T09:01:09Z",
+      type: "summary",
+      agent: self,
+      envelope: room,
+      payload: { turn_id: "c3", covers: ["e1", "e3"] },
+      parts: [{ type: "text", kind: "text", text: "## Open" }],
+    } as unknown as Event,
+  ], { agentId: "ana", id: "mind" });
+  const turnOf = turnsOfCalls(turns);
+  assertEquals([...turnOf], [["s1", "s1"], ["c1", "s1"], ["s2", "s2"], ["c2", "s2"], [
+    "c3",
+    "s2",
+  ]]);
+  const row = (turn_id: string, input: number) => ({
+    created_at: "2026-10-19T09:00:00Z",
+    agent_id: "ana",
+    turn_id,
+    model: "m",
+    input_tokens: input,
+    output_tokens: 0,
+  });
+  const groups = spendGroups(
+    [row("s1", 100), row("c1", 4_000), row("s2", 7), row("c2", 20), row("c3", 3), row("j9", 1)],
+    (r) => turnOf.get(r.turn_id!) ?? r.turn_id!,
+    [{ model: "m", valid_since: "2026-10-01", input: 1_000, output: 0 }],
+  );
+  assertEquals(groups.map((g) => [g.key, g.calls, g.input, g.cost.usd]), [
+    ["s1", 2, 4_100, 4.1],
+    ["s2", 3, 30, 0.03],
+    ["j9", 1, 1, 0.001],
   ]);
 });
 

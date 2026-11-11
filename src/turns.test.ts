@@ -1,5 +1,6 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertAlmostEquals, assertEquals, assertStringIncludes } from "@std/assert";
 import { openedBy, price, readTurns, type Turn, turnLine, turnsOf, walkTurns } from "./turns.ts";
+import { shortId } from "./render.ts";
 import { openLog } from "./store/log.ts";
 import type { Draft, Event } from "./types.ts";
 
@@ -137,6 +138,75 @@ Deno.test("turnsOf: the steps from the look to the closing, opened by the news t
   assertEquals(t.checkpoint?.tokens.input, 1);
   assertStringIncludes(turnLine(t), "2 steps · 2 calls · 1 tool error · tokens 120 in / 12 out");
   assertStringIncludes(turnLine(t), "end_turn · ");
+});
+
+Deno.test("price: a checkpoint's call is priced on its own, and the line says it after its id", () => {
+  const hi = said("cerrá el día");
+  const s1 = step("p1", hi.id, { text: "listo" });
+  const sum: Event = {
+    id: nextId(),
+    ts: at(),
+    type: "summary",
+    agent: self,
+    envelope: here(),
+    payload: { turn_id: "p2", covers: [hi.id, s1.at(-1)!.id] },
+    parts: [{ type: "text", kind: "text", text: "## Open" }],
+  } as Event;
+  const [t] = turnsOf([hi, ...s1, sum], REF);
+  const prices = [{ model: "m", valid_since: "2026-10-01", input: 2, output: 20 }];
+  const day = "2026-10-13T15:00:00Z";
+  price([t], [
+    { created_at: day, turn_id: "p1", model: "m", input_tokens: 50_000, output_tokens: 1_000 },
+    {
+      created_at: day,
+      turn_id: "p2",
+      kind: "checkpoint",
+      model: "m",
+      input_tokens: 412_000,
+      output_tokens: 2_100,
+    },
+  ], prices);
+  // the turn's cost is its steps'; the checkpoint's is its own
+  assertAlmostEquals(t.cost!.usd, 0.12);
+  assertEquals(t.checkpoint?.tokens, {
+    input: 412_000,
+    output: 2_100,
+    cache_read: 0,
+    cache_write: 0,
+  });
+  assertAlmostEquals(t.checkpoint!.cost!.usd, 0.866);
+  assertStringIncludes(turnLine(t), "tokens 50k in / 1.0k out / 0 cache-read · $0.12 · end_turn");
+  assertEquals(
+    turnLine(t).split(" · ").at(-1),
+    `checkpoint ${shortId(sum.id)} 412k in / 2.1k out / 0 cache-read $0.87`,
+  );
+  // unpriced, the checkpoint says its tokens alone
+  const [plain] = turnsOf([hi, ...s1, sum], REF);
+  price([plain], [{
+    created_at: day,
+    turn_id: "p2",
+    model: "m",
+    input_tokens: 9,
+    output_tokens: 1,
+  }]);
+  assertEquals(
+    turnLine(plain).split(" · ").at(-1),
+    `checkpoint ${shortId(sum.id)} 9 in / 1 out / 0 cache-read`,
+  );
+  // a gap that writes two: both calls are the checkpoint's, by the latest record's id
+  const more = { ...sum, id: nextId(), ts: at(), payload: { ...sum.payload, turn_id: "p3" } };
+  const [twice] = turnsOf([hi, ...s1, sum, more as Event], REF);
+  assertEquals(twice.checkpoint?.turn_ids, ["p2", "p3"]);
+  price([twice], [
+    { created_at: day, turn_id: "p2", model: "m", input_tokens: 9, output_tokens: 1 },
+    { created_at: day, turn_id: "p3", model: "m", input_tokens: 3, output_tokens: 1 },
+  ]);
+  assertEquals(
+    turnLine(twice).split(" · ").at(-1),
+    `2 checkpoints, the last ${shortId(more.id)} 12 in / 2 out / 0 cache-read`,
+  );
+  const [bare] = turnsOf([hi, ...s1], REF);
+  assertEquals(turnLine(bare).split(" · ").at(-1), "no checkpoint");
 });
 
 Deno.test("turnsOf: a reminder opens by its doc; a cut ends the turn; a failed first think is a turn", () => {

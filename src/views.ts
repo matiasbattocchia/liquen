@@ -11,7 +11,7 @@ import type { ExecRecord } from "./xi.ts";
 import { describeCall } from "./describe.ts";
 import { shortId } from "./render.ts";
 import { type Cost, costOfAll, type Price } from "./prices.ts";
-import type { Turn } from "./turns.ts";
+import { spendKeys, type Turn } from "./turns.ts";
 
 /* ── time ─────────────────────────────────────────────────────────────── */
 
@@ -310,6 +310,14 @@ export function totals(rows: UsageRow[], prices: Price[] = []): Omit<SpendGroup,
     cache_write: rows.reduce((n, r) => n + (r.cache_write_tokens ?? 0), 0),
     cost: costOfAll(rows, prices),
   };
+}
+
+/** The turn each metered call was made for, by its key: a turn's steps and its
+ *  checkpoints' calls are all the turn's. */
+export function turnsOfCalls(turns: Turn[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const t of turns) for (const k of spendKeys(t)) out.set(k, t.id);
+  return out;
 }
 
 /** Which session each step ran in, from the rows its model call wrote. */

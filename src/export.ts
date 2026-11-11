@@ -23,6 +23,7 @@ import {
   openerOf,
   price,
   rowById,
+  spendKeys,
   took,
   type Turn,
   type TurnReader,
@@ -285,9 +286,7 @@ export async function sessionTurns(
       t.duration_ms = Math.max(0, Date.parse(t.ended) - Date.parse(t.started));
     }
   }
-  const steps = turns.flatMap((
-    t,
-  ) => [...t.steps, ...(t.checkpoint?.turn_id ? [t.checkpoint.turn_id] : [])]);
+  const steps = turns.flatMap(spendKeys);
   const spend = steps.length ? await log.spend({ agentId: ref.agentId, turns: steps }) : [];
   price(turns, spend, prices);
   const summaries = rows.filter((e) => e.type === "summary");

@@ -15,7 +15,15 @@ import { findRoot, type OrgConfig, orgFlag, readConfig } from "./config.ts";
 import { entry } from "./entry.ts";
 import { hhmm } from "./render.ts";
 import { MIND, sessionAddress } from "./session.ts";
-import { count, defaultAgent, readTurns, type Turn, turnLine, turnsOf } from "./turns.ts";
+import {
+  count,
+  defaultAgent,
+  readTurns,
+  spendKeys,
+  type Turn,
+  turnLine,
+  turnsOf,
+} from "./turns.ts";
 import { exportSessions, exportTurn, readAll, seekTurn, sessionsIn } from "./export.ts";
 import { renderMarkdown } from "./md.ts";
 import { runTail, USAGE as TAIL_USAGE } from "./tail.ts";
@@ -36,6 +44,7 @@ import {
   type SpendBy,
   spendGroups,
   totals,
+  turnsOfCalls,
   turnsOfRequests,
 } from "./views.ts";
 
@@ -78,9 +87,10 @@ const VIEWS: Record<string, { flags: string[]; usage: string }> = {
 
   One line per turn of a session, oldest first: what opened it, its steps and calls, the
   tool errors, the tokens its steps metered and what they cost, how it ended, how long it
-  took, and whether a checkpoint followed. A line \`── changed: …\` stands before a turn
-  whose inputs — instructions, skills, tools, the programs on PATH, the agent's settings,
-  liquen's version — differ from the turn before it.
+  took, and the checkpoints written after it or inside it, with their tokens and cost. A
+  line \`── changed: …\` stands before a turn whose inputs — instructions, skills, tools,
+  the programs on PATH, the agent's settings, liquen's version — differ from the turn
+  before it.
 
   --session <name>  the session; default: the mind
   --limit <n>       how many turns, the most recent; default: 20 (every one in --since)`,
@@ -135,7 +145,8 @@ const VIEWS: Record<string, { flags: string[]; usage: string }> = {
   at the price in effect on each call's day (prices.ts, and the org's system.prices). A
   call no price covers counts as unpriced, never as $0.
 
-  --by <key>  day (the default, on the org's clock), turn, session, model or agent`,
+  --by <key>  day (the default, on the org's clock), turn, session, model or agent; a
+              turn's row holds its steps' calls and its checkpoints'`,
   },
   tail: { flags: [], usage: TAIL_USAGE },
 };
@@ -482,8 +493,12 @@ async function spendView(c: Ctx): Promise<void> {
   let rows: UsageRow[] =
     (await c.log.spend({ ...window, ...(c.args.agent ? { agentId: c.args.agent } : {}) }))
       .filter((r) => r.agent_id === undefined || c.agents.includes(r.agent_id));
-  if (turn) rows = rows.filter((r) => r.turn_id !== undefined && turn.steps.includes(r.turn_id));
-  // a call's session and turn are the log's: the rows its step wrote
+  if (turn) {
+    const keys = new Set(spendKeys(turn));
+    rows = rows.filter((r) => r.turn_id !== undefined && keys.has(r.turn_id));
+  }
+  // a call's session and turn are the log's: the rows its step wrote; a checkpoint's call
+  // is the turn's it is recorded on
   let sessionOf = new Map<string, string>();
   let turnOf = new Map<string, string>();
   if (c.args.by === "session" || c.args.by === "turn" || c.args.session !== undefined) {
@@ -491,14 +506,11 @@ async function spendView(c: Ctx): Promise<void> {
     const inWindow = window.before ? read.filter((e) => e.ts < window.before!) : read;
     sessionOf = sessionsOfSteps(inWindow);
     if (c.args.by === "turn") {
-      turnOf = new Map();
-      for (const room of new Set(sessionOf.values())) {
+      turnOf = turnsOfCalls([...new Set(sessionOf.values())].flatMap((room) => {
         const [session, agentId] = room.split("@");
         const roomRows = inWindow.filter((e) => e.envelope.conversation.address === room);
-        for (const t of turnsOf(roomRows, { agentId, id: session })) {
-          for (const s of t.steps) turnOf.set(s, t.id);
-        }
-      }
+        return turnsOf(roomRows, { agentId, id: session });
+      }));
     }
     if (c.args.session !== undefined) {
       rows = rows.filter((r) =>

@@ -11,7 +11,8 @@
  * step's request read last (`extra.consumed`, the horizon it carries): a message, a fired
  * wake, a principal's verdict, a script's call through the door, a checkpoint's insert.
  * Its cost is the usage rows its steps metered (`price`), joined on the same key; the
- * checkpoint the idle gap wrote after it is its own call, priced on its own.
+ * checkpoints written after it (or inside it, when it ran away) are calls of their own,
+ * priced beside the turn's.
  */
 
 import type { Event, EventId, SessionRef, ToolResultEvent } from "./types.ts";
@@ -74,7 +75,10 @@ export interface Turn {
   tokens: Tokens;
   end: TurnEnd;
   error?: string; // a terminal error's sentence
-  checkpoint?: { id: EventId; ts: string; turn_id?: string; tokens: Tokens };
+  /** The checkpoints written after it or inside it, by the latest record's id and time,
+   *  with what their calls (`turn_ids`, oldest first) metered and, priced, cost: apart from
+   *  the turn's own `tokens` and `cost`, which are its steps'. */
+  checkpoint?: { id: EventId; ts: string; turn_ids: string[]; tokens: Tokens; cost?: Cost };
   /** What its first stamped step was made of (inputs.ts), when a step of it stamped one. */
   inputs?: Inputs;
   /** The inputs that differ from the session's previous stamp in the rows read: absent when
@@ -206,10 +210,16 @@ export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
     if (step !== undefined) {
       if (e.type === "summary") {
         // a checkpoint is written in the idle gap, and follows the turn that just ended; one
-        // written inside a turn that ran away is that turn's
+        // written inside a turn that ran away is that turn's. A gap may write more than one,
+        // until the window weighs under the threshold
         const last = turns.at(-1);
         if (last && (last !== open || e.payload.running === true)) {
-          last.checkpoint = { id: e.id, ts: e.ts, turn_id: step, tokens: zero() };
+          last.checkpoint = {
+            id: e.id,
+            ts: e.ts,
+            turn_ids: [...last.checkpoint?.turn_ids ?? [], step],
+            tokens: zero(),
+          };
         }
         continue;
       }
@@ -342,12 +352,19 @@ export function price(turns: Turn[], spend: UsageRow[], prices?: Price[]): Turn[
     t.tokens = zero();
     for (const s of t.steps) for (const r of rows.get(s) ?? []) add(t.tokens, r);
     if (prices !== undefined) t.cost = costOfAll(t.steps.flatMap((s) => rows.get(s) ?? []), prices);
-    if (t.checkpoint?.turn_id !== undefined) {
+    if (t.checkpoint) {
+      const of = t.checkpoint.turn_ids.flatMap((k) => rows.get(k) ?? []);
       t.checkpoint.tokens = zero();
-      for (const r of rows.get(t.checkpoint.turn_id) ?? []) add(t.checkpoint.tokens, r);
+      for (const r of of) add(t.checkpoint.tokens, r);
+      if (prices !== undefined) t.checkpoint.cost = costOfAll(of, prices);
     }
   }
   return turns;
+}
+
+/** The keys a turn's usage rows are metered under: its steps', then its checkpoints'. */
+export function spendKeys(t: Turn): string[] {
+  return [...t.steps, ...t.checkpoint?.turn_ids ?? []];
 }
 
 /** What `readTurns` reads through: a log's two reads, scoped or not. */
@@ -417,10 +434,7 @@ async function settle(
       t.duration_ms = Math.max(0, Date.parse(t.ended) - Date.parse(t.started));
     }
   }
-  const keys = turns.flatMap((t) => [
-    ...t.steps,
-    ...(t.checkpoint?.turn_id ? [t.checkpoint.turn_id] : []),
-  ]);
+  const keys = turns.flatMap(spendKeys);
   if (keys.length) price(turns, await log.spend({ agentId: ref.agentId, turns: keys }), prices);
 }
 
@@ -524,13 +538,27 @@ export function turnLine(t: Turn): string {
     `${t.steps.length} step${t.steps.length === 1 ? "" : "s"}`,
     `${t.calls} call${t.calls === 1 ? "" : "s"}`,
     `${t.tool_errors} tool error${t.tool_errors === 1 ? "" : "s"}`,
-    `tokens ${count(k.input)} in / ${count(k.output)} out / ${count(k.cache_read)} cache-read`,
+    `tokens ${tokens(k)}`,
     ...(t.cost ? [dollars(t.cost)] : []),
     `${t.end}${t.end === "error" && t.error ? `: ${oneLine(t.error)}` : ""}`,
     took(t.duration_ms),
-    t.checkpoint ? `checkpoint ${shortId(t.checkpoint.id)}` : "no checkpoint",
+    t.checkpoint ? checkpointed(t.checkpoint) : "no checkpoint",
   ].join(" · ");
 }
+
+const tokens = (k: Tokens) =>
+  `${count(k.input)} in / ${count(k.output)} out / ${count(k.cache_read)} cache-read`;
+
+/** A checkpoint by its id (more than one by how many, then the latest's id), then what
+ *  their calls metered and cost, once priced. */
+const checkpointed = (c: NonNullable<Turn["checkpoint"]>) =>
+  [
+    c.turn_ids.length === 1
+      ? `checkpoint ${shortId(c.id)}`
+      : `${c.turn_ids.length} checkpoints, the last ${shortId(c.id)}`,
+    tokens(c.tokens),
+    ...(c.cost ? [dollars(c.cost)] : []),
+  ].join(" ");
 
 const oneLine = (s: string) => {
   const t = s.replace(/\s+/g, " ").trim();

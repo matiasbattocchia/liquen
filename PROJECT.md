@@ -6592,6 +6592,24 @@ before, 11,795 of 94,801.
 - **`through`** on the summary and on the tag, `<checkpoint before through>`: the last row
   the request held. `20-continuity.md` says what the overlap is.
 
+### `log turns` and `spend --by turn` say what a checkpoint cost (2026-11-11) — LANDED
+
+A turn's line named its checkpoint by id alone, and `spend --by turn` joined usage to a
+turn through its steps, so a checkpoint's call stood as a row of its own under its raw
+`turn_id`. On the local Turtle log a checkpoint ran 4–21K input tokens and $0.04–0.10
+against a turn's $0.10–0.79.
+
+- **The line prints the checkpoint's tokens and cost** after its id, in the turn's words:
+  `checkpoint 811c7d 17k in / 2.8k out / 0 cache-read $0.06`. The turn's own tokens and
+  `$` stay its steps'.
+- **A gap may write more than one checkpoint**, until the window weighs under the
+  threshold. The turn keeps every call (`checkpoint.turn_ids`), the latest record's id,
+  and their sum: `2 checkpoints, the last fa48a7 21k in / 5.7k out / 14k cache-read $0.10`.
+- **`spend --by turn` folds a turn's checkpoint calls into its row**, with no column of
+  their own, as the other keys sum every call they hold; `--turn` keeps the same calls.
+  A failed checkpoint try writes no summary, so its call has no turn to join and stands
+  as its own row.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
