@@ -5,8 +5,8 @@
  * A payment is one row per STATE it reaches: `external_id` is the payment's id with its
  * `status` and `status_detail`, so an authorization, its capture, a partial refund and a
  * chargeback (`in_mediation`, `charged_back`) each land as their own event, while the same
- * state read twice — by the webhook and the poll, by a retried notification, by the poll's
- * overlap — merges into the row already there (§4).
+ * state read twice — by a notification and the poll, by a retried notification, by the
+ * poll's overlap — merges into the row already there (§4).
  *
  * Its conversation is the COUNTERPARTY, by Mercado Pago user id: the one handle the wire
  * gives in both directions (a payer's email comes only on what they pay in; a payee is the
@@ -17,10 +17,12 @@
  *
  * Test-mode payments (`live_mode: false`) never become rows.
  *
- * The CARRIER of the poll is a clock over `/v1/payments/search`, by `date_last_updated`:
- * the search lists the account's payments both ways, which the webhook's coverage is not
- * known to. The cursor is the newest `date_last_updated` read, on the grant (poll.ts); a
- * first run seeds it at now and publishes nothing.
+ * The poll is the carrier every payment rides: a clock over `/v1/payments/search`, by
+ * `date_last_updated`, which lists the account's payments both ways — what it pays, what
+ * it collects, the transfers in and out. Only a payment created with a `notification_url`
+ * (a link an agent made) also dials the ingest. The cursor is the newest
+ * `date_last_updated` read, on the grant (poll.ts); a first run seeds it at now and
+ * publishes nothing.
  */
 
 import {

@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { connectMercadopago } from "./connect.ts";
 import { openCredentials } from "../../store/credentials.ts";
 import type { Appender, Draft, Event, MessageEvent } from "../../connector.ts";
@@ -47,8 +47,9 @@ const whoami = () => Promise.resolve({ id: 78777806, nickname: "RESCAT" });
 Deno.test("door — the grant, fronted as MP_ACCESS_TOKEN, mapped to its principal", async () => {
   await withVault(async (creds) => {
     const c = capture();
-    const { account, contention } = await connectMercadopago(" APP_USR-x ", "whsec", {
+    const { account, contention } = await connectMercadopago(" APP_USR-x ", {
       principal: "ana",
+      ingest: "https://acme.example/mercadopago/ingest",
       creds,
       store: c.store as never,
       publish: c.publish,
@@ -58,7 +59,7 @@ Deno.test("door — the grant, fronted as MP_ACCESS_TOKEN, mapped to its princip
     assertEquals(account, { id: "78777806", nickname: "RESCAT" });
     assertEquals(contention, undefined);
     const row = await creds.get("mercadopago:78777806");
-    assertEquals(row?.value, { token: "APP_USR-x", webhook_secret: "whsec" });
+    assertEquals(row?.value, { token: "APP_USR-x" });
     assertEquals(row?.agentId, "ana");
     assertEquals(row?.extra, { env: "MP_ACCESS_TOKEN", hosts: ["api.mercadopago.com"] });
     assertEquals(c.connections, [{
@@ -72,6 +73,9 @@ Deno.test("door — the grant, fronted as MP_ACCESS_TOKEN, mapped to its princip
       { service: "mercadopago", connection: "78777806", conversation: "connect", agentId: "ana" },
     ]);
     assertEquals(c.notes.length, 1);
+    // the agent holding the account learns where a payment link's notification_url points
+    const said = (c.notes[0].parts[0] as { text: string }).text;
+    assertStringIncludes(said, "notification_url=https://acme.example/mercadopago/ingest");
   });
 });
 
@@ -84,7 +88,7 @@ Deno.test("door — another row claiming MP_ACCESS_TOKEN is named", async () => 
       extra: { env: "MP_ACCESS_TOKEN", hosts: ["api.mercadopago.com"] },
     });
     const c = capture();
-    const { contention } = await connectMercadopago("APP_USR-x", undefined, {
+    const { contention } = await connectMercadopago("APP_USR-x", {
       principal: "ana",
       creds,
       store: c.store as never,
@@ -103,7 +107,7 @@ Deno.test("door — a token Mercado Pago refuses writes nothing", async () => {
     const c = capture();
     await assertRejects(
       () =>
-        connectMercadopago("APP_USR-bad", undefined, {
+        connectMercadopago("APP_USR-bad", {
           principal: "ana",
           creds,
           store: c.store as never,

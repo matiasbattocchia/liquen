@@ -1,18 +1,17 @@
 /**
  * src/connect/mercadopago/connect.ts — `liquen connect mercadopago`: an account's access
- * token, and its application's webhook secret.
+ * token.
  *
  * The token is an application's production Access Token (`APP_USR-…`, its Credentials
  * page), checked with `GET /users/me` before anything is written: the user id it answers
  * with is the account's address. One vault row, `mercadopago:<user_id>`, holds the token
- * and the webhook secret, and carries the proxy declaration (§9) — `MP_ACCESS_TOKEN`
- * toward `api.mercadopago.com` — so an agent's `mpcli` works with no real credential in
- * user space. One connection row maps the account to its principal (or to the org), and a
- * note crosses into the log.
+ * and carries the proxy declaration (§9) — `MP_ACCESS_TOKEN` toward `api.mercadopago.com`
+ * — so an agent's `mpcli` works with no real credential in user space. One connection row
+ * maps the account to its principal (or to the org), and a note crosses into the log.
  *
- * The webhook is the application's, set in its panel (Webhooks → Configure notifications,
- * the production URL, the Payments event), which hands back the secret the door asks for.
- * It is optional: the poll alone reads every payment, a minute late.
+ * Payments arrive by the poll, every one of the account's, a minute late at most. A
+ * payment link an agent creates with `notification_url` set to the org's ingest notifies
+ * as it is paid; the note says the address, so the agent that holds the account has it.
  *
  * Arg: the principal (default: the OS username), or `--org`. Env: none.
  */
@@ -48,6 +47,9 @@ export interface MercadopagoDoorDeps {
   creds: Pick<Credentials, "put" | "list">;
   store: Pick<Connections, "upsertConnections" | "upsertMemberships">;
   publish: Appender["publish"];
+  /** The org's ingest as Mercado Pago reaches it (`<edge.publicUrl>/mercadopago/ingest`);
+   *  absent when the org has no public door, and nothing notifies. */
+  ingest?: string;
   /** `GET /users/me` with the pasted token — injectable; default hits the API. */
   whoami?: (
     token: string,
@@ -60,7 +62,6 @@ export interface MercadopagoDoorDeps {
  *  of the grant (`contention`). */
 export async function connectMercadopago(
   token: string,
-  webhookSecret: string | undefined,
   deps: MercadopagoDoorDeps,
 ): Promise<{ account: Account; contention?: string }> {
   const now = deps.now ?? (() => new Date().toISOString());
@@ -73,7 +74,7 @@ export async function connectMercadopago(
   const key = `${GRANT_PREFIX}${account.id}`;
   const row = {
     key,
-    value: { token, ...(webhookSecret ? { webhook_secret: webhookSecret } : {}) },
+    value: { token },
     ...(deps.principal ? { agentId: deps.principal } : {}),
     extra: { env: GRANT_ENV, hosts: GRANT_HOSTS },
   };
@@ -111,8 +112,12 @@ export async function connectMercadopago(
       type: "text",
       kind: "text",
       text: `Mercado Pago connected: ${account.nickname ?? account.id} (user ${account.id}) → ` +
-        `${deps.principal ?? "the org"}` +
-        (webhookSecret ? "" : " — no webhook secret: payments arrive by the poll alone"),
+        `${deps.principal ?? "the org"}. Its payments arrive within a minute, one ` +
+        `conversation per counterparty.` +
+        (deps.ingest
+          ? ` A payment link created with notification_url=${deps.ingest} arrives as it ` +
+            `is paid.`
+          : ""),
     }],
   };
   await deps.publish(note);
@@ -133,10 +138,11 @@ async function defaultWhoami(
 const USAGE = `usage: liquen connect mercadopago [agent] [--org]
 
   An account's production Access Token (APP_USR-…, from its application's Credentials at
-  https://www.mercadopago.com.ar/developers/panel/app), and optionally the application's
-  webhook secret. Answers are pasted at a prompt, or piped one per line for a secret
-  manager. Payments land one conversation per counterparty, by the webhook as they happen
-  and by a poll a minute later either way; an agent's \`mpcli\` reads MP_ACCESS_TOKEN.
+  https://www.mercadopago.com.ar/developers/panel/app), pasted at a prompt or piped (one
+  line). Every payment of the account lands within a minute, one conversation per
+  counterparty; a payment link whose notification_url is the org's ingest
+  (<edge.publicUrl>/mercadopago/ingest) lands as it is paid. An agent's \`mpcli\` reads
+  MP_ACCESS_TOKEN.
 
   [agent]       whose account it is (default: your OS username)
   --org         file the grant as the org's, ownerless, rather than an agent's
@@ -171,56 +177,33 @@ if (import.meta.main) {
         );
       }
     }
-    // the webhook delivers from the moment it is configured, so the ingest comes up first
-    await requireIngest(root, SPEC);
-
     console.error(
       principal
         ? `Connecting Mercado Pago as agent "${principal}".\n`
         : "Connecting Mercado Pago as the org — ownerless, every agent's fallback.\n",
     );
 
-    /** TTY: interactive prompt; piped stdin: consumed line by line (secret managers). */
-    const lines = Deno.stdin.isTerminal()
-      ? null
-      : (await new Response(Deno.stdin.readable).text()).split("\n").map((l) => l.trim());
-    const ask = (label: string): string | undefined =>
-      (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
+    // declared, and its process up, before the note hands an agent the ingest's address
+    await requireIngest(root, SPEC);
 
-    const token = ask("Access token (APP_USR-…):");
+    /** TTY: interactive prompt; piped stdin: the first line (secret managers). */
+    const token = Deno.stdin.isTerminal()
+      ? prompt("Access token (APP_USR-…):")?.trim()
+      : (await new Response(Deno.stdin.readable).text()).split("\n")[0]?.trim();
     if (!token) {
       console.error("nothing pasted — nothing written");
       Deno.exit(2);
     }
 
     const { edge } = await readConfig(root);
-    if (edge.publicUrl === null) {
-      console.error(
-        "\nThis org has no public door (edge.publicUrl), so Mercado Pago cannot deliver to " +
-          "it: payments arrive by the poll alone.\n",
-      );
-    } else {
-      const webhook = ingestAddress(edge.publicUrl, SERVICE);
-      console.error(
-        `\nThe webhook, set in the application's panel (Webhooks → Configure notifications):\n` +
-          `  — Production mode URL: ${webhook}\n` +
-          `  — Events: Payments\n` +
-          `  Save, and the panel shows the secret signature to paste below.\n`,
-      );
-      // the address Mercado Pago is about to be handed, checked from the internet in while
-      // there is a human here to read the answer
-      console.error(`${await reachLine(webhook, SERVICE)}\n`);
-    }
-    const secret = edge.publicUrl === null
-      ? undefined
-      : ask("Webhook secret signature (empty to skip — the poll alone reads every payment):");
-
+    const ingest = edge.publicUrl === null ? undefined : ingestAddress(edge.publicUrl, SERVICE);
     const store = await openStore(root);
     const log = await store.log();
     const creds = await store.vault();
     try {
-      const { account, contention } = await connectMercadopago(token, secret, {
+      const { account, contention } = await connectMercadopago(token, {
         ...(principal ? { principal } : {}),
+        ...(ingest ? { ingest } : {}),
         creds,
         store: log, // connections live on the Log (§4)
         publish: log.publish,
@@ -235,5 +218,8 @@ if (import.meta.main) {
       await creds.close();
       await log.close();
     }
+    // a payment link's notification_url is this address, checked from the internet in
+    // while there is a human here to read the answer
+    if (ingest) console.error(`  ${await reachLine(ingest, SERVICE)}`);
   });
 }

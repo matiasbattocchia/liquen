@@ -6475,15 +6475,19 @@ round trip.
 
 ### Mercado Pago: the account's payments come in (2026-11-10) — LANDED
 
-`src/connect/mercadopago/` ingests an account's payments, both ways, by webhook and by
-poll. It has no dispatch: an agent acts on the account through Mercado Pago's own CLI,
-`mpcli`, which reads `MP_ACCESS_TOKEN`, and the door's grant fronts that variable toward
-`api.mercadopago.com`.
+`src/connect/mercadopago/` ingests an account's payments, both ways, by poll, and a
+payment created with a `notification_url` by notification too. It has no dispatch: an
+agent acts on the account through Mercado Pago's own CLI, `mpcli`, which reads
+`MP_ACCESS_TOKEN`, and the door's grant fronts that variable toward `api.mercadopago.com`.
 
 - **The door** takes an application's production Access Token, checked with
-  `/users/me`, and optionally the webhook's secret signature. One vault row,
-  `mercadopago:<user_id>`, holds both; one connection row maps the account to its owner.
-  The webhook is configured by hand in the application's panel; the door prints the URL.
+  `/users/me`. One vault row, `mercadopago:<user_id>`, holds it; one connection row maps
+  the account to its owner. Its note tells the owner's agent the ingest's address, the
+  `notification_url` a payment link it creates names.
+- **No application webhook.** The docs set one in the panel (Your integrations → the
+  application → Webhooks), but the panel of the application this account's token is from
+  offers none, and `mpcli` has no webhook command yet (`listen`, `events` and `trigger`
+  are announced). So nothing signs what reaches the ingest, and nothing needs to.
 - **A row per state.** `external_id` is the payment id with `status` and
   `status_detail`: an authorization, its capture, a partial refund and a chargeback
   (`in_mediation`, `charged_back`) are each an event, and the same state read again merges.
@@ -6492,10 +6496,12 @@ poll. It has no dispatch: an agent acts on the account through Mercado Pago's ow
   and the conversation is called by the email or else the `/users/<id>` nickname. The
   counterparty speaks on money in, the account on money out. A processor's merchants
   share its id, and so its conversation. Test-mode payments are dropped.
-- **The webhook is a pointer**: it reads the payment back with the grant and publishes
-  that, so a forged notification publishes nothing that is not the account's own.
-- **The poll** reads `/v1/payments/search` by `date_last_updated` every minute, ten
-  minutes behind its cursor; a first run seeds the cursor at now and imports nothing.
+- **The poll is the carrier**: it reads `/v1/payments/search` by `date_last_updated`
+  every minute, ten minutes behind its cursor, and the search lists every payment of the
+  account, paid or collected; a first run seeds the cursor at now and imports nothing.
+- **A notification is a pointer**: the ingest reads the payment back with the grant and
+  publishes that, so a forged notification publishes nothing that is not the account's
+  own.
 - `poll.ts`'s `appPrefix` is optional: these grants have no client rows beside them.
 
 ### What is open (2026-10-20)
@@ -6562,9 +6568,10 @@ their entries.
   its own removal from a group chat. A new channel named as an agent waits for the next
   hourly listing, as its subscription does.
 - Slack: which of the leave and archive events reach the bot.
-- Mercado Pago (2026-11-10): which payments the application's `payment` webhook notifies
-  — what the account pays, and transfers into it, or only what it collects through the
-  application. The poll reads all of them either way.
+- Mercado Pago (2026-11-10): what a payment link's `notification_url` delivers, on a live
+  payment — the ingest reads the webhook shape (`type`, `data.id`, `user_id`); a delivery
+  in IPN's (`?topic=payment&id=`) is acknowledged and dropped, and the poll reads that
+  payment a minute later.
 
 **Not traced against the code**
 

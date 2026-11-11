@@ -30,7 +30,7 @@ const REVOKE_AT: Record<string, string> = {
   github: "in the installed GitHub Apps of the org or account, and a member's leg in " +
     "github.com/settings/apps/authorizations",
   mercadopago: "by renewing the application's Access Token on its Credentials page " +
-    "(mercadopago.com.ar/developers/panel/app), and its webhook under Webhooks",
+    "(mercadopago.com.ar/developers/panel/app)",
 };
 
 export interface RemoveDeps {
