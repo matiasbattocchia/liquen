@@ -708,11 +708,17 @@ export type Refusal =
   | { refusal: "none_waiting" };
 
 /** What a presence line says the mind is doing: the stream deltas worth a word. */
-export type DeltaKind = "thinking" | "checkpoint" | "working";
+export type DeltaKind = "thinking" | "checkpoint";
 
 /** What a surface hears of the mind at work (§9), quietest first: `off` nothing, `waiting`
- *  each kind of work as it starts, `tools` each call by name in place of the work. */
+ *  each kind of work as it starts and each call as `working`, `tools` each call by name. */
 export type PresenceLevel = "off" | "waiting" | "tools";
+
+/** Who asked for the work a decision opens (§9): `asked` when the principal spoke in the
+ *  session's own room or the harness asked there (a reminder coming due, a ruling on an
+ *  ask), `world` when only other rooms did. A decision with no cause of its own (a
+ *  checkpoint, an unload, a cut turn going on) is the tail of the work before it. */
+export type Cause = "asked" | "world";
 
 /** Presence (§9): the mind saying what it is DOING, as a fact in its own room. Harness-
  *  authored while a turn runs, and only when somebody is there to read it. The fact is all

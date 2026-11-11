@@ -34,7 +34,7 @@ function watching(level: PresenceLevel = "waiting", over: Partial<PresenceDeps> 
 
 Deno.test("presence: a thinking delta is one fact in the mind's room, once", async () => {
   const { on, wrote, said } = watching();
-  on.status(AGENT, "mind", "busy");
+  on.status(AGENT, "mind", "busy", "asked");
   on.delta(AGENT, "mind", { kind: "thinking" });
   on.delta(AGENT, "mind", { kind: "thinking" });
   await Promise.resolve();
@@ -49,21 +49,21 @@ Deno.test("presence: a thinking delta is one fact in the mind's room, once", asy
   assertEquals(fact.parts, [{ type: "data", kind: "delta", data: { kind: "thinking" } }]);
 });
 
-Deno.test("presence: waiting says each kind of work as it starts, each once", async () => {
+Deno.test("presence: waiting says each kind of work as it starts, each once, and leaves the calls to the mirror", async () => {
   const { on, said } = watching("waiting");
-  on.status(AGENT, "mind", "busy");
+  on.status(AGENT, "mind", "busy", "asked");
   on.delta(AGENT, "mind", { kind: "checkpoint" });
   on.delta(AGENT, "mind", { kind: "thinking" });
   on.delta(AGENT, "mind", { kind: "tool", name: "bash", text: '{"comm' });
   on.delta(AGENT, "mind", { kind: "tool", name: "bash", text: 'and":' });
   on.delta(AGENT, "mind", { kind: "checkpoint" });
   await Promise.resolve();
-  assertEquals(said(), ["checkpoint", "thinking", "working"]);
+  assertEquals(said(), ["checkpoint", "thinking"]);
 });
 
 Deno.test("presence: tools leaves the work to the calls, which cross by name", async () => {
   const { on, said } = watching("tools");
-  on.status(AGENT, "mind", "busy");
+  on.status(AGENT, "mind", "busy", "asked");
   on.delta(AGENT, "mind", { kind: "tool", name: "bash", text: "{}" });
   on.delta(AGENT, "mind", { kind: "thinking" });
   on.delta(AGENT, "mind", { kind: "checkpoint" });
@@ -73,7 +73,7 @@ Deno.test("presence: tools leaves the work to the calls, which cross by name", a
 
 Deno.test("presence: off says nothing", async () => {
   const { on, said } = watching("off");
-  on.status(AGENT, "mind", "busy");
+  on.status(AGENT, "mind", "busy", "asked");
   for (const kind of ["thinking", "checkpoint", "tool"] as const) on.delta(AGENT, "mind", { kind });
   await Promise.resolve();
   assertEquals(said(), []);
@@ -82,7 +82,7 @@ Deno.test("presence: off says nothing", async () => {
 Deno.test("presence: the level is read at each delta, so a changed one is heard at once", async () => {
   let level: PresenceLevel = "off";
   const { on, said } = watching("off", { level: () => level });
-  on.status(AGENT, "mind", "busy");
+  on.status(AGENT, "mind", "busy", "asked");
   on.delta(AGENT, "mind", { kind: "thinking" });
   level = "waiting";
   on.delta(AGENT, "mind", { kind: "checkpoint" });
@@ -92,7 +92,7 @@ Deno.test("presence: the level is read at each delta, so a changed one is heard 
 
 Deno.test("presence: a named session is mirrored nowhere, so it says nothing", async () => {
   const { on, said } = watching();
-  on.status(AGENT, "build", "busy");
+  on.status(AGENT, "build", "busy", "asked");
   on.delta(AGENT, "build", { kind: "thinking" });
   await Promise.resolve();
   assertEquals(said(), []);
@@ -100,7 +100,7 @@ Deno.test("presence: a named session is mirrored nowhere, so it says nothing", a
 
 Deno.test("presence: the words themselves are not presence", async () => {
   const { on, said } = watching();
-  on.status(AGENT, "mind", "busy");
+  on.status(AGENT, "mind", "busy", "asked");
   on.delta(AGENT, "mind", { kind: "text", text: "hola" });
   on.delta(AGENT, "mind", { kind: "error", text: "boom" });
   await Promise.resolve();
@@ -109,15 +109,15 @@ Deno.test("presence: the words themselves are not presence", async () => {
 
 Deno.test("presence: a re-announced turn does not repeat itself; the next turn may", async () => {
   const { on, said } = watching();
-  on.status(AGENT, "mind", "busy");
+  on.status(AGENT, "mind", "busy", "asked");
   on.delta(AGENT, "mind", { kind: "thinking" });
-  on.status(AGENT, "mind", "busy"); // main discloses again mid-turn
+  on.status(AGENT, "mind", "busy", "asked"); // main discloses again mid-turn
   on.delta(AGENT, "mind", { kind: "thinking" });
   await Promise.resolve();
   assertEquals(said().length, 1);
 
   on.status(AGENT, "mind", "idle");
-  on.status(AGENT, "mind", "busy");
+  on.status(AGENT, "mind", "busy", "asked");
   on.delta(AGENT, "mind", { kind: "thinking" });
   await Promise.resolve();
   assertEquals(said().length, 2);
@@ -138,7 +138,7 @@ Deno.test("presence: no live surface of this agent's — it writes nothing at al
         binding({ agentId: "a2" }), // another agent's mind
       ]),
   });
-  on.status(AGENT, "mind", "busy");
+  on.status(AGENT, "mind", "busy", "asked");
   on.delta(AGENT, "mind", { kind: "thinking" });
   await Promise.resolve();
   assertEquals(said(), []);
@@ -150,8 +150,69 @@ Deno.test("presence: a write that fails is a line nobody needed", async () => {
     publish: () => Promise.reject(new Error("log closed")),
     onError: (err) => errors.push(err),
   });
-  on.status(AGENT, "mind", "busy");
+  on.status(AGENT, "mind", "busy", "asked");
   on.delta(AGENT, "mind", { kind: "thinking" });
   await new Promise((r) => setTimeout(r, 0));
   assertEquals(errors.length, 1);
+});
+
+Deno.test("presence: work the world woke says nothing; work somebody asked for does", async () => {
+  const { on, said } = watching();
+  on.status(AGENT, "mind", "busy", "world"); // a stranger's line in some group
+  on.delta(AGENT, "mind", { kind: "thinking" });
+  on.status(AGENT, "mind", "idle");
+  on.status(AGENT, "mind", "busy", "asked"); // the principal's word, or a reminder due
+  on.delta(AGENT, "mind", { kind: "thinking" });
+  await Promise.resolve();
+  assertEquals(said(), ["thinking"]);
+});
+
+Deno.test("presence: the tail of a stretch keeps its cause, however long the turn before it ran", async () => {
+  const { on, said } = watching();
+  on.status(AGENT, "mind", "busy", "asked");
+  on.delta(AGENT, "mind", { kind: "thinking" });
+  on.status(AGENT, "mind", "idle");
+  on.status(AGENT, "mind", "busy"); // the unload, minutes later: no cause of its own
+  on.delta(AGENT, "mind", { kind: "thinking" });
+  on.status(AGENT, "mind", "idle");
+  on.status(AGENT, "mind", "busy"); // the checkpoint after it
+  on.delta(AGENT, "mind", { kind: "checkpoint" });
+  await Promise.resolve();
+  assertEquals(said(), ["thinking", "thinking", "checkpoint"]);
+  assertEquals(on.asked(AGENT), true);
+
+  // a stretch the world woke keeps its silence through its own tail
+  on.status(AGENT, "mind", "idle");
+  on.status(AGENT, "mind", "busy", "world");
+  on.status(AGENT, "mind", "idle");
+  on.status(AGENT, "mind", "busy");
+  on.delta(AGENT, "mind", { kind: "checkpoint" });
+  await Promise.resolve();
+  assertEquals(said().length, 3);
+  assertEquals(on.asked(AGENT), false);
+});
+
+Deno.test("presence: the principal's word mid-stretch makes it theirs, and says what is running", async () => {
+  const { on, said } = watching();
+  on.status(AGENT, "mind", "busy", "world");
+  on.delta(AGENT, "mind", { kind: "checkpoint" });
+  await Promise.resolve();
+  assertEquals(said(), []);
+  on.heard(AGENT); // they write while it compacts
+  await Promise.resolve();
+  assertEquals(said(), ["checkpoint"]);
+  on.delta(AGENT, "mind", { kind: "thinking" });
+  await Promise.resolve();
+  assertEquals(said(), ["checkpoint", "thinking"]);
+});
+
+Deno.test("presence: a word while idle says nothing until there is work to name", async () => {
+  const { on, said } = watching();
+  on.heard(AGENT);
+  await Promise.resolve();
+  assertEquals(said(), []);
+  on.status(AGENT, "mind", "busy");
+  on.delta(AGENT, "mind", { kind: "thinking" });
+  await Promise.resolve();
+  assertEquals(said(), ["thinking"]);
 });

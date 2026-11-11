@@ -19,7 +19,7 @@ import { ANTHROPIC, type ModelTransport, providerOf, type Warmth } from "./trans
 import type { Sandbox } from "./sandbox.ts";
 import { MIND } from "./session.ts";
 import type { AgentRow } from "./store/agents.ts";
-import type { Delta, Effort } from "./types.ts";
+import type { Cause, Delta, Effort } from "./types.ts";
 
 /** What a host wires once, for every runner it builds. */
 export interface Host {
@@ -50,6 +50,7 @@ export interface Host {
     sessionId: string,
     verdict: Decision,
     cursor: string | undefined,
+    cause?: Cause,
   ) => void;
 }
 
@@ -131,8 +132,8 @@ export function runnerFor(
       ...(host.onDelta ? { onDelta: (d: Delta) => host.onDelta!(agentId, sessionId, d) } : {}),
       ...(host.onDecision
         ? {
-          onDecision: (v: Decision, cursor: string | undefined) =>
-            host.onDecision!(agentId, sessionId, v, cursor),
+          onDecision: (v: Decision, cursor: string | undefined, cause?: Cause) =>
+            host.onDecision!(agentId, sessionId, v, cursor, cause),
         }
         : {}),
     },

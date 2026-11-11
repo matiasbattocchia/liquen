@@ -796,7 +796,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `summary` | nu, in the idle gap after a turn, or inside a turn that ran away (§5) | leading text block (§5) | look again (idle, the think a dead turn left owed, or the running turn's next step) | parts(text) · payload{covers, running?} |
 | `alarm` | the clock, firing a timer row (§10) · task (stall-retry) · xi, raising an unload in the idle gap (§5) | `<system kind="alarm">` carrying the note; an unload's `<system kind="unload" since="…">` | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} · extra{timer} or extra{unload: {since, through}} |
 | `error` | nu · xi · the checkpoint · the mirror | **system** + Stream | ignore | parts(data:{error}) · extra{consumed} — what a failed request read (the model's, a checkpoint's) · payload{ref_id} — the call a word is said of, or the line that settled no card |
-| `delta` | main (presence, §9): the mind has started a kind of work | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint · working}) |
+| `delta` | main (presence, §9): the mind has started a kind of work | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
 | `anchor` | nu, with a step's first row, when the state moved since the last (§5) | `mid_conv_system` where its step read it: the sections that moved; crosses to no surface | ignore | parts(text, kind anchor: `now:` and the ambient lines) · payload{turn_id} |
 | `prefix` | nu, with a step's first row, when the live system prefix differs from the last since the checkpoint (§5) | the first since the checkpoint is the request's `system`; each later one a `mid_conv_system` notice where its step read it, the sections that changed; crosses to no surface | ignore | parts(data, kind prefix: {sections: [{key, text, doc?}]}) · payload{turn_id} |
 
@@ -1080,15 +1080,17 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     terminal, a thumb on a card — quoting the card's own crossing, which is how a surface
     points where a terminal names the card by its handle. At the `tools` presence level,
     tool calls cross as redacted one-liners under a tag of their own
-    (`[agent tool] bash(git status)`); below it, presence says `[agent working...]` once a
-    turn instead. What the harness says in the REPL crosses as
+    (`[agent tool] bash(git status)`); at `waiting` each crosses unnamed, as
+    `[agent working...]`, on work somebody asked for. What the harness says in the REPL
+    crosses as
     `[system] …`: a failure (`✗` and the tool's words, at `tools`; an approved call's,
     which names the call, at every level), a
     model call that failed past its retries (what kept it: the model unreached, overloaded,
     or refusing the request, then the provider's own sentence, once until the model answers
     again, since every arrival wakes a mind whose last call failed), a fired wake (`⏰` and the agent's note), a turn the principal cut (under their
     `/cancel`, which crosses as their line). An unload notice crosses as
-    `[agent memorizing...]` unless presence is `off`. A checkpoint written is the
+    `[agent memorizing...]` unless presence is `off` or the stretch it ends was the
+    world's, not asked for. A checkpoint written is the
     terminal's: a surface heard `[agent compacting...]` as it began. A settlement's own row is
     the terminal's too — a verdict (`— bbc24a refused once`), a lapse (`— bbc24a lapsed: unanswered
     for 24h`), the agent's withdrawal: on a surface the line that gave a verdict says it,
@@ -2924,12 +2926,19 @@ history and a call nobody can price is counted as unpriced, never as $0.
 shape.** As a turn starts a kind of work, main writes a `delta` event into the mind's
 room (`connect/presence.ts`): one data part naming the kind, harness-authored, once per
 kind per turn. What it names is the agent's `presence` level (config, per agent):
-`off` names nothing; `waiting` names `thinking`, `checkpoint` and `working`, the model
-writing a call; `tools` leaves the work to the calls themselves, which the mirror crosses
-by name. Every turn speaks, whatever woke it: a fold that runs while nobody asked is still
-the mind at work. That is all the log holds. The mirror crosses it to every
+`off` names nothing; `waiting` and `tools` name `thinking` and `checkpoint`. The calls are
+the mirror's own: each crosses where it lands, as `[agent working...]` at `waiting` and by
+name at `tools`. Only work somebody asked for speaks: each decision carries its cause (`causeOf`),
+`asked` when the principal spoke in the mind's room or the harness asked there (a reminder
+coming due, a ruling on an ask), `world` when only other rooms did. The cause belongs to
+the stretch: an unload, the turn over its notice and the checkpoint after it carry none of
+their own and keep the one before them, however long the turn before them ran, so a
+stranger's line in a group wakes a mind that thinks, memorizes and compacts in silence,
+and the principal's question is followed by every word of the work it set off. A word the
+principal speaks mid-stretch makes it theirs, and the kind running is said at once: that
+is when they wonder why the answer is late. That is all the log holds. The mirror crosses it to every
 live surface exactly as it crosses a `permission_request` — as a tagged line the surface can
-show, `[agent thinking...]`, `[agent compacting...]` or `[agent working...]`, the whole
+show, `[agent thinking...]` or `[agent compacting...]`, the whole
 line being the tag — and
 that CC rides whatever dispatcher already serves the surface. No typed event ever touches a
 wire, in either direction; a wire's only currency is a message, and the mirror is the one

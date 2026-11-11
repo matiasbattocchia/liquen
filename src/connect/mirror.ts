@@ -127,6 +127,9 @@ export interface MirrorDeps {
   /** An agent's presence level (§9): what its surfaces hear of it at work, beyond its
    *  words, its cards and its errors. Unset, `waiting`. */
   presence?: (agentId: string) => PresenceLevel;
+  /** Whether the stretch a mind is on was asked for (`Presence.asked`): an unload's line is
+   *  presence too, and says nothing on work the world woke. Unset, every stretch was. */
+  asked?: (agentId: string) => boolean;
   /** The unclaimed-CC repair: stamp a CC with the id its own post came back carrying —
    *  the dispatcher's `setDelivery`, run late by the mirror (it absorbs the echo row). */
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
@@ -162,7 +165,8 @@ export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): ()
           if (told.get(mind) === said) return;
           told.set(mind, said);
         }
-        const cc = await ccParts(e, deps, w, deps.presence?.(mind) ?? DEFAULT_PRESENCE);
+        const level = deps.presence?.(mind) ?? DEFAULT_PRESENCE;
+        const cc = await ccParts(e, deps, w, level, deps.asked?.(mind) ?? true);
         if (cc) await fanOut(deps, e, mind, cc, now);
       });
       return;
@@ -578,13 +582,19 @@ async function ccParts(
   deps: Pick<MirrorDeps, "read" | "aliases">,
   w: Words,
   level: PresenceLevel,
+  asked: boolean,
 ): Promise<CC | null> {
   const read = deps.read;
   const line = async (words: string, files: Part[]) =>
     principalLine(e, words, files, w, await fromRoom(deps, e));
   if (silent(e)) return null; // the model said nothing (§5) — nothing crosses to a surface
   if (e.type === "tool_use") {
-    if (level !== "tools") return null; // below it, presence says `working` instead
+    // below `tools` a call is its line unnamed, and like presence only on work somebody
+    // asked for
+    if (level === "off" || (level === "waiting" && !asked)) return null;
+    if (level === "waiting") {
+      return same([{ type: "text", kind: "text", text: `\`[${w.working}]\`` }]);
+    }
     // the same rendering the card gets (§9), addresses and all: a surface is where the
     // principal READS the call, so `in: Sprinters Friends` beats `in: 1203…@g.us`
     const call = (e as ToolUseEvent).parts[0].data;
@@ -600,7 +610,8 @@ async function ccParts(
     // in the tool's own words; a late one (an approved call's, an update's) names the
     // call, its row long gone. A call refused never ran: the line that refused it crossed
     // already, as did the `/cancel` that cut one.
-    // Below `tools` no call crossed, so only a late one's failure speaks: its card did.
+    // Below `tools` no call crossed by name, so only a late one's failure speaks: its card
+    // did.
     const { is_error, refused, cancelled } = e.parts[0].data;
     if (!is_error || refused || cancelled) return null;
     if (!isLate(e) && level !== "tools") return null;
@@ -608,9 +619,10 @@ async function ccParts(
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ✗ ${lastOf(said)}` }]);
   }
   // an unload opens a turn that writes docs and ends silent: its label says what that turn
-  // is for, as presence does for the rest of the mind's work
+  // is for, as presence does for the rest of the mind's work, and like it only on work
+  // somebody asked for
   if (unloadOf(e)) {
-    return level === "off"
+    return level === "off" || !asked
       ? null
       : same([{ type: "text", kind: "text", text: `\`[${w.unload}]\`` }]);
   }

@@ -3,6 +3,7 @@ import {
   type AgentConfig,
   attachmentsOf,
   beforePool,
+  causeOf,
   decide,
   downOn,
   gateOf,
@@ -1599,4 +1600,23 @@ Deno.test("unansweredOn: past the cap the rest are counted, and a nameless room 
   );
   assertEquals(lines.length, UNANSWERED_ROOMS + 2);
   assertEquals(lines.at(-1), "— 1 more");
+});
+
+Deno.test("causeOf: the principal's word or a reminder in the session's room asks; other rooms are the world's; the tail has no cause", () => {
+  const word = ev("message"); // the principal's line, in the mind's own room
+  const group = ev("message", { conv: "C-group" });
+  const reminder = ev("alarm", { parts: [{ type: "text", kind: "alarm", text: "call Ana" }] });
+  assertEquals(causeOf([word], SESSION, "think"), "asked");
+  assertEquals(causeOf([group], SESSION, "think"), "world");
+  assertEquals(causeOf([group, word], SESSION, "think"), "asked");
+  assertEquals(causeOf([reminder], SESSION, "think"), "asked");
+  // the turn over an unload's notice, the unload itself, the checkpoint: the stretch's tail
+  assertEquals(causeOf([notice("a", "b")], SESSION, "think"), undefined);
+  assertEquals(causeOf([group], SESSION, "unload"), undefined);
+  assertEquals(causeOf([group], SESSION, "compact"), undefined);
+  // an act runs a ruling the principal gave, or finishes calls the turn already made
+  assertEquals(causeOf([], SESSION, "act", 1), "asked");
+  assertEquals(causeOf([], SESSION, "act"), undefined);
+  // news already answered asks nothing
+  assertEquals(causeOf([word, selfMsg()], SESSION, "think"), undefined);
 });

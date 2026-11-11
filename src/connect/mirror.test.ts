@@ -31,6 +31,7 @@ async function withMirror(
   settleMs = 30, // the waited constant, shrunk (§9) — one test widens it to race the backfill
   locale?: string, // the org's tongue — unset, the harness speaks English
   presence: PresenceLevel = "tools", // the loudest level: every line a surface can hear
+  asked = true, // whether the mind's stretch was asked for (presence's `asked`)
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
@@ -48,6 +49,7 @@ async function withMirror(
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     locale,
     presence: () => presence,
+    asked: () => asked,
   }, settleMs);
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {
     const t0 = Date.now();
@@ -1038,19 +1040,24 @@ Deno.test("mirror fan-out: a wake, an unload and a failure cross as `[system]`; 
   );
 });
 
-Deno.test("mirror fan-out: below tools a call crosses nothing and only an approved call's failure speaks; off hears no unload", async () => {
-  const levels: [PresenceLevel, string[]][] = [
-    ["waiting", [
+Deno.test("mirror fan-out: at waiting a call crosses unnamed and only an approved call's failure speaks; off, or work the world woke, hears no call and no unload", async () => {
+  const levels: [PresenceLevel, boolean, string[]][] = [
+    ["waiting", true, [
+      "`[agent working...]`",
       "`[system]` ✗ send(to: Vivian) — the bridge is down",
       "`[agent memorizing...]`",
       "`[system]` ⏰ done",
     ]],
-    ["off", [
+    ["off", true, [
+      "`[system]` ✗ send(to: Vivian) — the bridge is down",
+      "`[system]` ⏰ done",
+    ]],
+    ["waiting", false, [
       "`[system]` ✗ send(to: Vivian) — the bridge is down",
       "`[system]` ⏰ done",
     ]],
   ];
-  for (const [level, heard] of levels) {
+  for (const [level, asked, heard] of levels) {
     await withMirror(
       async ({ publish, inConv, waitFor }) => {
         const mind = (draft: Record<string, unknown>) =>
@@ -1105,6 +1112,7 @@ Deno.test("mirror fan-out: below tools a call crosses nothing and only an approv
       30,
       undefined,
       level,
+      asked,
     );
   }
 });

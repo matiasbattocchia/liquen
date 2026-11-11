@@ -28,6 +28,7 @@ import { type Inputs, inputsOf, packageVersion, sameInputs } from "./inputs.ts";
 import type {
   Action,
   AlarmEvent,
+  Cause,
   ContactHit,
   Contacts,
   Conversation,
@@ -144,6 +145,7 @@ import {
   silenced,
   type Surface,
   textOf,
+  unloadOf,
   unreachedLine,
   wantedMedia,
 } from "./render.ts"; // shared predicates: silenced never wakes;
@@ -777,6 +779,29 @@ function newsOf(events: Event[], session: Session): News[] {
   return events.slice(from + 1).filter(news);
 }
 
+/** Who asked for the work `v` opens (`Cause`, §9 presence). A think is asked for when its
+ *  news holds the principal's line in the session's own room, a reminder coming due there,
+ *  or the principal's deny; it is the world's when the news is only other rooms'. An act
+ *  that runs a ruling is the principal's. The rest has no cause of its own: a checkpoint,
+ *  an unload, the turn over an unload's notice, a cut turn going on, an act finishing
+ *  its own calls, a think over an update on a call or a lapse. */
+export function causeOf(
+  events: Event[],
+  session: Session,
+  v: Decision,
+  rulings = 0,
+): Cause | undefined {
+  if (v === "act") return rulings > 0 ? "asked" : undefined;
+  if (v !== "think") return undefined;
+  const news = newsOf(events, session).filter((e) =>
+    !unloadOf(e) && !isUpdate(e, session) && !lapse(e)
+  );
+  if (news.length === 0) return undefined;
+  return news.some((e) => e.envelope.conversation.address === session.conversation)
+    ? "asked"
+    : "world";
+}
+
 /** A result that is no reason to wake: a late one its tool marked quiet (`Payload.quiet`),
  *  or the answer to a script's call, which the script already holds (`Extra.bash`). */
 function quiet(e: Event): boolean {
@@ -1057,8 +1082,9 @@ export interface XiPorts {
   onDelta?: Emit; // → the harness stream (fire-and-forget)
   /** The decision, disclosed the moment it is made — fire-and-forget like onDelta: main
    *  fans it to the door's tailers as a turn edge ({status}), the one fact an attach
-   *  client cannot compute for itself. `cursor` is the last event the deciding read saw. */
-  onDecision?: (verdict: Decision, cursor: string | undefined) => void;
+   *  client cannot compute for itself. `cursor` is the last event the deciding read saw;
+   *  `cause`, who asked for the work (`causeOf`), is what presence reads (§9). */
+  onDecision?: (verdict: Decision, cursor: string | undefined, cause?: Cause) => void;
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
   bins?: () => Promise<BinDir[]>; // the org folder's programs on PATH, for the prefix (§5)
 }
@@ -1222,14 +1248,9 @@ export async function xi(
   const events = await windowOf(ports.log, config.since);
   // the rulings still owed are STANDING state, read off the store (§9): a card asked before
   // the window's floor is as open as one asked a minute ago
-  const v = decide(
-    events,
-    session,
-    config,
-    Date.now(),
-    await ports.log.owed(session.agentId, session.id),
-  );
-  ports.onDecision?.(v, events.at(-1)?.id);
+  const owed = await ports.log.owed(session.agentId, session.id);
+  const v = decide(events, session, config, Date.now(), owed);
+  ports.onDecision?.(v, events.at(-1)?.id, causeOf(events, session, v, owed.length));
   if (v === "ignore") {
     await lock.release();
     return v;
@@ -1264,7 +1285,12 @@ export async function xi(
     // next invocation, which discloses again, but a terminal error or a cancel wakes
     // nothing on purpose (`relevant`), and the idle they leave would otherwise go unsaid
     const after = [...events, ...landed];
-    ports.onDecision?.(decide(after, session, config), landed.at(-1)?.id);
+    const next = decide(after, session, config);
+    ports.onDecision?.(
+      next,
+      landed.at(-1)?.id,
+      causeOf(after, session, next, owedOf(after, session).length),
+    );
   } catch (err) {
     // declared dead mid-turn: a successor took the lease and is redoing this window from
     // the same events. Dropping the work is the point — landing it would publish the turn
