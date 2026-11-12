@@ -267,18 +267,21 @@ export type RoomChange = {
   settings?: Record<string, Json>;
   /** A message pinned (the line's `ref_external_id` names it), or the room itself. */
   pinned?: boolean;
+  /** A call's start or end; a recording (its link) or a transcript ready after it, which
+   *  carries no state of its own. */
   call?: {
-    state: "started" | "ended" | "missed" | "rejected";
+    state?: "started" | "ended" | "missed" | "rejected";
     kind?: "audio" | "video" | "meeting" | "huddle" | "screen";
     seconds?: number;
     with?: RoomMember[];
     recording?: string;
-    transcript?: string;
+    transcript?: boolean;
   };
   linked?: RoomLink[];
   unlinked?: RoomLink[];
-  /** A Teams team around the channel, and its channels coming and going. */
-  team?: { name?: string; description?: string; state?: RoomState; joining?: string };
+  /** A Teams team around the channel, and its channels coming and going; `joining`, whether
+   *  people may join it by code. */
+  team?: { name?: string; description?: string; state?: RoomState; joining?: boolean };
   channels?: { added?: RoomLink[]; removed?: RoomLink[] };
   /** Another organization in the room (Slack Connect, a shared Teams channel). */
   shared?: { added?: string; removed?: string };
@@ -296,7 +299,7 @@ export type RoomChange = {
   category?: string;
   pushed?: { commits: number; head?: string };
   app?: { added?: string; removed?: string; upgraded?: string };
-  tab?: { added?: string; removed?: string; renamed?: string };
+  tab?: string;
   picture?: "set" | "removed";
   invite_link?: "reset" | "set" | "removed";
   reminder?: string;
