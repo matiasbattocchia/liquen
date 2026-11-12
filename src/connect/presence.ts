@@ -26,7 +26,8 @@
  *     the answer is late.
  *   - **WHETHER** — only the mind's own session, and only while a surface of the agent's is
  *     bound: a fact nobody can hear is not worth a row.
- *   - **HOW OFTEN** — once per kind per turn.
+ *   - **HOW OFTEN** — once per occurrence. The stream turning to a kind from another opens
+ *     one: a step's thinking after the last step's words or call, a checkpoint's next try.
  */
 
 import { LOCAL_CONNECTION, MIND, sessionAddress } from "../session.ts";
@@ -60,33 +61,40 @@ export function presenceKind(kind: Delta["kind"], level: PresenceLevel): DeltaKi
   if (kind === "thinking" || kind === "checkpoint") return kind;
 }
 
-/** An open turn: what it has said, and the work it is doing now, said or not. */
+/** One occurrence of a kind of work, and whether its line was said. */
+interface Doing {
+  kind: DeltaKind;
+  said: boolean;
+}
+
+/** An open turn: the kind of the stream's last delta, and the work running now, if the
+ *  stream is at a kind presence names. */
 interface Turn {
-  told: Set<DeltaKind>;
-  doing?: DeltaKind;
+  last?: Delta["kind"];
+  doing?: Doing;
 }
 
 /**
  * Wire presence to the log.
  *
  * A busy decision MERGES rather than replaces — main discloses on every decision, so one
- * turn can announce itself more than once, and a fresh set would say `[agent thinking...]`
- * twice. The idle closes the turn; the next busy opens a new one, free to speak again. The
- * cause outlives the idle: the tail that follows a turn opens with none of its own.
+ * turn can announce itself more than once, and a fresh turn would cut a thinking block in
+ * two. The idle closes the turn. The cause outlives the idle: the tail that follows a turn
+ * opens with none of its own.
  */
 export function createPresence(deps: PresenceDeps): Presence {
   const turns = new Map<string, Turn>();
   const asked = new Map<string, boolean>(); // per agent: its stretch was asked for
 
-  const say = (agentId: string, turn: Turn, kind: DeltaKind) => {
-    if (turn.told.has(kind)) return;
+  const say = (agentId: string, doing: Doing) => {
+    if (doing.said) return;
     // the deltas do not wait: the seat is claimed as soon as a surface is known to exist,
     // and the line lands on its own time — one that did not is one nobody needed
     deps.aliases()
       .then((rows) => {
-        if (turn.told.has(kind) || !rows.some((a) => a.live && a.agentId === agentId)) return;
-        turn.told.add(kind);
-        return deps.publish(factOf(agentId, kind, new Date().toISOString()));
+        if (doing.said || !rows.some((a) => a.live && a.agentId === agentId)) return;
+        doing.said = true;
+        return deps.publish(factOf(agentId, doing.kind, new Date().toISOString()));
       })
       .catch((err) => deps.onError?.(err));
   };
@@ -96,20 +104,23 @@ export function createPresence(deps: PresenceDeps): Presence {
       if (sessionId !== MIND) return; // a named session is mirrored nowhere
       if (cause !== undefined) asked.set(agentId, cause === "asked");
       if (status === "idle") turns.delete(agentId);
-      else if (!turns.has(agentId)) turns.set(agentId, { told: new Set() });
+      else if (!turns.has(agentId)) turns.set(agentId, {});
     },
     delta(agentId, sessionId, delta) {
       if (sessionId !== MIND) return;
       const turn = turns.get(agentId);
+      if (!turn) return;
+      const goesOn = turn.last === delta.kind;
+      turn.last = delta.kind;
+      if (goesOn) return;
       const kind = presenceKind(delta.kind, deps.level(agentId));
-      if (!turn || !kind) return;
-      turn.doing = kind;
-      if (asked.get(agentId)) say(agentId, turn, kind);
+      turn.doing = kind && { kind, said: false };
+      if (turn.doing && asked.get(agentId)) say(agentId, turn.doing);
     },
     heard(agentId) {
       asked.set(agentId, true);
-      const turn = turns.get(agentId);
-      if (turn?.doing) say(agentId, turn, turn.doing);
+      const doing = turns.get(agentId)?.doing;
+      if (doing) say(agentId, doing);
     },
     asked: (agentId) => asked.get(agentId) ?? false,
   };

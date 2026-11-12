@@ -6653,6 +6653,11 @@ principal's self-chat.
   passed unmarked: a memory edit between two messages showed nothing between them. Now the
   mirror crosses each `tool_use` at `waiting` as the line, where the call lands, the
   `tools` line unnamed. Presence keeps thinking and compacting.
+- **Each occurrence speaks.** Thinking and compacting were said once per kind a turn, so a
+  turn of five steps said `[agente pensando...]` before the first and never again. Now
+  the stream turning to a kind from another is a new occurrence, said as it starts: each
+  step's thinking, each checkpoint try. Whether any is said is still the level's and the
+  cause's.
 
 ### What is open (2026-10-20)
 

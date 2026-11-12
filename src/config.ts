@@ -445,7 +445,7 @@ const AGENT: Entry[] = [
     value: DEFAULT_PRESENCE,
     doc: "what the principal's surfaces hear of the agent at work, as it starts: off ⇒ " +
       "only its words, its approval cards and its errors; waiting ⇒ also memorizing, " +
-      "compacting and thinking, each once a turn, and each call as working; tools ⇒ " +
+      "compacting and thinking, and each call as working, each as it starts; tools ⇒ " +
       "each call by name, and a call that failed",
   },
   {

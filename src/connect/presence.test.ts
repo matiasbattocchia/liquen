@@ -49,7 +49,7 @@ Deno.test("presence: a thinking delta is one fact in the mind's room, once", asy
   assertEquals(fact.parts, [{ type: "data", kind: "delta", data: { kind: "thinking" } }]);
 });
 
-Deno.test("presence: waiting says each kind of work as it starts, each once, and leaves the calls to the mirror", async () => {
+Deno.test("presence: waiting says each occurrence of work as it starts, and leaves the calls to the mirror", async () => {
   const { on, said } = watching("waiting");
   on.status(AGENT, "mind", "busy", "asked");
   on.delta(AGENT, "mind", { kind: "checkpoint" });
@@ -58,7 +58,20 @@ Deno.test("presence: waiting says each kind of work as it starts, each once, and
   on.delta(AGENT, "mind", { kind: "tool", name: "bash", text: 'and":' });
   on.delta(AGENT, "mind", { kind: "checkpoint" });
   await Promise.resolve();
-  assertEquals(said(), ["checkpoint", "thinking"]);
+  assertEquals(said(), ["checkpoint", "thinking", "checkpoint"]);
+});
+
+Deno.test("presence: each step's thinking is its own line, a block streaming is one", async () => {
+  const { on, said } = watching();
+  on.status(AGENT, "mind", "busy", "asked");
+  on.delta(AGENT, "mind", { kind: "thinking", text: "veamos" });
+  on.delta(AGENT, "mind", { kind: "thinking", text: " el calendario" });
+  on.delta(AGENT, "mind", { kind: "text", text: "Saco el recordatorio." });
+  on.delta(AGENT, "mind", { kind: "tool", name: "aedit", text: "{}" });
+  on.delta(AGENT, "mind", { kind: "thinking", text: "listo" });
+  on.delta(AGENT, "mind", { kind: "text", text: "Listo." });
+  await Promise.resolve();
+  assertEquals(said(), ["thinking", "thinking"]);
 });
 
 Deno.test("presence: tools leaves the work to the calls, which cross by name", async () => {

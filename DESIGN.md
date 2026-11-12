@@ -2925,7 +2925,8 @@ history and a call nobody can price is counted as unpriced, never as $0.
 **Presence is a typed fact in the mind, and a message on the wire — the gate's own
 shape.** As a turn starts a kind of work, main writes a `delta` event into the mind's
 room (`connect/presence.ts`): one data part naming the kind, harness-authored, once per
-kind per turn. What it names is the agent's `presence` level (config, per agent):
+occurrence, the stream turning to the kind from another (a step's thinking after the last
+step's words or call, a checkpoint's next try). What it names is the agent's `presence` level (config, per agent):
 `off` names nothing; `waiting` and `tools` name `thinking` and `checkpoint`. The calls are
 the mirror's own: each crosses where it lands, as `[agent working...]` at `waiting` and by
 name at `tools`. Only work somebody asked for speaks: each decision carries its cause (`causeOf`),
