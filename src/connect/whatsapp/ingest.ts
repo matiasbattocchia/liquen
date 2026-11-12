@@ -7,7 +7,7 @@
  * (openbsp.go):
  *
  *   POST …/whatsapp-web-webhook            — WebhookBatch: messages · statuses · contacts
- *                                            · groups · edits · revokes → map → publish
+ *                                            · rooms · edits · revokes → map → publish
  *   POST …/whatsapp-web-webhook/media      — multipart bytes → media store → `{uri}`; the
  *                                            bridge then references that uri in a FilePart
  *                                            (media crosses BEFORE its message)
@@ -34,7 +34,7 @@
  * grant row on the connections map, else by the name the message carries. Names are
  * DENORMALIZED onto every row: the bridge stamps `sender_name`/`conversation_name` per
  * message (address book first — a directory liquen has no table for), and the `contacts`/
- * `groups` feeds fill in for a bridge that doesn't. Either way a rename reaches rows from
+ * `rooms` feeds fill in for a bridge that doesn't. Either way a rename reaches rows from
  * the next message on, never retroactively (decided 2026-08-11).
  *
  * Edits are their OWN events (§3) — the original row stays sealed, the edit renders in a
@@ -60,7 +60,10 @@ import type {
   MessageEvent,
   Part,
   Payload,
+  RoomChange,
+  RoomLink,
   RoomMember,
+  RoomView,
 } from "../../types.ts";
 import { roomPart } from "../../room.ts";
 import { findRoot, orgFlag } from "../../config.ts";
@@ -125,11 +128,10 @@ export interface WABatch {
   /** A pushname courtesy: `address` + `extra.name`, a cache hint the messages' own names
    *  have made a fallback. */
   contacts?: { address: string; extra?: { name?: string } }[];
-  /** A group's subject, and a change as WhatsApp announced it: a new `name` (`renamed`),
-   *  who `joined` (added, or in by the group's link — `reason: "invite"`, no `by`), who
-   *  `left` (went, or was taken out), `by` whom, at `timestamp`. The account's own arrival
-   *  is one too. */
-  groups?: WAGroup[];
+  /** What a chat says about itself rather than in it, a group's or a direct chat's: a
+   *  group's subject first seen, a group's change as WhatsApp announced it, a call, a
+   *  direct chat's timer, and the account's own view of the chat (see `WARoom`). */
+  rooms?: WARoom[];
   edits?: {
     external_id?: string; // the edit's OWN protocol-message id (newer bridges)
     original_message_id: string;
@@ -155,17 +157,59 @@ export interface WAPerson {
   name?: string;
 }
 
-export interface WAGroup {
+/** One entry of the rooms feed, in the bridge's words (openbsp.go `WebhookRoom`). `name` is
+ *  the room's name now; alone with the address it is a group's subject first seen, and no
+ *  line. Otherwise every field is a change, `by` whoever made it (absent when WhatsApp itself
+ *  did, on the account's own `view`, and for a join by the group's link: `reason: "invite"`),
+ *  at `timestamp`. `muted`/`archived` are the chat's marks then, as on a message — absent on
+ *  the line that archives or mutes the chat or lifts it, which is the news of the silence. */
+export interface WARoom {
   address: string;
   name?: string;
+  /** `name` is the subject just set; `was` the one before, when the bridge knew it. */
   renamed?: boolean;
+  was?: string;
+  /** A group made with the account in it, its founding roster `joined`. */
+  created?: boolean;
   joined?: WAPerson[];
   left?: WAPerson[];
+  promoted?: WAPerson[];
+  demoted?: WAPerson[];
   by?: WAPerson;
   reason?: string;
+  /** The group's about text, `""` deleted. */
+  description?: string;
+  /** Only admins may send; only admins may edit the group's info. */
+  announce?: boolean;
+  locked?: boolean;
+  /** The disappearing timer, seconds; 0 is off. A direct chat's rides here too. */
+  disappearing?: number;
+  /** Joining needs an admin's yes. */
+  approval?: boolean;
+  /** The group's invite link, just reset. */
+  invite_link?: string;
+  deleted?: boolean;
+  suspended?: boolean;
+  unsuspended?: boolean;
+  /** Groups tied to this one or cut from it: `type` is WhatsApp's `parent_group` (the
+   *  community it joined), `sub_group`, `sibling_group`. */
+  linked?: WALink[];
+  unlinked?: WALink[];
+  picture?: "set" | "removed";
+  /** A change whatsmeow could not read, by its tag. */
+  unknown?: string[];
+  call?: RoomChange["call"];
+  /** How the account's own app shows the chat, already in the room vocabulary. */
+  view?: RoomView;
   timestamp?: string;
   muted?: boolean;
   archived?: boolean;
+}
+
+export interface WALink {
+  address: string;
+  name?: string;
+  type?: string;
 }
 
 export interface WASessionEvent {
@@ -237,9 +281,9 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
 
     // caches BEFORE messages: a first-sight group subject or pushname arrives in the same
     // batch as the message it should stamp
-    for (const g of batch.groups ?? []) if (g.name) groupNames.set(g.address, g.name);
+    for (const r of batch.rooms ?? []) if (r.name) groupNames.set(r.address, r.name);
     for (const c of batch.contacts ?? []) if (c.extra?.name) pushnames.set(c.address, c.extra.name);
-    // a message that names its room feeds the cache too: the groups feed is a first-sight
+    // a message that names its room feeds the cache too: the rooms feed is a first-sight
     // courtesy, and after a restart it may never come — so a room's name used to survive
     // only on the rows the bridge happened to stamp, and the anchor's newest row for that
     // room read bare. Same rule as the account's own name above: two ways in, one fact.
@@ -287,7 +331,9 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
       ...(batch.edits ?? []).map((e) => mapEdit(e, connection, pushnames, now)),
       ...(batch.revokes ?? []).flatMap((r) => mapRevoke(r, connection, now)),
       ...(batch.statuses ?? []).map((s) => mapStatus(s, connection, now)),
-      ...(batch.groups ?? []).map((g) => mapRoom(g, connection, groupNames, pushnames, now)),
+      ...(batch.rooms ?? []).map((r) =>
+        mapRoom(r, connection, groupNames, pushnames, now, batch.history === true)
+      ),
     ].filter((d): d is Draft<MessageEvent> => d !== null);
 
     // the classifier (§3): a sender whose GRANT row names a mind, or whose number is a
@@ -535,35 +581,102 @@ function mapEdit(
   };
 }
 
-/** A room change is the group's own line about it (§3): one `room` data part saying who
- *  joined, who left, or the subject it now wears, from whoever made the change — or, when
- *  nobody did it to them, the first who moved, since a line with no sender is the account
- *  speaking. The account's own arrival reads the same way, its own address among the
- *  joined. The subject a group is first seen with is no line: it rides the room's name.
- *  Its identity is the change itself, so a batch the bridge posts again merges. */
+/** WhatsApp's word for how a linked group stands to this one, in the room vocabulary. */
+const LINK_AS: Record<string, string> = {
+  parent_group: "community",
+  sub_group: "sub",
+  sibling_group: "sibling",
+};
+
+/** A room change is the room's own line about it (§3): one `room` data part saying what
+ *  moved — who joined or left and how, the admin seats, the subject it now wears and the one
+ *  before, the about text, who may send or edit, the timer, a call, the account's own view
+ *  of the chat — from whoever made the change, or, when nobody did it to them, the first who
+ *  moved, since a line with no sender is the account speaking. The account's own arrival
+ *  reads the same way, its own address among the joined. The subject a group is first seen
+ *  with is no line: it rides the room's name. A line in a history batch is the view a chat
+ *  had at linking, and is history like the rest of it. Its identity is the change itself,
+ *  so a batch the bridge posts again merges. */
 function mapRoom(
-  g: WAGroup,
+  r: WARoom,
   connection: string,
   groupNames: Map<string, string>,
   pushnames: Map<string, string>,
   now: () => string,
+  backfill = false,
 ): Draft<MessageEvent> | null {
   const person = (p: WAPerson): RoomMember => {
     const name = p.name || pushnames.get(p.address);
     return { address: p.address, ...(name ? { name } : {}) };
   };
-  const joined = (g.joined ?? []).filter((p) => p.address).map(person);
-  const left = (g.left ?? []).filter((p) => p.address).map(person);
-  const renamed = g.renamed && g.name ? g.name : undefined;
-  if (!g.address || (!joined.length && !left.length && !renamed)) return null;
-  const sender = g.by?.address ? person(g.by) : (joined[0] ?? left[0]);
-  const ts = g.timestamp || now();
-  const name = g.name || groupNames.get(g.address);
-  const marks = { ...(g.muted ? { muted: true } : {}), ...(g.archived ? { archived: true } : {}) };
+  const people = (ps?: WAPerson[]) => (ps ?? []).filter((p) => p.address).map(person);
+  const links = (ls?: WALink[]): RoomLink[] =>
+    (ls ?? []).filter((l) => l.address).map((l) => ({
+      address: l.address,
+      ...(l.name ? { name: l.name } : {}),
+      ...(l.type ? { as: LINK_AS[l.type] ?? l.type } : {}),
+    }));
+  const joined = people(r.joined);
+  const left = people(r.left);
+  const by = r.by?.address ? person(r.by) : undefined;
+  // how they moved, said by who moved them: put in or taken out by someone else, or in by
+  // the link; a member who moved themselves is the change's own author
+  const moved = joined.length ? joined : left;
+  const reason = r.reason === "invite"
+    ? "link" as const
+    : by && moved.length && !moved.some((p) => p.address === by.address)
+    ? (joined.length ? "added" as const : "removed" as const)
+    : undefined;
+  const state = r.deleted
+    ? "deleted" as const
+    : r.suspended
+    ? "suspended" as const
+    : r.unsuspended
+    ? "unsuspended" as const
+    : r.created
+    ? "created" as const
+    : undefined;
+  const part = roomPart({
+    joined,
+    left,
+    ...(r.created ? {} : { reason }),
+    promoted: people(r.promoted),
+    demoted: people(r.demoted),
+    name: (r.renamed || r.created) && r.name ? r.name : undefined,
+    was: r.renamed && r.was !== r.name ? r.was : undefined,
+    description: r.description,
+    state,
+    settings: {
+      send: r.announce === undefined ? undefined : r.announce ? "admins" : "all",
+      info: r.locked === undefined ? undefined : r.locked ? "admins" : "all",
+      disappearing: r.disappearing,
+      approval: r.approval,
+    } as RoomChange["settings"],
+    linked: links(r.linked),
+    unlinked: links(r.unlinked),
+    invite_link: r.invite_link === undefined ? undefined : "reset",
+    picture: r.picture,
+    call: r.call,
+    changed: r.unknown,
+    view: r.view,
+  });
+  if (!r.address || !Object.keys(part.data).length) return null;
+  const sender = by ?? joined[0] ?? left[0];
+  const ts = r.timestamp || now();
+  const name = r.name || groupNames.get(r.address);
+  const marks = {
+    ...(backfill ? { backfill: true } : {}),
+    ...(r.muted ? { muted: true } : {}),
+    ...(r.archived ? { archived: true } : {}),
+  };
+  // who moved and the new subject read in the id as they always have; anything else the
+  // line says, as a digest of it: two changes in one second differ, one posted twice not
+  const { joined: _j, left: _l, name: renamed, was: _w, reason: _r, ...rest } = part.data;
   const change = [
     ...joined.map((p) => `+${p.address}`),
     ...left.map((p) => `-${p.address}`),
     ...(renamed ? [`=${renamed}`] : []),
+    ...(Object.keys(rest).length ? [`~${digest(JSON.stringify(rest))}`] : []),
   ].join("");
   return {
     ts,
@@ -571,18 +684,21 @@ function mapRoom(
     envelope: {
       service: SERVICE,
       connection_address: connection,
-      conversation: { address: g.address, kind: kindOf(g.address), ...(name ? { name } : {}) },
+      conversation: { address: r.address, kind: kindOf(r.address), ...(name ? { name } : {}) },
       ...(sender ? { sender } : {}),
-      external_id: externalId(`room.${connection}.${g.address}.${ts}.${change}`),
+      external_id: externalId(`room.${connection}.${r.address}.${ts}.${change}`),
     },
-    parts: [roomPart({
-      joined,
-      left,
-      name: renamed,
-      ...(g.reason === "invite" ? { reason: "link" as const } : {}),
-    })],
+    parts: [part],
     ...(Object.keys(marks).length ? { extra: marks } : {}),
   };
+}
+
+/** A short, stable digest of a string (FNV-1a, 32 bits): the same text digests the same
+ *  on every post. */
+function digest(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(36);
 }
 
 /** MERGE-ONLY draft: no `parts` key at all, so the upsert's `json_patch` finds an empty
