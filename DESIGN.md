@@ -1141,7 +1141,8 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
   channel id is opaque; which member a Slack user is comes from the email on their
   profile (`users.info`, the `users:read.email` scope) scanned against the roster, never
   from a Slack user id; what a Slack user or room is CALLED comes from the same directory
-  (`users.info`, `conversations.info`, the profile and rename events pushing changes), a
+  (`users.info`, `conversations.info`, the profile event, `channel_created` and the rename
+  lines pushing changes), a
   display fact the row keeps; Teams, the ingest records both on the owned account's row
   the first time it meets them, read off the chat's members rather than the grant that
   delivered the line, since a chat two connected accounts share reaches both: the chat
@@ -1483,7 +1484,35 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   merged · …), its `settings`, a pin, a `call`, linked rooms, a tracker's labels and
   assignees, and `view` — how the account's own app shows it (archived, muted, read,
   labels), which nobody else in the room sees. A change the connector cannot name rides
-  `changed` in the service's words rather than being dropped.
+  `changed` in the service's words rather than being dropped. Where each comes from:
+  - **Slack** says a change twice, as a message subtype and as an event. The subtype is
+    the line: the history API replays it, so catch-up reads back a missed one. An event
+    with a subtype twin keeps caches, memberships and steering records only. Where Slack
+    has no message for a change (creation, deletion, pins, Slack Connect sharing and
+    invites, a new channel id, a history rewrite, a new DM, a rejected call) the event is
+    the line, keyed on its `event_ts` or on what happens to a room once.
+  - **WhatsApp** lines come from the bridge's `rooms` feed: a group's every announced
+    change, calls (one line when over; a group call when it starts), a direct chat's
+    disappearing timer, a group's picture, and the account's own view from app state
+    (archive, mute, pin, read, clear, delete, labels, lock, favorites, blocks), the view
+    at linking arriving as backfill. Every line carries the chat's silencing marks as a
+    message does, except the line that archives, mutes or lifts either: it is the news of
+    the silence, and is drawn. `was` is stamped by the bridge, so a re-posted batch merges.
+  - **Teams** reads every system event by its detail type, in its own fields; a
+    team-wide event stands in the primary channel, and a deleted channel is also said
+    deleted in itself. The account's chats are watched themselves too
+    (`notifyOnUserSpecificProperties`): a new chat is its `created` line with everyone in
+    it, and the account's hidden and read state are `view` lines.
+  - **GitHub**: an issue, pull request or discussion is a room, its title the name and
+    `owner/repo#N` the address. The opening is its first message, keyed on that address,
+    and an edited body is that message's edit; every other change — lifecycle, labels,
+    assignees, reviews, milestone, type and fields, pushes, resolved threads, an answer, a
+    transfer, ties to other issues — is a room line.
+  - **Mail**: the thread is the room and every change the account's own `view`. The wire
+    says it per message, so each poll says a thread once, keyed by the cursor it read
+    from. Gmail's history names the labels that moved; Graph's delta names only that a
+    message changed, so each mail row keeps how the mailbox last showed it
+    (`extra.microsoft.shown`) and a listing says the difference.
 - **The address book, and what is still open beside it (outgoing first contact).**
   Everything above serves incoming traffic and replies: the model learns addresses from
   `address=` attributes, and `search` recovers off-window ones. An address the log has

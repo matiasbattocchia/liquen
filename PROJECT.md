@@ -6683,6 +6683,40 @@ answer; each tells the agent about its surroundings.
   the last leave says `closed`.
 - To tune after a day or two of running: whether the read lines (`view.read`) earn their
   place, and whether a released steering room needs a word after all.
+- **Slack**: every room subtype the ingest dropped maps to a line (the `group_` forms,
+  topic, purpose, archive, posting rule, conversion, reminder, locked thread, huddle), and
+  events with no subtype twin are lines. The manifest drops the rename and archive events
+  and adds those events, and both legs ask for `pins:read`: the app wants a reinstall.
+  Steering release moved onto the archive subtype.
+- **WhatsApp**: the bridge's `groups` became `rooms` (deploy the bridge with this liquen),
+  carrying every group field, calls, the DM timer and the app-state view. Newsletters wait
+  until channel posts are read.
+- **Teams**: every v1.0 `eventMessageDetail` by its type; a channel added or deleted is
+  no longer read as a rename. Each grant holds a third subscription, the chats with the
+  user-specific properties on. A path Graph refuses no longer costs the subscriptions made
+  in the same sweep.
+- **GitHub**: every conversation action is a line; `DEFAULT_EVENTS` adds `discussion`,
+  `pull_request_review_thread`, `sub_issues`, `issue_dependencies`, `issue_relates_to`,
+  and the app form asks Discussions: read. A registered app's subscription is updated by
+  hand.
+- **Mail**: Gmail reads label changes and permanent deletes; Outlook compares each listing
+  with the showing kept on the row. One view line per thread per poll.
+- Open, by connector:
+  - Slack: `channel_id_changed` writes `{moved}` but does not re-key the room;
+    `*_history_changed` has no channel in Slack's documented payload; the
+    `channel_left`/`channel_leave` twin check is in memory and one order only; the huddle
+    reads undocumented fields; a shared team is named by its id.
+  - WhatsApp: a label is named only after an edit this bridge process saw; the first
+    favorites change after a bridge restart sets the baseline; an answered call depends on
+    the phone relaying its accept, unverified live.
+  - Teams: unverified live that the chats subscription delivers without resource data
+    and accepts `deleted`; `channelSharingUpdated` is beta-only (falls to `changed`); the
+    chat-resource lines have no catch-up.
+  - GitHub: a push's line counts the PR's total commits; `stacked` says only `changed`; a
+    cross-repo relation arrives without the other side; discussion comments are not
+    ingested, so an answer's reference has nothing behind it.
+  - Mail: an Outlook message deleted for good is placed only if this process read it;
+    emptying Deleted Items says nothing; Gmail view lines carry no thread name.
 
 ### What is open (2026-10-20)
 
