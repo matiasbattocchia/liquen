@@ -6718,6 +6718,28 @@ answer; each tells the agent about its surroundings.
   - Mail: an Outlook message deleted for good is placed only if this process read it;
     emptying Deleted Items says nothing; Gmail view lines carry no thread name.
 
+### The cache outlives a failed call, a restart and a checkpoint (2026-11-12) — LANDED
+
+From 5 to 11 Nov on `new` the matias agent spent about $20 on Opus 5.5, 73% of it writing
+the cache. Thirty-five calls read nothing and wrote 20–60k tokens each, half the bill.
+Nineteen came after a checkpoint, the rest after an hour with no keep-alive: a suspended
+laptop, a restart, or a call that failed, which cleared the armed ping and armed none.
+
+- **A failed call leaves the ping armed.** Only a call that answers takes the timer over.
+- **A ping past its hour stands down** (`CACHE_HOUR_MS`). After a suspend it would write
+  the cache, and the next turn writes it anyway.
+- **A restart keeps the cache.** `stop` hands back the owed ping, main leaves it in
+  `data/run/<agent>.keep.json`, and the next boot's keeper sends it when it is due.
+- **The system's mark closes the words people write**, before the memories. Every
+  checkpoint took up memories the agent had rewritten, so the call after it read none of
+  the system back; now it reads the tools and the instructions, some 30k characters on
+  `new`. The two body blocks read as one text, as before.
+- **`new` checkpoints at 80k** (`compactAt`), so a checkpoint and its rewrite come about
+  three times less often, against a larger window read on every call. To weigh after a
+  week: checkpoints a day, the mean window, and the spend.
+- Open: a `search` page is bounded by its count of matches, not its size, and one of 40
+  matches came to 29k characters.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

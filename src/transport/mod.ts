@@ -254,9 +254,12 @@ export function metered(
   };
 }
 
+/** How long a cache mark holds what it marked: the hour every mark asks for (render),
+ *  counted from the start of the request that last read it. */
+export const CACHE_HOUR_MS = 60 * 60_000;
+
 /** How long after the start of the call that last read a session's cache the keeper reads
- *  it again: the hour every cache mark asks for (render), less the margin a ping needs to
- *  land inside it. The hour runs from a request's start, so this does too. */
+ *  it again: the hour, less the margin a ping needs to land inside it. */
 export const WARM_MS = 55 * 60_000;
 
 /** The most keep-alives in a row with no call of the session's between them. A ping reads
@@ -266,49 +269,77 @@ export const WARM_MS = 55 * 60_000;
  *  eighteen hours, a night and a quiet day. */
 export const WARM_PINGS = 20;
 
-/** A session's keeper: its transport passes `through` it, and `stop` ends it for good. A
- *  transport that is not `kept` (a provider with no hour cache) still takes the timer over,
- *  so a ping never outlives the session's move to it. */
+/** The ping a session's cache is owed: the request to read again, the start of the read
+ *  its hour runs from, and how many more the run may send. A keeper hands it over when it
+ *  stops, and the next one takes it up. */
+export interface Owed {
+  params: Parameters<ModelTransport>[0];
+  started: number;
+  left: number;
+}
+
+/** A session's keeper: its transport passes `through` it, and `stop` ends it for good,
+ *  handing back the ping still owed while its hour runs. A transport that is not `kept` (a
+ *  provider with no hour cache) stands the armed ping down, so a ping never outlives the
+ *  session's move to it. */
 export interface Warmth {
   through(transport: ModelTransport, kept?: boolean): ModelTransport;
-  stop(): void;
+  stop(): Owed | undefined;
 }
 
 /**
  * Keep a quiet session's cache warm (§5). A turn's call (`think`) arms a ping `everyMs`
  * after its start: the same request with `max_tokens: 0`, which reads the whole prefix,
  * answers nothing and starts the hour again. It goes through the transport the call went
- * through, metered as `keepalive`, and arms the next, up to `pings` in a row. Every call
- * the session makes takes the timer over, and a checkpoint arms none, since the next turn
- * renders past it. A failed ping ends the run: the next turn writes the prefix, as it
- * would have with no keeper.
+ * through, metered as `keepalive`, and arms the next, up to `pings` in a row. A call that
+ * answers takes the timer over, and a checkpoint arms none, since the next turn renders
+ * past it. A call that fails read nothing, so the ping armed before it stays armed.
+ *
+ * A ping whose hour ran out stands down: it would write the prefix, not read it, and the
+ * next turn writes it anyway. A machine that slept past the hour wakes to that. A failed
+ * ping ends the run, and so does the last of `pings`.
+ *
+ * `owed` is the ping a stopped keeper handed over: the first kept transport through this
+ * one arms it, so a restart inside the hour keeps the cache.
  */
 export function warmth(
-  { everyMs = WARM_MS, pings = WARM_PINGS, now = Date.now }: {
+  { everyMs = WARM_MS, pings = WARM_PINGS, now = Date.now, owed: handed }: {
     everyMs?: number;
     pings?: number;
     now?: () => number;
+    owed?: Owed;
   } = {},
 ): Warmth {
   const quit = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let call = 0; // the session's latest call: a ping armed for an older one stands down
-  const arm = (
-    transport: ModelTransport,
-    params: Parameters<ModelTransport>[0],
-    started: number,
-    left: number,
-    of: number,
-  ) => {
+  let run: (Owed & { transport: ModelTransport }) | undefined; // the ping armed now
+  const lapsed = (o: Owed) => now() - o.started >= CACHE_HOUR_MS;
+  const stand = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    run = undefined;
+  };
+  const arm = (next: Owed & { transport: ModelTransport }) => {
+    clearTimeout(timer);
+    run = next;
     timer = setTimeout(() => {
       timer = undefined;
+      if (lapsed(next)) return void (run = undefined);
       const start = now();
-      void transport({ ...params, max_tokens: 0 }, undefined, { kind: "keepalive" }, quit.signal)
+      void next.transport(
+        { ...next.params, max_tokens: 0 },
+        undefined,
+        { kind: "keepalive" },
+        quit.signal,
+      )
         .then(
           () => {
-            if (of === call && left > 1) arm(transport, params, start, left - 1, of);
+            if (run !== next) return; // a call answered meanwhile and armed its own
+            if (next.left > 1) arm({ ...next, started: start, left: next.left - 1 });
+            else run = undefined;
           },
           (err) => {
+            if (run === next) run = undefined;
             if (!quit.signal.aborted) {
               console.error(
                 `keep-alive failed, the cache left to lapse: ${(err as Error).message}`,
@@ -316,22 +347,57 @@ export function warmth(
             }
           },
         );
-    }, Math.max(0, started + everyMs - now()));
+    }, Math.max(0, next.started + everyMs - now()));
   };
   return {
-    through: (transport, kept = true) => async (params, emit, meta, signal) => {
-      const of = ++call;
-      clearTimeout(timer);
-      const start = now();
-      const message = await transport(params, emit, meta, signal);
-      if (kept && of === call && meta?.kind === "think" && !quit.signal.aborted) {
-        arm(transport, params, start, pings, of);
-      }
-      return message;
+    through: (transport, kept = true) => {
+      if (handed && kept && !lapsed(handed)) arm({ ...handed, transport });
+      handed = undefined;
+      return async (params, emit, meta, signal) => {
+        if (!kept) stand();
+        const start = now();
+        const message = await transport(params, emit, meta, signal);
+        if (kept && !quit.signal.aborted) {
+          if (meta?.kind === "think") arm({ transport, params, started: start, left: pings });
+          else stand();
+        }
+        return message;
+      };
     },
     stop() {
       quit.abort();
-      clearTimeout(timer);
+      const owed = run && !lapsed(run)
+        ? { params: run.params, started: run.started, left: run.left }
+        : undefined;
+      stand();
+      return owed;
     },
   };
+}
+
+/** The ping a stopped keeper left at `path`, taken once: the file goes with the reading. */
+export function takeOwed(path: string): Owed | undefined {
+  let text: string;
+  try {
+    text = Deno.readTextFileSync(path);
+    Deno.removeSync(path);
+  } catch {
+    return undefined; // none was left
+  }
+  try {
+    return JSON.parse(text) as Owed;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Leave the ping a keeper owed at `path` for the next boot, or nothing when none is owed. */
+export function leaveOwed(path: string, owed: Owed | undefined): void {
+  if (!owed) return;
+  try {
+    Deno.mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+    Deno.writeTextFileSync(path, JSON.stringify(owed));
+  } catch (err) {
+    console.error(`the keep-alive owed was not kept: ${(err as Error).message}`);
+  }
 }
