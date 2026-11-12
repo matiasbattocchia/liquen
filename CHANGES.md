@@ -146,9 +146,9 @@ it, and the new membership grants it whole, so the agent reads its history again
 folder, its keys, its verdicts and its grants are gone; an account granted again brings
 that account's history back with it.
 
-The store holds orphans from boot's mirror deletes (memberships and connections of agents
-no longer in the roster), and a constraint is not added over them: the change that adds
-the keys deletes them first, on both engines.
+Boot's mirror deletes leave an agent's memberships, connections, keys and verdicts behind
+when it leaves the roster, and a constraint is not added over such rows: the change that
+adds the keys deletes them first, on both engines.
 
 **Idle.** An undeclared agent with no turn for 30 days (`IDLE_DAYS`, its last `usage`
 row) is named at boot, one line for all of them. `liquen agent` with no name lists every
