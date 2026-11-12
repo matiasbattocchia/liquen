@@ -4,7 +4,7 @@ import { createGmailPoller, gmailSend, MAILBOX, parseAddresses, parseMessage } f
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
 import type { Appender } from "../../store/log.ts";
-import type { Draft, Event, FilePart, MessageEvent } from "../../types.ts";
+import type { Draft, Event, FilePart, MessageEvent, RoomPart } from "../../types.ts";
 import type { SaveFile } from "../mail.ts";
 
 const KEY = "google:me@org.com";
@@ -176,7 +176,12 @@ Deno.test("gmail: history → the message in full → the row; attachments fetch
     const api = gmail({
       "/history": (url: URL) => {
         assertEquals(url.searchParams.get("startHistoryId"), "5000");
-        assertEquals(url.searchParams.get("historyTypes"), "messageAdded");
+        assertEquals(url.searchParams.getAll("historyTypes"), [
+          "messageAdded",
+          "messageDeleted",
+          "labelAdded",
+          "labelRemoved",
+        ]);
         return {
           history: [
             {
@@ -307,6 +312,129 @@ Deno.test("gmail: a 404 on the start id drops the cursor; a message gone between
     ).tick();
     assertEquals(rows, []);
     assertEquals(await cursorOf(creds), "5002");
+  });
+});
+
+/** A label change in a history record. */
+const moved = (id: string, threadId: string, labelIds: string[], after: string[] = []) => ({
+  message: { id, threadId, labelIds: after },
+  labelIds,
+});
+
+/** The view a line says, and the thread it says it of. */
+const viewsOf = (rows: Draft<MessageEvent>[]) =>
+  rows.map((r) => [r.envelope.conversation.address, (r.parts[0] as RoomPart).data.view]);
+
+Deno.test("gmail: labels on and off and deletes are each thread's view — one line per thread, folded across its messages", async () => {
+  await withVault(async (creds) => {
+    await creds.put({ key: KEY, value: {}, extra: { mail_sync: { [MAILBOX]: "5000" } } });
+    const calls: Call[] = [];
+    let listed = 0;
+    const api = gmail({
+      "/history": {
+        history: [
+          // t1: two messages; archived, read, starred, labelled, and a label on and off again
+          { id: "5001", labelsRemoved: [moved("g1", "t1", ["INBOX"], ["UNREAD"])] },
+          { id: "5002", labelsRemoved: [moved("g2", "t1", ["UNREAD"], ["INBOX"])] },
+          {
+            id: "5003",
+            labelsAdded: [moved("g1", "t1", ["STARRED", "Label_7", "IMPORTANT"], ["STARRED"])],
+          },
+          { id: "5004", labelsAdded: [moved("g2", "t1", ["Label_9"], ["INBOX", "Label_9"])] },
+          { id: "5005", labelsRemoved: [moved("g2", "t1", ["Label_9"], ["INBOX"])] },
+          // t2: back in the inbox, unstarred, unread, moved between categories
+          {
+            id: "5006",
+            labelsAdded: [moved("g3", "t2", ["INBOX", "UNREAD", "CATEGORY_SOCIAL"], ["INBOX"])],
+            labelsRemoved: [moved("g3", "t2", ["STARRED", "CATEGORY_PROMOTIONS"], ["INBOX"])],
+          },
+          // t3 to the trash and t4 to spam: INBOX leaves with them, and is not an archive
+          {
+            id: "5007",
+            labelsAdded: [
+              moved("g4", "t3", ["TRASH"], ["TRASH"]),
+              moved("g5", "t4", ["SPAM"], ["SPAM"]),
+            ],
+            labelsRemoved: [
+              moved("g4", "t3", ["INBOX"], ["TRASH"]),
+              moved("g5", "t4", ["INBOX"], ["SPAM"]),
+            ],
+          },
+          // t5 deleted for good
+          {
+            id: "5008",
+            messagesDeleted: [{ message: { id: "g6", threadId: "t5", labelIds: [] } }],
+          },
+          // nothing: a draft's labels and delete, spam read where it sat, a SENT label
+          {
+            id: "5009",
+            labelsAdded: [
+              moved("g7", "t6", ["STARRED"], ["DRAFT", "STARRED"]),
+              moved("g9", "t6", ["SENT"], ["SENT"]),
+            ],
+            labelsRemoved: [moved("g8", "t7", ["UNREAD"], ["SPAM"])],
+            messagesDeleted: [{ message: { id: "g7", threadId: "t6", labelIds: ["DRAFT"] } }],
+          },
+        ],
+        historyId: "5010",
+      },
+      // the account's labels: Label_9 is made after the first listing
+      "/labels": () => ({
+        labels: [
+          { id: "Label_7", name: "Clientes" },
+          { id: "IMPORTANT", name: "IMPORTANT" },
+          { id: "CATEGORY_SOCIAL", name: "CATEGORY_SOCIAL" },
+          { id: "CATEGORY_PROMOTIONS", name: "CATEGORY_PROMOTIONS" },
+          ...(listed++ ? [{ id: "Label_9", name: "Viejo" }] : []),
+        ],
+      }),
+    }, calls);
+    const { publish, rows } = captor();
+    await poller(creds, api, publish).tick();
+    assertEquals(viewsOf(rows), [
+      ["t1", {
+        archived: true,
+        read: true,
+        starred: true,
+        labels: { added: ["Clientes", "IMPORTANT"], removed: ["Viejo"] },
+      }],
+      ["t2", {
+        archived: false,
+        read: false,
+        starred: false,
+        labels: { added: ["CATEGORY_SOCIAL"], removed: ["CATEGORY_PROMOTIONS"] },
+      }],
+      ["t3", { trashed: true }],
+      ["t4", { spam: true }],
+      ["t5", { deleted: true }],
+    ]);
+    // no message is read for a label: only the history and the label names
+    assertEquals(
+      calls.map((c) => c.url.pathname.slice("/gmail/v1/users/me".length)),
+      ["/history", "/labels", "/labels"],
+    );
+    // the account's own line, in the thread, keyed by the thread and the start id
+    assertEquals(rows[0].ts, NOW);
+    assertEquals(rows[0].envelope.sender, { address: "me@org.com" });
+    assertEquals(rows[0].envelope.conversation, { address: "t1", kind: "group" });
+    const key = rows[0].envelope.external_id!;
+    assert(key.startsWith("mailview:me@org.com:t1:"));
+    assertEquals(rows[0].parts.length, 1);
+    assertEquals(await cursorOf(creds), "5010");
+
+    // the same history read again from the same id says the same lines under the same keys
+    await creds.put({ key: KEY, value: {}, extra: { mail_sync: { [MAILBOX]: "5000" } } });
+    const again = captor();
+    await poller(creds, api, again.publish).tick();
+    assertEquals(
+      again.rows.map((r) => r.envelope.external_id),
+      rows.map((r) => r.envelope.external_id),
+    );
+    // from another id, other keys
+    await creds.put({ key: KEY, value: {}, extra: { mail_sync: { [MAILBOX]: "5005" } } });
+    const later = captor();
+    await poller(creds, api, later.publish).tick();
+    assert(later.rows[0].envelope.external_id !== key);
   });
 });
 

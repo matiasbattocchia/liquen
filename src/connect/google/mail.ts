@@ -7,14 +7,25 @@
  * `google:app:` client rows) whose consent carries a mail read scope. Gmail's history is
  * MAILBOX-wide — folders are labels — so a grant has one cursor, the `historyId`: a first
  * run takes the mailbox's current one from the profile and publishes nothing; each poll
- * lists `history` from it (`messageAdded` records), reads every listed message in full, and
- * advances to the page's `historyId`. A `404` on the start id means Gmail no longer holds
- * history that far back, and the cursor is dropped to re-bootstrap.
+ * lists `history` from it, reads every added message in full, and advances to the page's
+ * `historyId`. A `404` on the start id means Gmail no longer holds history that far back,
+ * and the cursor is dropped to re-bootstrap.
  *
  * A message counts when it is in INBOX or SENT and not a draft: the two sides of every
  * conversation the account is in, and nothing from spam, trash or chat. The account's own
  * sends — the agent's through the API, the principal's from a client — arrive by SENT as
  * the wire's copy, keyed by the same Message-ID (the API's send is a MIME we author).
+ *
+ * The rest of the history is how the account keeps its threads (connect/mail.ts: the
+ * view): a label put on or taken off, a message deleted for good. The system labels are
+ * the view's fields — INBOX taken off archives and put back unarchives, UNREAD taken off
+ * reads, TRASH, SPAM and STARRED set their own — and INBOX moving beside TRASH or SPAM is
+ * that move, not an archive. Every other label (IMPORTANT, a `CATEGORY_*`, the account's
+ * own) is a label by its name, the account's ones read off `labels.list` once per process
+ * and again when an id it does not hold turns up. SENT, DRAFT and CHAT say what a message
+ * is, not where it is kept, and move nothing; a draft or a chat moves nothing, nor does a
+ * message that sat in spam the whole time (it never reached the log). Each thread's changes
+ * in one poll are one line, keyed by the start id.
  *
  * The body is the first `text/plain` part; a message that came only as HTML is read as
  * words (`htmlToText`). Attachments are the parts with a filename, fetched by
@@ -30,10 +41,12 @@
 
 import { decodeBase64Url, encodeBase64Url } from "@std/encoding/base64url";
 import {
+  foldView,
   htmlToText,
   MAIL_SYNC,
   type Mailbox,
   mailbox,
+  mailConversation,
   type MailMessage,
   mailRow,
   type MailSend,
@@ -43,6 +56,8 @@ import {
   referencesOf,
   runMailDispatch,
   type SaveFile,
+  type ViewFold,
+  viewRows,
 } from "../mail.ts";
 import {
   createPoller,
@@ -59,6 +74,7 @@ import type { Credentials } from "../../store/credentials.ts";
 import type { Connections } from "../../store/connections.ts";
 import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import { entry } from "../../entry.ts";
+import type { RoomView } from "../../types.ts";
 
 const SERVICE = "google" as const;
 const GRANT_PREFIX = "google:";
@@ -99,14 +115,33 @@ export interface GmailMessage {
   payload?: GmailPart;
 }
 
+/** A message as a history record names it: its labels as they stand after the record. */
+interface Stub {
+  id?: string;
+  threadId?: string;
+  labelIds?: string[];
+}
+
+/** A label change: the message, and the labels put on or taken off. */
+interface Labelled {
+  message?: Stub;
+  labelIds?: string[];
+}
+
 interface HistoryPage {
   history?: {
     id?: string;
-    messagesAdded?: { message?: { id?: string; threadId?: string; labelIds?: string[] } }[];
+    messagesAdded?: { message?: Stub }[];
+    messagesDeleted?: { message?: Stub }[];
+    labelsAdded?: Labelled[];
+    labelsRemoved?: Labelled[];
   }[];
   nextPageToken?: string;
   historyId?: string;
 }
+
+/** What the history is asked for: messages in and out, labels on and off. */
+const HISTORY_TYPES = ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"];
 
 export interface GmailDeps {
   /** → the EventLog: a mail is an ordinary published event (§3). */
@@ -127,6 +162,7 @@ export interface GmailDeps {
 
 /** The Gmail poller: the shared sweep over `google:` grants with a mail scope. */
 export function createGmailPoller(deps: GmailDeps): { tick(): Promise<void> } {
+  const names = labelNames();
   return createPoller({
     service: SERVICE,
     name: "mail",
@@ -136,7 +172,7 @@ export function createGmailPoller(deps: GmailDeps): { tick(): Promise<void> } {
     store: deps.store,
     resources: [MAILBOX],
     watches: (grant) => granted(grant, READ_SCOPES),
-    poll: (grant) => pollMailbox(deps, grant.key, grant.agentId),
+    poll: (grant) => pollMailbox(deps, names, grant.key, grant.agentId),
     now: deps.now,
     onError: deps.onError,
     onPolled: deps.onPolled,
@@ -146,8 +182,15 @@ export function createGmailPoller(deps: GmailDeps): { tick(): Promise<void> } {
 type Api = (path: string) => Promise<Response>;
 
 /** One grant: read the history since the stored id (or bootstrap from the profile's),
- *  publish a row per message, advance the cursor. Returns the number published. */
-async function pollMailbox(deps: GmailDeps, key: string, agentId?: string): Promise<number> {
+ *  publish a row per message and a line per thread whose view moved, advance the cursor.
+ *  Returns the number published. */
+async function pollMailbox(
+  deps: GmailDeps,
+  names: LabelNames,
+  key: string,
+  agentId?: string,
+): Promise<number> {
+  const now = deps.now ?? (() => new Date().toISOString());
   const fetchApi = deps.fetchApi ?? fetch;
   const token = await tokenOf(deps.broker, key, agentId);
   const api: Api = (path) =>
@@ -170,11 +213,15 @@ async function pollMailbox(deps: GmailDeps, key: string, agentId?: string): Prom
   const email = key.slice(GRANT_PREFIX.length);
   const base = { service: SERVICE, connection_address: email };
   const seen = new Set<string>(); // a message can appear under several history records
+  const fold: ViewFold = new Map();
+  const into = (stub: Stub, change: RoomView) =>
+    foldView(fold, mailConversation(stub.threadId!, {}), change);
   let latest = cursor;
   let pageToken: string | undefined;
   let published = 0;
   do {
-    const q = new URLSearchParams({ startHistoryId: cursor, historyTypes: "messageAdded" });
+    const q = new URLSearchParams({ startHistoryId: cursor });
+    for (const t of HISTORY_TYPES) q.append("historyTypes", t);
     if (pageToken) q.set("pageToken", pageToken);
     const res = await api(`/history?${q}`);
     if (res.status === 404) {
@@ -198,10 +245,27 @@ async function pollMailbox(deps: GmailDeps, key: string, agentId?: string): Prom
         await deps.publish(mailRow(base, await messageOf(api, full, deps)));
         published++;
       }
+      for (const [changes, on] of [[h.labelsAdded, true], [h.labelsRemoved, false]] as const) {
+        for (const { message: stub, labelIds = [] } of changes ?? []) {
+          if (!stub?.threadId || !kept(stub.labelIds, labelIds)) continue;
+          into(stub, await viewOf(labelIds, on, (id) => names.of(api, key, id)));
+        }
+      }
+      for (const { message: stub } of h.messagesDeleted ?? []) {
+        if (stub?.threadId && kept(stub.labelIds)) into(stub, { deleted: true });
+      }
     }
     latest = page.historyId ?? latest;
     pageToken = page.nextPageToken;
   } while (pageToken);
+
+  // INBOX moving beside TRASH or SPAM is that move, not an archive
+  for (const { view } of fold.values()) {
+    if (view.trashed !== undefined || view.spam !== undefined) delete view.archived;
+  }
+  const lines = await viewRows(base, fold, cursor, now());
+  if (lines.length) await deps.publish(lines);
+  published += lines.length;
 
   await storeCursor(deps.creds, key, MAIL_SYNC, MAILBOX, latest);
   return published;
@@ -210,6 +274,73 @@ async function pollMailbox(deps: GmailDeps, key: string, agentId?: string): Prom
 /** In INBOX or SENT, and not a draft. */
 function inConversation(labels: string[] = []): boolean {
   return (labels.includes("INBOX") || labels.includes("SENT")) && !labels.includes("DRAFT");
+}
+
+/** The system labels that are the account's view of a thread, by what each one's arrival
+ *  says: INBOX on is out of the archive, UNREAD on is unread. */
+const VIEW_LABELS: Record<string, (on: boolean) => RoomView> = {
+  INBOX: (on) => ({ archived: !on }),
+  UNREAD: (on) => ({ read: !on }),
+  TRASH: (on) => ({ trashed: on }),
+  SPAM: (on) => ({ spam: on }),
+  STARRED: (on) => ({ starred: on }),
+};
+
+/** The labels that say what a message is, not where the account keeps it. */
+const NATURE = ["SENT", "DRAFT", "CHAT"];
+
+/** Whether a change to a message is a change to a thread the account keeps: not a draft or
+ *  a chat, and not a message that sat in spam before the change and after it. `labels` is
+ *  the message's after the change, `moved` the labels the change put on or took off. */
+function kept(labels: string[] = [], moved: string[] = []): boolean {
+  if (labels.includes("DRAFT") || labels.includes("CHAT")) return false;
+  return !labels.includes("SPAM") || moved.includes("SPAM");
+}
+
+/** Labels put on (`on`) or taken off a message → the change to its thread's view. */
+async function viewOf(
+  ids: string[],
+  on: boolean,
+  nameOf: (id: string) => Promise<string>,
+): Promise<RoomView> {
+  let view: RoomView = {};
+  const named: string[] = [];
+  for (const id of ids) {
+    if (NATURE.includes(id)) continue;
+    const field = VIEW_LABELS[id];
+    if (field) view = { ...view, ...field(on) };
+    else named.push(await nameOf(id));
+  }
+  return named.length ? { ...view, labels: on ? { added: named } : { removed: named } } : view;
+}
+
+/* ── the labels: a grant's names, asked once ──────────────────────────────────────── */
+
+interface LabelNames {
+  /** The label's name; its id when Gmail names it nothing. */
+  of(api: Api, key: string, id: string): Promise<string>;
+}
+
+/** Each grant's labels by id, from `labels.list` (the system labels name themselves),
+ *  asked once per grant per process and again when an id the cache does not hold turns up:
+ *  a label made since. */
+function labelNames(): LabelNames {
+  const cache = new Map<string, Map<string, string>>();
+  return {
+    async of(api, key, id) {
+      const hit = cache.get(key)?.get(id);
+      if (hit) return hit;
+      const res = await api("/labels");
+      if (!res.ok) {
+        await res.body?.cancel();
+        return id; // named by its id for now; a later change asks again
+      }
+      const { labels = [] } = await res.json() as { labels?: { id?: string; name?: string }[] };
+      const names = new Map(labels.flatMap((l) => l.id && l.name ? [[l.id, l.name]] : []));
+      cache.set(key, names);
+      return names.get(id) ?? id;
+    },
+  };
 }
 
 /** A full message → the shared shape, its attachments fetched onto its thread's shelf. */
