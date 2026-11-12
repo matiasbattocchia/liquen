@@ -67,7 +67,7 @@ import {
   unloadOf,
 } from "../render.ts";
 import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
-import { roomWords } from "../room.ts";
+import { roomOnly } from "../room.ts";
 import { clipStart } from "../exec/truncate.ts";
 import { SENDER_EMAIL, SENDER_NAME, senderEmail, senderFacts } from "../sender.ts";
 import { type Words, words } from "../i18n.ts";
@@ -99,7 +99,6 @@ import type {
   PermissionRequestEvent,
   PermissionResponseEvent,
   PresenceLevel,
-  RoomPart,
   Service,
   ToolUseEvent,
 } from "../types.ts";
@@ -174,8 +173,11 @@ export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): ()
     // CCs and copies never re-enter. A CC is OURS-not-yet-on-the-wire: agent-stamped with
     // no external_id at insert (§4). Agent presence ALONE no longer means ours — the
     // classifier stamps the principal's inbound rows too, and those (external_id always
-    // present: ingests refuse to mint without one) must still fan in.
-    if (e.type !== "message" || (e.agent && !e.envelope.external_id) || viaOf(e)) return;
+    // present: ingests refuse to mint without one) must still fan in. A room's change is
+    // no word to the agent: it stays in its room (§3).
+    if (
+      e.type !== "message" || (e.agent && !e.envelope.external_id) || viaOf(e) || roomOnly(e)
+    ) return;
     const { service, connection_address, conversation } = e.envelope;
     enqueue(e, async () => {
       const binding = aliasOf(
@@ -690,12 +692,6 @@ async function ccParts(
       ...(text ? [{ type: "text", kind: "text", text: `\`[${w.agent}]\` ${text}` } as const] : []),
       ...parts.filter((p) => p.type === "file"),
     ]);
-  }
-  // a room joining or leaving the mind — a steering room a connector met or lost — is the
-  // harness's word, carried by no principal
-  const room = parts.find((p): p is RoomPart => p.type === "data" && p.kind === "room");
-  if (room && e.agent === undefined) {
-    return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ${roomWords(room)}` }]);
   }
   // a principal's own line, coming back as output on another surface: what they said — a
   // reaction says its glyph — and whatever they sent with it

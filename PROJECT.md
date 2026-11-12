@@ -6659,6 +6659,31 @@ principal's self-chat.
   step's thinking, each checkpoint try. Whether any is said is still the level's and the
   cause's.
 
+### Room events inform and never wake, in one vocabulary (2026-11-11) — LANDED, experimental
+
+A survey of every room event the connectors can hear (142, across Slack, WhatsApp, Teams,
+GitHub, mail, local rooms and the mind) found 29 reaching the log and 26 of those waking
+the agent: a join in a steering room was a summons, a local room's change woke every
+member, a rename in a conversation the agent held the floor in woke it. None is owed an
+answer; each tells the agent about its surroundings.
+
+- **No room line wakes** (`roomOnly`, room.ts): `newsOf` and the cheap gate leave out a
+  message made of `room` parts alone, so no rung counts it, a named session's and the
+  mind's included. It is read when something else opens a turn.
+- **One vocabulary** (`RoomChange`, types.ts): beside `joined`/`left`/`name`, `reason`
+  (`added` · `removed` · `link`, which replaces `invite`), `was`, topic, description,
+  promotions, `state`, `settings`, pins, calls, linked rooms, a tracker's facts, and
+  `view` for the account's own app (archived, muted, read, labels). `roomPart` keeps only
+  what moved.
+- **The mind says nothing of rooms.** A steering room adopted or let go is recorded on
+  the account and no longer said in the mind (Slack, Teams), fan-in copies no room-only
+  line, and the mirror's `[system] joined …` is gone. A released room goes quiet without
+  a word: accepted while this runs, to revisit.
+- **Local rooms** say `created` with the name, `added`/`removed`, the name it `was`, and
+  the last leave says `closed`.
+- To tune after a day or two of running: whether the read lines (`view.read`) earn their
+  place, and whether a released steering room needs a word after all.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

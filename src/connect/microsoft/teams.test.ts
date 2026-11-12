@@ -948,7 +948,7 @@ Deno.test("teams surfaces: an owned account's chat with itself is its self-chat,
   });
 });
 
-Deno.test("teams surfaces: a group chat named as an agent with no account is its steering room on an org account — recorded once by id, let go when the account is out, said in the mind", async () => {
+Deno.test("teams surfaces: a group chat named as an agent with no account is its steering room on an org account — recorded once by id, let go when the account is out, said nowhere", async () => {
   await withVault(async (creds) => {
     await withOrg(async ({ log, store, writes }) => {
       await grantFor(creds, ORG_KEY, ORG_OID, undefined, { [TEAMS_SUB]: sub(CHAT_RES, "sub-o") });
@@ -999,19 +999,16 @@ Deno.test("teams surfaces: a group chat named as an agent with no account is its
         now: () => NOW,
       });
 
-      // a line in the org account's chat named "ventas": the room is recorded, and the mind
-      // is told before the line lands
+      // a line in the org account's chat named "ventas": the room is recorded before the
+      // line lands, and nothing is said of it
       await handler(told("sub-o", GROUP, "1"));
       assertEquals(writes, [{
         service: "microsoft",
         address: "org@contoso.com",
         extra: { mirrors: { rooms: { ventas: GROUP } } },
       }]);
-      assertEquals(rows.length, 2);
-      assertEquals(rows[0].envelope.conversation.address, "mind@ventas");
-      assertEquals(rows[0].parts, [
-        { type: "data", kind: "room", data: { joined: [{ address: GROUP, name: "ventas" }] } },
-      ]);
+      assertEquals(rows.length, 1);
+      assertEquals(rows[0].envelope.conversation.address, GROUP);
       const room = (await log.aliases()).find((a) => a.conversation === GROUP);
       assertEquals(room?.agentId, "ventas");
       assertEquals(room?.principal, undefined);
@@ -1023,7 +1020,7 @@ Deno.test("teams surfaces: a group chat named as an agent with no account is its
       await handler(told("sub-a", OWNED, "6"));
       assertEquals(writes.length, 1);
 
-      // the org account is taken out: the room is let go, and the mind is told
+      // the org account is taken out: the room is let go; the room's own line is all
       inGroup = [sol];
       rows.length = 0;
       await handler(told("sub-o", GROUP, "2"));
@@ -1032,10 +1029,7 @@ Deno.test("teams surfaces: a group chat named as an agent with no account is its
         address: "org@contoso.com",
         extra: { mirrors: { rooms: { ventas: null } } },
       });
-      assertEquals(rows[0].envelope.conversation.address, "mind@ventas");
-      assertEquals(rows[0].parts, [
-        { type: "data", kind: "room", data: { left: [{ address: GROUP, name: "ventas" }] } },
-      ]);
+      assertEquals(rows.map((r) => r.envelope.conversation.address), [GROUP]);
 
       // with the record gone, the next chat wearing the name is adopted
       await handler(told("sub-o", GROUP2, "4"));
@@ -1244,13 +1238,7 @@ Deno.test("teams keeper: a channel named as an agent with no account is its stee
         address: "org@contoso.com",
         extra: { mirrors: { rooms: { ventas: `${TEAM}/${VENTAS}` } } },
       }]);
-      assertEquals(rows.length, 1);
-      assertEquals(rows[0].envelope.conversation.address, "mind@ventas");
-      assertEquals(rows[0].parts, [{
-        type: "data",
-        kind: "room",
-        data: { joined: [{ address: `${TEAM}/${VENTAS}`, name: "Sales / ventas" }] },
-      }]);
+      assertEquals(rows.length, 0);
       const room = (await log.aliases()).find((a) => a.agentId === "ventas");
       assertEquals(room?.conversation, `${TEAM}/${VENTAS}`);
 
@@ -1265,11 +1253,7 @@ Deno.test("teams keeper: a channel named as an agent with no account is its stee
         address: "org@contoso.com",
         extra: { mirrors: { rooms: { ventas: null } } },
       });
-      assertEquals(rows.at(-1)?.parts, [{
-        type: "data",
-        kind: "room",
-        data: { left: [{ address: `${TEAM}/${VENTAS}` }] },
-      }]);
+      assertEquals(rows.length, 0);
       assertEquals((await log.aliases()).find((a) => a.agentId === "ventas"), undefined);
     });
   });

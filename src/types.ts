@@ -221,17 +221,114 @@ export type CalendarDiff = {
 };
 export type CalendarPart = DataPart<"calendar", CalendarData> & { diff?: CalendarDiff };
 
-/** A room's change, as the room's own line about it — who joined (added, or in by the
- *  room's link: `reason: "invite"`), who left (went, or was taken out), or the name it
- *  now wears. The line's sender is whoever made the change; each person is the address
- *  the service knows them by and the name it has for them. */
+/** A room's change, as the room's own line about it: anything a service says about a room
+ *  rather than in it. One vocabulary for every service, each field present only when the
+ *  change moved it. The line's sender is whoever made the change; each person is the
+ *  address the service knows them by and the name it has for them. A room line is never
+ *  news: it informs, and is read when something else wakes the agent (§2). */
 export type RoomMember = { address: string; name?: string };
-export type RoomPart = DataPart<"room", {
+/** Another room tied to this one, and how: a WhatsApp community and its groups, a GitHub
+ *  sub-issue, parent, dependency or stacked pull request. */
+export type RoomLink = { address: string; name?: string; as?: string };
+export type RoomState =
+  | "created"
+  | "archived"
+  | "unarchived"
+  | "deleted"
+  | "closed"
+  | "reopened"
+  | "merged"
+  | "draft"
+  | "ready"
+  | "queued"
+  | "dequeued"
+  | "locked"
+  | "unlocked"
+  | "suspended"
+  | "unsuspended";
+export type RoomChange = {
   joined?: RoomMember[];
   left?: RoomMember[];
+  /** How they came or went: put in or taken out by the line's sender, or in by the room's
+   *  link. Absent: they moved themselves. */
+  reason?: "added" | "removed" | "link";
+  promoted?: RoomMember[];
+  demoted?: RoomMember[];
+  /** The name it now wears; `was`, the one before, when the wire says. */
   name?: string;
-  reason?: string;
-}>;
+  was?: string;
+  /** The short headline and the longer about text; `""` when cleared. */
+  topic?: string;
+  description?: string;
+  /** The room's own lifecycle, for everyone in it. */
+  state?: RoomState;
+  /** Who may post (`send`) or edit the room (`info`), the disappearing timer, join
+   *  approval, visibility: each as the service words it, `"changed"` when it does not. */
+  settings?: Record<string, Json>;
+  /** A message pinned (the line's `ref_external_id` names it), or the room itself. */
+  pinned?: boolean;
+  call?: {
+    state: "started" | "ended" | "missed" | "rejected";
+    kind?: "audio" | "video" | "meeting" | "huddle" | "screen";
+    seconds?: number;
+    with?: RoomMember[];
+    recording?: string;
+    transcript?: string;
+  };
+  linked?: RoomLink[];
+  unlinked?: RoomLink[];
+  /** A Teams team around the channel, and its channels coming and going. */
+  team?: { name?: string; description?: string; state?: RoomState; joining?: string };
+  channels?: { added?: RoomLink[]; removed?: RoomLink[] };
+  /** Another organization in the room (Slack Connect, a shared Teams channel). */
+  shared?: { added?: string; removed?: string };
+  invite?: { state: string; from?: string };
+  /** A work tracker's facts on an issue or a pull request. */
+  labels?: { added?: string[]; removed?: string[] };
+  assigned?: RoomMember[];
+  unassigned?: RoomMember[];
+  review?: { requested?: RoomMember[]; removed?: RoomMember[]; dismissed?: boolean };
+  milestone?: string;
+  type?: string;
+  fields?: Record<string, Json>;
+  resolved?: boolean;
+  answered?: boolean;
+  category?: string;
+  pushed?: { commits: number; head?: string };
+  app?: { added?: string; removed?: string; upgraded?: string };
+  tab?: { added?: string; removed?: string; renamed?: string };
+  picture?: "set" | "removed";
+  invite_link?: "reset" | "set" | "removed";
+  reminder?: string;
+  /** The room has a new address: the line stands in the old one. */
+  moved?: { to: string };
+  /** Its past was rewritten (an import, a bulk edit): what was read may have changed. */
+  history?: "changed";
+  /** A change the connector cannot name, in the service's own words: never dropped. */
+  changed?: string[];
+  /** How the account's own app shows the room; nobody else in it sees this. */
+  view?: RoomView;
+};
+export type RoomView = {
+  archived?: boolean;
+  muted?: boolean;
+  /** When a mute ends, if it does. */
+  until?: string;
+  pinned?: boolean;
+  read?: boolean;
+  cleared?: boolean;
+  deleted?: boolean;
+  hidden?: boolean;
+  blocked?: boolean;
+  locked?: boolean;
+  favorite?: boolean;
+  labels?: { added?: string[]; removed?: string[] };
+  starred?: boolean;
+  spam?: boolean;
+  trashed?: boolean;
+  folder?: string;
+};
+export type RoomPart = DataPart<"room", RoomChange>;
 
 export type Part = TextPart | FilePart | DataPart | SharePart | RoomPart;
 

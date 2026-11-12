@@ -1131,7 +1131,7 @@ Deno.test("a member's DM with an owned bot is recorded on the bot's row (§4): m
   assertEquals(written.length, 1);
 });
 
-Deno.test("a channel named as an agent is its steering room on an org bot (§4): recorded once by id, released when the bot is out, said in the mind", async () => {
+Deno.test("a channel named as an agent is its steering room on an org bot (§4): recorded once by id, released when the bot is out, said nowhere", async () => {
   const { names } = fakeNames({
     "T1:C9": "ventas",
     "T1:C10": "ventas",
@@ -1167,7 +1167,7 @@ Deno.test("a channel named as an agent is its steering room on an org bot (§4):
     asBot({ type: "message", channel, channel_type: "channel", user: "U7", text: "x", ts });
 
   // the bot joins #ventas: its arrival records nothing — the room's lines adopt it, and the
-  // first is Slack's own "joined" line; the mind is told before that line lands
+  // first is Slack's own "joined" line, recorded before that line lands and said nowhere
   await handler(await asBot({ type: "member_joined_channel", user: "UBOT", channel: "C9" }));
   assertEquals(written, []);
   await handler(await line("C9", "1.0"));
@@ -1176,12 +1176,7 @@ Deno.test("a channel named as an agent is its steering room on an org bot (§4):
     address: "T1:UBOT",
     extra: { mirrors: { rooms: { ventas: "C9" } } },
   }]);
-  assertEquals(published.length, 2);
-  assertEquals(published[0].envelope.conversation.address, "mind@ventas");
-  assertEquals(published[1].envelope.conversation.address, "C9"); // the line itself
-  assertEquals((published[0] as MessageEvent).parts, [
-    { type: "data", kind: "room", data: { joined: [{ address: "C9", name: "#ventas" }] } },
-  ]);
+  assertEquals(published.map((e) => e.envelope.conversation.address), ["C9"]);
   bot.extra = { mirrors: { rooms: { ventas: "C9" } } };
 
   // a second channel wearing the name, a room named for nobody, and one named for an agent
@@ -1191,18 +1186,15 @@ Deno.test("a channel named as an agent is its steering room on an org bot (§4):
   await handler(await line("C11", "1.25"));
   assertEquals(written.length, 1);
 
-  // the bot is removed from #ventas: the record is released, and the mind is told
+  // the bot is removed from #ventas: the record is released, and nothing is said
+  const before = published.length;
   await handler(await asBot({ type: "member_left_channel", user: "UBOT", channel: "C9" }));
   assertEquals(written[1], {
     service: "slack",
     address: "T1:UBOT",
     extra: { mirrors: { rooms: { ventas: null } } },
   });
-  const left = published.at(-1) as MessageEvent;
-  assertEquals(left.envelope.conversation.address, "mind@ventas");
-  assertEquals(left.parts, [
-    { type: "data", kind: "room", data: { left: [{ address: "C9", name: "#ventas" }] } },
-  ]);
+  assertEquals(published.length, before);
 
   // with the record gone, the next channel the bot is met in under the name is adopted
   bot.extra = { mirrors: { rooms: {} } };
@@ -1284,6 +1276,7 @@ Deno.test("socket health: an app token Slack ended signs the rows out at once; i
 });
 
 Deno.test("the bot's arrival, said twice at once by Slack (§4): only the room's line adopts, once", async () => {
+  let writes = 0;
   const { names } = fakeNames({ "T1:C9": "ventas", "T1:UBOT": "liquen", "T1:U7": "Sol" });
   const bot: ConnectionRow = {
     service: "slack",
@@ -1297,6 +1290,7 @@ Deno.test("the bot's arrival, said twice at once by Slack (§4): only the room's
     upsertConnections: async (rows) => {
       // the store is slow, as a disk is: the second delivery is in flight while it writes
       await new Promise((r) => setTimeout(r, 5));
+      writes++;
       bot.extra = { ...bot.extra, ...rows[0].extra };
     },
     deleteMemberships: () => Promise.resolve(),
@@ -1321,9 +1315,7 @@ Deno.test("the bot's arrival, said twice at once by Slack (§4): only the room's
     }),
   ];
   await Promise.all(both.map((req) => handler(req)));
-  // one adoption, said once in the mind; the room's own line of the join is an event like
-  // any other
-  const told = published.filter((e) => e.envelope.conversation.address === "mind@ventas");
-  assertEquals(told.length, 1);
-  assertEquals(published.filter((e) => e.envelope.conversation.address === "C9").length, 1);
+  // one adoption, recorded once; the room's own line of the join is an event like any other
+  assertEquals(writes, 1);
+  assertEquals(published.map((e) => e.envelope.conversation.address), ["C9"]);
 });

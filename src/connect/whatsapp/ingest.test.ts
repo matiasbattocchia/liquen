@@ -356,7 +356,7 @@ Deno.test("a join by the group's link is the joiner's own line; the account's is
   assertEquals(link.parts[0], {
     type: "data",
     kind: "room",
-    data: { joined: [{ address: "5491100000002" }], reason: "invite" },
+    data: { joined: [{ address: "5491100000002" }], reason: "link" },
   });
   assertEquals(added.envelope.conversation.name, "Nuevo");
   assertEquals(added.envelope.sender, { address: "5491100000001" });

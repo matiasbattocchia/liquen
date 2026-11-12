@@ -673,7 +673,7 @@ Deno.test("attention: marks never make the digest due — a reaction, a deletion
   const joined = mark(3, {}, [{
     type: "data",
     kind: "room",
-    data: { joined: [{ address: "730@lid" }], reason: "invite" },
+    data: { joined: [{ address: "730@lid" }], reason: "link" },
   }]);
   assertEquals(decide([looked(30), thumb, gone, joined], SESSION, WAKE, NOON), "ignore");
   // however many pile up
@@ -819,6 +819,30 @@ Deno.test("attention: the summons is the mind alias and the local rooms, NOTHING
   assertEquals(
     decide([looked(1), world("slack:C1", 0, "ping @a1 wdyt?")], SESSION, WAKE, NOON),
     "ignore",
+  );
+});
+
+Deno.test("attention: a room's change wakes nobody — not the mind, a local room, a named session, nor the gate (§2)", () => {
+  const change = (conv: string, by?: Partial<Event>) =>
+    ev(
+      "message",
+      {
+        ...by,
+        conv,
+        ts: at(0),
+        parts: [{ type: "data", kind: "room", data: { joined: [{ address: "b@a3" }] } }],
+      } as Partial<Event> & { conv?: string },
+    );
+  const peer = { agent: { id: "a2", session_id: "mind" } };
+  assertEquals(decide([looked(1), change(MIND)], SESSION, WAKE, NOON), "ignore");
+  assertEquals(decide([looked(1), change("mind@a1,mind@a2", peer)], SESSION, WAKE, NOON), "ignore");
+  const build: Session = { id: "build", agentId: "a1", conversation: "build@a1" };
+  assertEquals(decide([change("build@a1,mind@a2", peer)], build, WAKE, NOON), "ignore");
+  assertEquals(relevant(CONFIG, change("mind@a1,mind@a2", peer)), false);
+  // the word that follows it is what wakes, and the change is read with it
+  assertEquals(
+    decide([looked(1), change("mind@a1,mind@a2", peer), world(MIND, 0)], SESSION, WAKE, NOON),
+    "think",
   );
 });
 
@@ -1430,7 +1454,7 @@ Deno.test("unansweredOn: a room's change of members is owed no answer", () => {
     parts: [{
       type: "data",
       kind: "room",
-      data: { joined: [{ address: "730@lid" }], reason: "invite" },
+      data: { joined: [{ address: "730@lid" }], reason: "link" },
     }] as Event["parts"],
   });
   assertEquals(unansweredOn([joined], SESSION, ACCOUNTS, "UTC"), []);

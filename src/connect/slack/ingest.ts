@@ -53,7 +53,7 @@ import type {
   MemberLeftChannelEvent,
   SlackEvent,
 } from "@slack/types";
-import { mindRoomLine, roomPart } from "../../room.ts";
+import { roomPart } from "../../room.ts";
 import type { Appender } from "../../store/log.ts";
 import {
   type ConnectionRow,
@@ -352,7 +352,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       const anchor = anchorOf(team, payload.authorizations);
       if (e.user !== undefined && e.user === botOf(team, anchor)) {
         if (e.type === "member_left_channel") {
-          await releaseRoom(deps, team, anchor, e.channel, boundUsers(payload.authorizations), now);
+          await releaseRoom(deps, team, anchor, e.channel);
         }
         return;
       }
@@ -367,7 +367,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       const channel = (e as { channel?: unknown }).channel;
       if (typeof channel !== "string") return;
       const anchor = anchorOf(team, payload.authorizations);
-      await releaseRoom(deps, team, anchor, channel, boundUsers(payload.authorizations), now);
+      await releaseRoom(deps, team, anchor, channel);
       return;
     }
     // a reaction is an ACTION event (§3): add/remove + the reacted message's id in
@@ -419,8 +419,8 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     if (e.channel && (e.channel_type === "channel" || e.channel_type === "group")) {
       const via = boundUsers(payload.authorizations);
       const left = e.subtype === "channel_leave" && e.user === botOf(team, anchor);
-      if (left) await releaseRoom(deps, team, anchor, e.channel, via, now);
-      else await adoptRoom(deps, team, anchor, e.channel, via, now);
+      if (left) await releaseRoom(deps, team, anchor, e.channel);
+      else await adoptRoom(deps, team, anchor, e.channel, via);
     }
     const msgs = await mapMessage(
       e,
@@ -514,16 +514,13 @@ async function recordDm(
 /** A steering room (§4): on an org bot, a channel named exactly as a roster agent is that
  *  agent's room, unless the agent owns an account. It is RECORDED the first time the bot
  *  is met in it (`extra.mirrors.rooms`, agent → channel), by id, so a rename never moves
- *  it and another channel wearing the name later is nobody's while the first holds it.
- *  The adoption is said in the agent's mind, which carries it to every surface of the
- *  mind, the room among them. */
+ *  it and another channel wearing the name later is nobody's while the first holds it. */
 async function adoptRoom(
   deps: SlackWebhookDeps,
   team: string,
   anchor: string,
   channel: string,
   via: string[],
-  now: () => string,
 ): Promise<void> {
   const { store, names } = deps;
   if (!store?.agents || !store.connections || !names || anchor === team) return;
@@ -541,21 +538,16 @@ async function adoptRoom(
     address: anchor,
     extra: { mirrors: { rooms: { [agent.agentId]: channel } } },
   }]);
-  await deps.publish(
-    mindRoomLine(agent.agentId, { joined: [{ address: channel, name: `#${name}` }] }, now()),
-  );
 }
 
 /** The bot is out of a room — it left, or the channel was archived: whatever agent's
  *  steering room it was is nobody's now, and the next channel to wear the name may be
- *  adopted. Said in the mind like the adoption. */
+ *  adopted. */
 async function releaseRoom(
   deps: SlackWebhookDeps,
   team: string,
   anchor: string,
   channel: string,
-  via: string[],
-  now: () => string,
 ): Promise<void> {
   const { store } = deps;
   if (!store || anchor === team) return;
@@ -568,9 +560,6 @@ async function releaseRoom(
     address: anchor,
     extra: { mirrors: { rooms: Object.fromEntries(held.map((agent) => [agent, null])) } },
   }]);
-  const name = await deps.names?.roomOf(team, channel, via);
-  const room = { address: channel, ...(name ? { name: `#${name}` } : {}) };
-  await deps.publish(held.map((agent) => mindRoomLine(agent, { left: [room] }, now())));
 }
 
 /** `channel_type` → `conversation.kind` (§4): im/mpim are member-DEFINED (direct — the

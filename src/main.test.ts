@@ -554,7 +554,7 @@ Deno.test("team chat: `conversation` adds, renames, lists and leaves — each ch
     }], "tool_use"),
     canned([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
-  // the script is ana's: bo and cy wake on every line said in the room and answer nothing
+  // the script is ana's: bo and cy wake on the words said in the room and answer nothing
   const { transport: quiet } = scripted([]);
   const byAgent: ModelTransport = (params, emit, meta, signal) =>
     (JSON.stringify(params.system).includes("self: ana") ? transport : quiet)(
@@ -611,13 +611,23 @@ Deno.test("team chat: `conversation` adds, renames, lists and leaves — each ch
         ];
       });
     assertEquals(said, [
-      [{ joined: [{ address: "mind@ana" }, { address: "mind@bo" }] }, "ops"],
+      [
+        {
+          state: "created",
+          name: "ops",
+          joined: [{ address: "mind@ana" }, { address: "mind@bo" }],
+        },
+        "ops",
+      ],
       ["hola", "ops"],
       ["¿y?", "ops"],
-      [{ joined: [{ address: "mind@cy" }] }, "ops"],
-      [{ name: "ops-q4" }, "ops-q4"],
-      [{ left: [{ address: "mind@bo" }, { address: "mind@cy" }] }, "ops-q4"],
-      [{ left: [{ address: "mind@ana" }] }, "ops-q4"],
+      [{ joined: [{ address: "mind@cy" }], reason: "added" }, "ops"],
+      [{ name: "ops-q4", was: "ops" }, "ops-q4"],
+      [
+        { left: [{ address: "mind@bo" }, { address: "mind@cy" }], reason: "removed" },
+        "ops-q4",
+      ],
+      [{ left: [{ address: "mind@ana" }], state: "closed" }, "ops-q4"],
     ]);
   } finally {
     await main.stop();

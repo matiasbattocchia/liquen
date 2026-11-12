@@ -82,7 +82,7 @@ import { LeaseLost, type Locker } from "./store/lock.ts";
 import { digits, sameHandle, speaksThrough } from "./store/roster.ts";
 import { foldName, namesMatch, preferProper } from "./store/names.ts";
 import { newId } from "./store/id.ts";
-import { roomPart } from "./room.ts";
+import { roomOnly, roomPart } from "./room.ts";
 import { type ToolShape, wordedAll } from "./tooldoc.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
 import type { ConversationRow } from "./store/connections.ts";
@@ -570,7 +570,8 @@ function justFailed(events: Event[]): boolean {
 export function relevant(config: AgentConfig, event: Event): boolean {
   switch (event.type) {
     case "message": // a peer's IS the work; our own closing message is the self-poke that
-      return !silenced(event); //   catches whatever landed mid-turn (§2)
+      //               catches whatever landed mid-turn (§2). A room's change never is
+      return !silenced(event) && !roomOnly(event);
     case "tool_use":
     case "tool_result": // never react to others' tools — ownership is the PAIR (§4); a
       //                   script's call lands answered, and its answer is the script's
@@ -765,11 +766,13 @@ function newsOf(events: Event[], session: Session): News[] {
   // did after its answer — OR a deny on one of our asks (§9), the principal's or the
   // lapse's: the call never runs, so the ruling is the whole of its word, and the turn that
   // reads it is where the agent redrafts. An allow is news through the outcome its errand
-  // reports; the agent's own withdrawal (turn_id) is no news to it. Whether news wakes is
-  // `attention`'s: a quiet one waits for a turn something else opens
+  // reports; the agent's own withdrawal (turn_id) is no news to it. A room's change is no
+  // news anywhere, a named session's rooms and the mind's included: it informs, read when
+  // something else opens a turn (§2). Whether news wakes is `attention`'s: a quiet one
+  // waits for a turn something else opens
   const news = (e: Event): e is News =>
     e.type === "alarm" || isUpdate(e, session) || denied(e, session) ||
-    (e.type === "message" && !ownVoice(e, session) && !silenced(e));
+    (e.type === "message" && !ownVoice(e, session) && !silenced(e) && !roomOnly(e));
   const last = lastClosing(events, session);
   if (last === -1) return events.filter(news);
   // resolve the horizon to a POSITION — the window may be re-sorted for display (§5)
@@ -1693,8 +1696,7 @@ function accountOf(c: ConnectionRow): string {
  *  name a mark on the room, never a message. */
 function spoken(e: MessageEvent): boolean {
   const a = e.payload?.action;
-  return a !== "add" && a !== "remove" && a !== "delete" &&
-    !(e.parts.length > 0 && e.parts.every((p) => p.type === "data" && p.kind === "room"));
+  return a !== "add" && a !== "remove" && a !== "delete" && !roomOnly(e);
 }
 
 /** The answer that is not words (§5): a reaction OUR side put on their line. A room whose
@@ -3348,8 +3350,9 @@ async function execute(
           sessionId: m.sessionId,
         })));
       }
-      // a room made now opens with its own line: its founding members joined, from the
-      // agent that made it — ahead of the message, which is the room's first word
+      // a room made now opens with its own line: created, its name, its founding members
+      // joined, from the agent that made it — ahead of the message, which is the room's
+      // first word and what wakes them
       if (local.create && local.room) {
         await ports.log.publish(
           {
@@ -3367,6 +3370,8 @@ async function execute(
               },
             },
             parts: [roomPart({
+              state: "created",
+              name: local.room.name,
               joined: local.members.map((m) => ({
                 address: sessionAddress(m.agentId, m.sessionId),
               })),
@@ -3671,9 +3676,9 @@ async function execute(
       }).filter((s, i, all) => all.findIndex((x) => same(x, s)) === i);
     };
     // the change, said in the room as the room's own line, from the agent that made it:
-    // after it is made, so the member just added is woken by it — except a leave, said
-    // before the leaving, since the law refuses the leaver the room's future and the line
-    // is the last it writes
+    // after it is made, so the member just added reads it — except a leave, said before
+    // the leaving, since the law refuses the leaver the room's future and the line is the
+    // last it writes. It wakes nobody: the word that follows it does (§2)
     const say = (change: Parameters<typeof roomPart>[0]) =>
       ports.log.publish(
         {
@@ -3703,7 +3708,10 @@ async function execute(
     } else {
       if (!member) throw new Error(`you are not in ${label}`);
       if (action === "leave") {
-        await say({ left: people([me]) });
+        // the last one out closes the room, said in the same line: nobody is left to read
+        // another
+        const last = room.members.every((m) => same(m, me));
+        await say({ left: people([me]), ...(last ? { state: "closed" as const } : {}) });
         await unenroll([me]);
         room.members = room.members.filter((m) => !same(m, me));
       } else if (action === "add") {
@@ -3711,7 +3719,7 @@ async function execute(
         if (who.length === 0) return roomView(room, kind);
         await enroll(who);
         room.members.push(...who);
-        await say({ joined: people(who) });
+        await say({ joined: people(who), reason: "added" });
       } else if (action === "remove") {
         const who = await named();
         if (who.some((s) => same(s, me))) throw new Error("to take yourself out, `leave`");
@@ -3719,14 +3727,15 @@ async function execute(
         if (out.length > 0) throw new Error(`${spell(out)} not in ${label}`);
         await unenroll(who);
         room.members = room.members.filter((m) => !who.some((w) => same(w, m)));
-        await say({ left: people(who) });
+        await say({ left: people(who), reason: "removed" });
       } else {
         // a rename keeps the kind: `#` is what a channel wears, not what makes one
         const to = String(args.name ?? "").replace(/^#/, "").trim();
         if (!to) throw new Error("`name` is the new name");
+        const was = row.name;
         await ports.log.renameConversation("local", row.connection, row.address, to);
         row.name = to;
-        await say({ name: to });
+        await say({ name: to, was });
       }
     }
     // the last one out closes the room: its name is free, its rows stay

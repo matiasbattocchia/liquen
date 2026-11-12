@@ -575,7 +575,12 @@ function mapRoom(
       ...(sender ? { sender } : {}),
       external_id: externalId(`room.${connection}.${g.address}.${ts}.${change}`),
     },
-    parts: [roomPart({ joined, left, name: renamed, reason: g.reason })],
+    parts: [roomPart({
+      joined,
+      left,
+      name: renamed,
+      ...(g.reason === "invite" ? { reason: "link" as const } : {}),
+    })],
     ...(Object.keys(marks).length ? { extra: marks } : {}),
   };
 }

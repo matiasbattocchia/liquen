@@ -84,7 +84,7 @@ import type {
   ReactionPart,
   RoomMember,
 } from "../../types.ts";
-import { mindRoomLine, roomPart } from "../../room.ts";
+import { roomPart } from "../../room.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { entry } from "../../entry.ts";
@@ -615,20 +615,19 @@ export function teamsMapper(deps: MapperDeps): (
     if (change) {
       names.forget(at.place); // its name or its members moved
       const info = await names.of(graph, at.place, oid);
-      const sender = change.by ?? change.joined?.[0] ?? change.left?.[0];
+      const { by, ...moved } = change;
+      const sender = by ?? change.joined?.[0] ?? change.left?.[0];
       const owner = sender ? await memberOf(sender.address, grants, info, deps.store) : undefined;
-      const moves = surfaces && at.place.kind === "chat"
-        ? [
-          ...await leftRooms(surfaces, address, info, change.left ?? [], grants, now),
-          ...await chatSurfaces(surfaces, address, info, undefined, grants, now),
-        ]
-        : [];
-      return [...moves, {
+      if (surfaces && at.place.kind === "chat") {
+        await leftRooms(surfaces, address, change.left ?? [], grants);
+        await chatSurfaces(surfaces, address, info, undefined, grants);
+      }
+      return [{
         ts: msg.createdDateTime ?? ts,
         type: "message",
         ...(owner ? { agent: { id: owner } } : {}),
         envelope: { ...envelope(ref, info.kind, info.name), ...(sender ? { sender } : {}) },
-        parts: [roomPart(change)],
+        parts: [roomPart(moved)],
       }];
     }
 
@@ -720,9 +719,9 @@ export function teamsMapper(deps: MapperDeps): (
     }
     // the mind surfaces this line meets, written down before it lands, so it is already
     // a line of the surface
-    const moves = surfaces && at.place.kind === "chat"
-      ? await chatSurfaces(surfaces, address, info, from?.id, grants, now)
-      : [];
+    if (surfaces && at.place.kind === "chat") {
+      await chatSurfaces(surfaces, address, info, from?.id, grants);
+    }
 
     const edit = changeType === "updated" && msg.lastEditedDateTime;
     const payload = {
@@ -733,7 +732,7 @@ export function teamsMapper(deps: MapperDeps): (
         : {}),
       ...(body.mentions.length ? { mentions: body.mentions } : {}),
     };
-    return [...moves, {
+    return [{
       ts: edit ? ts : msg.createdDateTime ?? ts,
       type: "message",
       ...stamp,
@@ -834,7 +833,7 @@ async function accountsIn(
  *    dms    on an owned account, a oneOnOne chat in which the other member writes, keyed
  *           by who that member is; the derivation keeps the principals among them
  *    rooms  on an org account, a group chat whose topic is exactly the name of an agent
- *           that owns no account; the adoption is said in the agent's mind
+ *           that owns no account
  *  `from` is the line's sender; a room's own line has none. */
 async function chatSurfaces(
   s: SurfaceStore,
@@ -842,9 +841,7 @@ async function chatSurfaces(
   info: PlaceInfo,
   from: string | undefined,
   grants: CredentialRow[],
-  now: () => string,
-): Promise<Draft<MessageEvent>[]> {
-  const notes: Draft<MessageEvent>[] = [];
+): Promise<void> {
   const members = info.members ?? [];
   for (const { id, row } of await accountsIn(s, info, grants)) {
     const mirrors = mirrorsOf(row);
@@ -867,9 +864,7 @@ async function chatSurfaces(
     const agent = await adoptable(s, info.title);
     if (!agent || mirrors.rooms?.[agent] !== undefined) continue;
     await write({ rooms: { [agent]: address } });
-    notes.push(mindRoomLine(agent, { joined: [{ address, name: info.name ?? agent }] }, now()));
   }
-  return notes;
 }
 
 /** The agent a room named `title` steers (§4): one of exactly that name that runs and owns
@@ -886,40 +881,30 @@ async function adoptable(s: SurfaceStore, title: string): Promise<string | undef
 async function leftRooms(
   s: SurfaceStore,
   address: string,
-  info: PlaceInfo,
   left: RoomMember[],
   grants: CredentialRow[],
-  now: () => string,
-): Promise<Draft<MessageEvent>[]> {
-  const notes: Draft<MessageEvent>[] = [];
+): Promise<void> {
   for (const m of left) {
     const grant = grantOf(m.address, grants);
     const row = grant && await s.connection(SERVICE, grant.key.slice(GRANT_PREFIX.length));
     if (!row || row.agentId) continue;
-    notes.push(...await letGo(s, row, (c) => c === address, now, info.name));
+    await letGo(s, row, (c) => c === address);
   }
-  return notes;
 }
 
-/** Drop an org account's steering rooms that `gone` says it is out of, each said in its
- *  agent's mind. */
+/** Drop an org account's steering rooms that `gone` says it is out of. */
 async function letGo(
   s: Pick<Connections, "upsertConnections">,
   row: ConnectionRow,
   gone: (conversation: string) => boolean,
-  now: () => string,
-  name?: string,
-): Promise<Draft<MessageEvent>[]> {
+): Promise<void> {
   const held = Object.entries(mirrorsOf(row).rooms ?? {}).filter(([, c]) => gone(c));
-  if (held.length === 0) return [];
+  if (held.length === 0) return;
   await s.upsertConnections([{
     service: SERVICE,
     address: row.address,
     extra: { mirrors: { rooms: Object.fromEntries(held.map(([agent]) => [agent, null])) } },
   }]);
-  return held.map(([agent, c]) =>
-    mindRoomLine(agent, { left: [{ address: c, ...(name ? { name } : {}) }] }, now())
-  );
 }
 
 /** Read bytes at `url` with the grant's token into the store; null when the wire refuses. */
@@ -1282,12 +1267,12 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
    *  org account's own view of its channels decides, at the hour the listing is asked. */
   const steer = async (grant: CredentialRow, channels: Channel[]): Promise<void> => {
     const s = surfaceStore(deps.store);
-    if (!s || !deps.publish || grant.agentId) return;
+    if (!s || grant.agentId) return;
     const row = await s.connection(SERVICE, grant.key.slice(GRANT_PREFIX.length));
     if (!row || row.agentId) return;
     const shown = new Set(channels.map((c) => c.address));
     const gone = (c: string) => c.includes("/") && !shown.has(c);
-    const notes = await letGo(s, row, gone, now);
+    await letGo(s, row, gone);
     const held = Object.fromEntries(
       Object.entries(mirrorsOf(row).rooms ?? {}).filter(([, c]) => !gone(c)),
     );
@@ -1300,11 +1285,7 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
         address: row.address,
         extra: { mirrors: { rooms: { [agent]: c.address } } },
       }]);
-      notes.push(
-        mindRoomLine(agent, { joined: [{ address: c.address, name: c.name ?? agent }] }, now()),
-      );
     }
-    if (notes.length) await deps.publish(notes);
   };
 
   return createPoller({

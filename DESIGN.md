@@ -194,9 +194,12 @@ next check, and picks up after a long quiet at once. It checks early when
 `digestAfterMessages` are unread **across the whole world** — the count measures how much has
 arrived, not how much arrived in one room, and there is nothing to exclude from it: what the
 principal says never accumulates, an engaged conversation wakes before it piles, a silenced one is not news.
-Both weigh words: a reaction, a deletion or a room's change is a **mark** nobody is owed an
-answer for, read when words make the check due and never making it due alone, and never
-counted unanswered.
+Both weigh words: a reaction or a deletion is a **mark** nobody is owed an answer for, read
+when words make the check due and never making it due alone, and never counted unanswered.
+A room's change is not news at all, on any rung: a join, a rename, an archive, a call, a
+read — in the mind, a local room, a named session or a conversation the agent holds the
+floor in — informs about the room and wakes nobody. It is read when something else opens a
+turn; in a local room that is the word the member who made the change says next.
 One look answers for every conversation because one look SEES every conversation: the turn
 reads a whole window, so the rooms it left alone were in front of the model too.
 Inside `sleepHours` ("23-8"-style on the org clock, null ⇒ never sleeps) it checks nothing:
@@ -993,9 +996,9 @@ it, and conversation identity (§3) says which platforms can host them:
   Slack ingest adopts a channel named exactly as an agent that owns no account, the first
   time the bot is met in it — by id, so a rename never moves it — and lets it go when the
   bot is out of the channel. Teams does the same with a group chat by its topic, and with
-  a channel from the org account's own listing of its teams. Both moves are said in the
-  agent's mind as room lines, which every
-  surface of the mind hears. The room stays the agent's once recorded, an account the agent
+  a channel from the org account's own listing of its teams. Neither move is said: the
+  record is the whole of it, and the room's own lines (a join, a rename) stay in the room,
+  never fanned in. The room stays the agent's once recorded, an account the agent
   later gets of its own included. No binding can name one person, so each line is signed by
   the sender the wire names, and a line naming none crosses as nothing. The roster's
   `principals` does not reach it: `[]` still says no member steers through a DM, and the
@@ -1473,8 +1476,14 @@ are rarer than `#`/`[` in real message bodies, so honest text seldom needs escap
   moment, so a `<before>` renders the same bytes on every step and in every process: a
   restart changes none of them. A message that IS one part — a lone data part or a bare attachment —
   hoists the envelope onto that part's own element and spends no `<msg>` wrapper. A
-  room's change is such a line on every service: `<room>` from whoever made it, carrying
-  who joined, who left, or the name the room now wears.
+  room's change is such a line on every service: `<room>` from whoever made it, its one
+  `room` part in one vocabulary for every service (`RoomChange`, types.ts): who joined or
+  left and how (`reason`: added · removed · link), who was promoted, the name and the one
+  it `was`, topic and description, the room's `state` (created · archived · closed ·
+  merged · …), its `settings`, a pin, a `call`, linked rooms, a tracker's labels and
+  assignees, and `view` — how the account's own app shows it (archived, muted, read,
+  labels), which nobody else in the room sees. A change the connector cannot name rides
+  `changed` in the service's words rather than being dropped.
 - **The address book, and what is still open beside it (outgoing first contact).**
   Everything above serves incoming traffic and replies: the model learns addresses from
   `address=` attributes, and `search` recovers off-window ones. An address the log has
@@ -2148,8 +2157,9 @@ with a time bound.
   and what it is called after are the `conversation` tool's — `show` (one's rooms and the
   public channels, or a room's members), `join` (a channel), `leave`, `add`, `remove` and
   `rename`. Any member may act, a rename keeps the kind, the last one out closes the room
-  (its name freed, its rows kept), and every change is said in the room as the agent's
-  own line, so the member just added reads it where it happened. A direct room is its
+  (its name freed, its rows kept; its leave says `closed`), and every change is said in
+  the room as the agent's own line, so the member just added reads it where it happened.
+  The line wakes nobody: what the adder says next does. A direct room is its
   members and takes no change. A wire's rooms are the wire's, reached through its rooms
   port (§9): `send` to a list of people there opens one on the account, through the port,
   and the same verbs change it through the same port, as the agent on that account —

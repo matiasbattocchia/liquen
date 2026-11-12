@@ -1487,24 +1487,14 @@ Deno.test("mirror fan-in: a steering room line that names no sender crosses as n
   });
 });
 
-Deno.test("mirror fan-out: a room joining the mind, said by the connector that met it, crosses as the harness's word", async () => {
-  await withRoom(async ({ publish, inConv, waitFor }) => {
+Deno.test("mirror fan-in: a steering room's change stays in its room: no word to the agent", async () => {
+  await withRoom(async ({ publish, inConv }) => {
     await publish({
-      ts: new Date().toISOString(),
-      type: "message",
-      envelope: {
-        service: "local",
-        connection_address: "default",
-        conversation: { address: "mind@sonar" },
-      },
-      parts: [{
-        type: "data",
-        kind: "room",
-        data: { joined: [{ address: "C9", name: "#sonar" }] },
-      }],
-    } as Draft<MessageEvent>);
-    await waitFor(async () => (await inConv("D1")).length === 1);
-    assertEquals(textOf((await inConv("D1"))[0]), "`[system]` joined #sonar");
+      ...roomLine("", { address: "u-ana", name: "Ana" }),
+      parts: [{ type: "data", kind: "room", data: { joined: [{ address: "u-bo", name: "Bo" }] } }],
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    assertEquals((await inConv("mind@sonar")).length, 0);
   });
 });
 
