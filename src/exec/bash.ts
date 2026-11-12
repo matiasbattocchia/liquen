@@ -28,7 +28,15 @@ import type { Bubble } from "./bubble.ts";
 import type { BinDir, Json } from "../types.ts";
 import { newId } from "../store/id.ts";
 import { MEDIA_MARK } from "../store/media.ts";
-import { MAX_BYTES, MAX_LINES, type MiddleCut, truncateMiddle, truncateTail } from "./truncate.ts";
+import {
+  MAX_BYTES,
+  MAX_LINES,
+  type MiddleCut,
+  MOST_BYTES,
+  MOST_LINES,
+  truncateMiddle,
+  truncateTail,
+} from "./truncate.ts";
 import { DEFAULT_BASH_WAIT_MS } from "../config.ts";
 import { USAGE } from "../bin/usage.ts";
 import type { ToolShape } from "../tooldoc.ts";
@@ -144,9 +152,14 @@ function userSpaceEnv(binPath?: string): Record<string, string> {
   return env;
 }
 
+/** The longest a call may hold its turn for a command, in seconds; past it the command
+ *  runs on and its end is told. An org whose own default is longer keeps that one in reach. */
+export const MOST_WAIT_S = 600;
+
 /** The bash tool's schema and the numbers its doc names — the same contract wherever the
  *  shell runs; its words are `system/tools/bash.md` (tooldoc.ts). */
 export function bashShape(waitMsDefault: number): ToolShape {
+  const wait = waitMsDefault / 1000;
   return {
     spec: {
       name: "bash",
@@ -154,20 +167,15 @@ export function bashShape(waitMsDefault: number): ToolShape {
         type: "object",
         properties: {
           command: { type: "string" },
-          wait: { type: "number" },
+          wait: { type: "number", default: wait, minimum: 0, maximum: Math.max(MOST_WAIT_S, wait) },
           wake: { type: "string" },
-          max_lines: { type: "number" },
-          max_bytes: { type: "number" },
+          max_lines: { type: "integer", default: MAX_LINES, minimum: 1, maximum: MOST_LINES },
+          max_bytes: { type: "integer", default: MAX_BYTES, minimum: 1, maximum: MOST_BYTES },
         },
         required: ["command"],
       },
     },
-    vars: {
-      wait: waitMsDefault / 1000,
-      max_lines: MAX_LINES,
-      max_kb: MAX_BYTES / 1024,
-      max_bytes: MAX_BYTES,
-    },
+    vars: { max_lines: MAX_LINES, max_kb: MAX_BYTES / 1024 },
   };
 }
 

@@ -12,8 +12,9 @@
  *
  * Everything before that block is the tool's description: a wrapped line joins the one
  * above it with a space, a line opening `- ` starts a line of its own, and a blank line
- * keeps a paragraph break. `{{name}}` stands for a number the code holds — a default, a
- * cap — filled from the tool's `vars`.
+ * keeps a paragraph break. `{{name}}` stands for a number the code holds, filled from the
+ * tool's `vars`. A parameter's own default and range are its schema's (bounds.ts): the
+ * line of a bounded parameter ends with them, written here, and says neither itself.
  *
  * The file and the schema must agree: every top-level parameter has its item, every item
  * names a parameter, every placeholder a var. Any mismatch is an error naming the file,
@@ -21,6 +22,7 @@
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
+import { boundsSaid, isBounded } from "./bounds.ts";
 
 export type ToolVars = Record<string, string | number>;
 
@@ -101,7 +103,13 @@ export function worded(shape: ToolShape, text: string): Anthropic.Tool {
   const params = Object.keys(props).length > 0 ? blocks.pop()! : [];
   if (blocks.length === 0) throw new Error(`${file}: no description before the parameters`);
   const items = itemsOf(params, file);
-  const describe = (schema: Props, given: Map<string, Item>, whole: boolean): Props => {
+  const requiredOf = (s: unknown) => ((s as { required?: string[] } | undefined)?.required) ?? [];
+  const describe = (
+    schema: Props,
+    required: string[],
+    given: Map<string, Item>,
+    whole: boolean,
+  ): Props => {
     for (const key of given.keys()) {
       if (!(key in schema)) throw new Error(`${file}: \`${key}\` is not a parameter of ${name}`);
     }
@@ -117,16 +125,28 @@ export function worded(shape: ToolShape, text: string): Anthropic.Tool {
       if (item.fields.size > 0 && !prop.properties && !each?.properties) {
         throw new Error(`${file}: \`${key}\` has no fields to describe`);
       }
+      // a bounded parameter's default, range and whether it is optional are the schema's,
+      // said at the end of its line, so the line says none of them itself
+      const bounds = isBounded(prop);
+      if (bounds && /\b(optional|default)\b/i.test(item.text)) {
+        throw new Error(`${file}: \`${key}\` says what its schema's bounds say`);
+      }
       out[key] = {
         ...prop,
         ...(prop.properties
-          ? { properties: describe(prop.properties as Props, item.fields, false) }
+          ? {
+            properties: describe(prop.properties as Props, requiredOf(prop), item.fields, false),
+          }
           : each?.properties
           ? {
-            items: { ...each, properties: describe(each.properties as Props, item.fields, false) },
+            items: {
+              ...each,
+              properties: describe(each.properties as Props, requiredOf(each), item.fields, false),
+            },
           }
           : {}),
-        description: fill(item.text),
+        description: fill(item.text) +
+          (bounds ? ` (${boundsSaid(prop, required.includes(key))})` : ""),
       };
     }
     return out;
@@ -134,7 +154,10 @@ export function worded(shape: ToolShape, text: string): Anthropic.Tool {
   return {
     ...shape.spec,
     description: blocks.map(unwrap).map(fill).join("\n\n"),
-    input_schema: { ...shape.spec.input_schema, properties: describe(props, items, true) },
+    input_schema: {
+      ...shape.spec.input_schema,
+      properties: describe(props, requiredOf(shape.spec.input_schema), items, true),
+    },
   };
 }
 

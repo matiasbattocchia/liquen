@@ -2106,8 +2106,10 @@ a hit on the same page (`?` beyond it), and every stamp with its year, since a s
 where a bare `16 Sep` is ambiguous. A path read in a result works in bash. Nothing in a page
 is new to a model that reads its window; that is the point. A mirror copy (`extra.via`) is
 never a hit — its original is a row and matches on its own, so no sentence is shown twice.
-A page is the most recent `limit` matches (xi's `SEARCH_LIMIT` when unset, the same
-default-with-override shape bash's output caps have); when older matches were cut, a closing
+A page is the most recent `limit` matches (5 when unset, 20 at most), and of those as many
+as fit 16KB of lines (`SEARCH_PAGE_BYTES`), the oldest going first: a match is its whole
+line, and one line can be a long mail. A wide search tells where something was said, and
+each of those conversations is read with a call of its own, `in` it. When older matches were cut, a closing
 harness line says so and names the moment the next call passes as `before` (strict, so a
 shared instant at the cut moves whole to the next page). No filter is required: `in` with a
 time bound and no `text` reads a stretch of a conversation as it happened. **`around: n`**
@@ -2695,10 +2697,19 @@ code holds the schema the handler reads (names, types, enums, `required`) and no
 Render lays no tool doc out — its words reach the model as the request's `tools` — and
 each turn reads it by name. After the frontmatter, the file is the description, then a last block with one item per
 parameter (`- name: what it is`, an object's fields indented under it); `{{name}}` stands
-for a number the code holds — a cap, a default — filled from the tool's `vars`. The file
-and the schema must agree item for item: boot checks every builtin's file and refuses to
-start on the first that disagrees, naming it, and a turn whose read disagrees fails the
-same way.
+for a number the code holds, filled from the tool's `vars`. The file and the schema must
+agree item for item: boot checks every builtin's file and refuses to start on the first
+that disagrees, naming it, and a turn whose read disagrees fails the same way.
+
+**A parameter's bounds are its schema's** (`src/bounds.ts`). Each count a tool takes
+declares its `default`, `minimum` and `maximum`, and each list its `maxItems`, from the
+constants the code holds, so the schema is their one source and the model reads them
+there. Tooldoc ends a bounded parameter's line with them (`optional; default 5; 1–20`),
+and refuses a line that says its own. `bounded` holds every call to them before it is
+gated, the model's and a script's alike: a value out of range or not of its kind, or a
+list past its length, is refused with what it must be, never a card in front of the
+principal, and the call that runs has every default filled in, so no handler keeps one of
+its own. A number no schema bounds (a pin's latitude) is the handler's to read.
 
 So the durable substrate is a config switch: **files (`bash` + binaries) ⟺ db (the doc
 calls + functions)**; `bash`-for-scratch rides along regardless. The switch is the docs'

@@ -14,7 +14,7 @@ import type { DocCalls } from "../store/docs.ts";
 import type { ExecTool } from "../xi.ts";
 import type { Json } from "../types.ts";
 import type { ToolShape } from "../tooldoc.ts";
-import { MAX_BYTES, MAX_LINES } from "./truncate.ts";
+import { MAX_BYTES, MAX_LINES, MOST_BYTES, MOST_LINES } from "./truncate.ts";
 
 /** The three tools' schemas and the numbers their docs name. */
 export const DOC_TOOLS: Record<"read" | "write" | "edit", ToolShape> = {
@@ -25,14 +25,14 @@ export const DOC_TOOLS: Record<"read" | "write" | "edit", ToolShape> = {
         type: "object",
         properties: {
           handle: { type: "string" },
-          offset: { type: "number" },
-          limit: { type: "number" },
-          max_bytes: { type: "number" },
+          offset: { type: "integer", default: 1, minimum: 1 },
+          limit: { type: "integer", default: MAX_LINES, minimum: 1, maximum: MOST_LINES },
+          max_bytes: { type: "integer", default: MAX_BYTES, minimum: 1, maximum: MOST_BYTES },
         },
         required: ["handle"],
       },
     },
-    vars: { max_lines: MAX_LINES, max_kb: MAX_BYTES / 1024, max_bytes: MAX_BYTES },
+    vars: { max_lines: MAX_LINES, max_kb: MAX_BYTES / 1024 },
   },
   write: {
     spec: {

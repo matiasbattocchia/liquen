@@ -6740,6 +6740,30 @@ laptop, a restart, or a call that failed, which cleared the armed ping and armed
 - Open: a `search` page is bounded by its count of matches, not its size, and one of 40
   matches came to 29k characters.
 
+### A tool's numbers and lists are bounded in its schema, and a search page in bytes (2026-11-12) — LANDED
+
+An audit of the builtin tools found eight numeric parameters and three lists. Defaults lived
+in each handler and in the doc's words, and no schema said any of them. Only `around` had a
+range; `bash` and `read` took any number, zero and negatives too. The 29k-character page
+was a 40-match search over voice notes for a monthly-fees record, and its default was 50.
+
+- **The schema is the one source** (`src/bounds.ts`): `default`, `minimum`, `maximum` and
+  `maxItems`, from constants. Tooldoc ends the parameter's line with them and refuses a
+  line that says its own. `bounded` holds every call before the gate, the model's and a
+  script's, refusing what is out of range with the range, and fills the defaults.
+- **The values**: `search.limit` 5, 1–20; `around` 0–10; `search.text` up to 10 phrases;
+  `send.files` and `send.contacts` up to 10, a card's phones up to 5; `bash.max_lines` and
+  `read.limit` 2000, up to 8000; `bash.max_bytes` and `read.max_bytes` 50KB, up to 200KB;
+  `bash.wait` 0–600 seconds, or the org's own default when that is longer; `read.offset`
+  1 or more.
+- **A search page holds 16KB of lines** (`SEARCH_PAGE_BYTES`), its calls page too: past
+  it the oldest matches wait for `before`, as past `limit`.
+- **One call per conversation**: `search.md` says a wide search tells where something was
+  said, and each conversation is then read `in` it, by a call of its own.
+- Gemini's Interactions API takes `default`, `minimum`, `maximum` and `maxItems` in a
+  function's parameters (a live call on `gemini-4-argon`, 200), so both transports send the
+  schema as it is.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

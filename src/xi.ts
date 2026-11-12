@@ -84,6 +84,7 @@ import { foldName, namesMatch, preferProper } from "./store/names.ts";
 import { newId } from "./store/id.ts";
 import { roomOnly, roomPart } from "./room.ts";
 import { type ToolShape, wordedAll } from "./tooldoc.ts";
+import { bounded } from "./bounds.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
 import type { ConversationRow } from "./store/connections.ts";
 import { momentOf } from "./moment.ts";
@@ -1981,6 +1982,14 @@ async function answerer(
       return false;
     }
     const { name, input } = use.parts[0].data;
+    // a call is held to its schema's bounds before anyone rules on it (bounds.ts): one out
+    // of range is the model's to make again, never a card in front of the principal
+    try {
+      bounded(schemaOf(name, ports), inputOf(use));
+    } catch (err) {
+      out.push(await resultOf(use, (err as Error).message, { is_error: true }));
+      return false;
+    }
     // a send AT THE PRINCIPAL is refused before it is gated: the assistant channel already
     // reaches them, so this call has no destination to approve — asking would put a card
     // in front of them whose only outcomes are a message they were already getting and a
@@ -3185,6 +3194,17 @@ async function selfSend(
     "turn closes.";
 }
 
+/** The schema a call is held to: the harness's own tool's, or the exec plane's. */
+function schemaOf(name: string, ports: XiPorts): unknown {
+  return (OWN_TOOLS.find((t) => t.spec.name === name) ?? ports.exec?.[name])?.spec.input_schema;
+}
+
+/** A call's input as an object: a call with none takes its defaults. */
+function inputOf(use: ToolUseEvent): Record<string, unknown> {
+  const input = use.parts[0].data.input;
+  return typeof input === "object" && input !== null && !Array.isArray(input) ? input : {};
+}
+
 /** Tool-supplied renderings, by name (§9) — the built-ins' live in `describe.ts`. */
 function describersOf(ports: XiPorts): Record<string, Describe> {
   const out: Record<string, Describe> = {};
@@ -3203,8 +3223,10 @@ async function execute(
   ports: XiPorts,
   report?: (facts: ExecFacts) => void,
 ): Promise<Json | ExecOutcome> {
-  const { name, input } = use.parts[0].data;
-  const args = input as Record<string, Json>;
+  const { name } = use.parts[0].data;
+  // the input as its schema holds it (bounds.ts): every default filled in
+  const args = bounded(schemaOf(name, ports), inputOf(use)) as Record<string, Json>;
+  const input: Json = args;
   if (name === "cancel") {
     // withdraw an open ask (§9): the one settlement invariant does all the work — a
     // permission_response ref'ing the use closes the card, so the anchor line drops and a
@@ -4000,9 +4022,24 @@ async function referent(
   return target;
 }
 
-/** How many matches a search page holds when the model names no `limit` — the same
- *  default-with-override shape bash's output caps have. */
-const SEARCH_LIMIT = 50;
+/** How many matches a search page holds when the model names no `limit`, and the most it
+ *  may name: a few to find where something was said, and a page to read past that. */
+const SEARCH_LIMIT = 5;
+const SEARCH_MOST = 20;
+
+/** The most of a page's lines, in bytes: past it the oldest matches wait for the next page,
+ *  as they do past `limit`, since a match is its whole line and one line can be a long
+ *  mail. Some 4k tokens. */
+const SEARCH_PAGE_BYTES = 16 * 1024;
+
+/** The most phrases one search names: words guessed at go in one call, a list of topics in
+ *  several. */
+const SEARCH_PHRASES = 10;
+
+/** The most files one send attaches, cards it carries, and numbers one card holds. */
+const SEND_FILES = 10;
+const SEND_CARDS = 10;
+const CARD_PHONES = 5;
 
 /** What a search page is rendered with: whose eyes (`session`), the roster's names, the
  *  accounts' names (`<conn name>`), the org's clock — the window's own inputs — and where
@@ -4076,6 +4113,19 @@ async function seenBy(
 }
 
 /** `text` as the model sent it, one phrase or a list of them: always a list, of strings. */
+const encoder = new TextEncoder();
+const bytesOf = (s: string) => encoder.encode(s).length;
+
+/** A page's rows from `from` on. `before` is strict, so the next page opens below the oldest
+ *  row's moment, which would lose a cut row on that same instant: the whole instant then
+ *  moves to the next page, unless the page is nothing but that instant. */
+function cutBelow<T extends { ts: string }>(rows: T[], from: number): T[] {
+  const page = rows.slice(from);
+  if (from === 0 || page.length === 0 || rows[from - 1].ts !== page[0].ts) return page;
+  const rest = page.filter((e) => e.ts !== page[0].ts);
+  return rest.length > 0 ? rest : page;
+}
+
 function phrasesOf(text: unknown): string[] | undefined {
   if (text === undefined) return undefined;
   const list = Array.isArray(text) ? text : [text];
@@ -4114,16 +4164,8 @@ async function search(
   // the agent's whole past, not the session's window (§6): a sibling session searches the
   // same log the mind does
   const log = ports.history ?? ports.log;
-  const limit = args.limit ?? SEARCH_LIMIT;
-  if (!Number.isInteger(limit) || limit < 1) {
-    throw new Error(`limit must be a positive integer, got ${JSON.stringify(args.limit)}`);
-  }
-  const around = args.around ?? 0;
-  if (!Number.isInteger(around) || around < 0 || around > AROUND_MAX) {
-    throw new Error(
-      `around must be an integer from 0 to ${AROUND_MAX}, got ${JSON.stringify(args.around)}`,
-    );
-  }
+  // held to the schema before the call was gated (bounds.ts): both are there, in range
+  const { limit, around } = args as Required<Pick<SearchArgs, "limit" | "around">>;
   if (args.id !== undefined) return await searchId(log, String(args.id), around, view);
   args = { ...args, text: phrasesOf(args.text) };
   if (args.calls) return await searchCalls(log, self, args, limit, view);
@@ -4192,16 +4234,27 @@ async function search(
       ? { filter: (e: Event) => authorKeyOf(e as MessageEvent, view.session, view.roster) === role }
       : {}),
   }) as MessageEvent[];
-  const more = rows.length > limit;
-  let page = more ? rows.slice(1) : rows;
-  // `before` is strict, so the next page opens below the oldest hit's moment — which
-  // would lose a row that shares that moment and fell past the cut. When the dropped row
-  // sits on the same instant as the page's oldest, the whole instant moves to the next
-  // page (unless the page is nothing but that instant, where there is nothing to move).
-  if (more && rows[0].ts === page[0].ts) {
-    const rest = page.filter((e) => e.ts !== rows[0].ts);
-    if (rest.length > 0) page = rest;
+  const render = async (hits: MessageEvent[]) => {
+    const { lines, opts } = around > 0
+      ? await surround(log, hits, around)
+      : { lines: hits, opts: {} };
+    const seen = await view.seen?.(lines);
+    return renderHits(lines, view.session, view.roster, view.zone, view.connections, {
+      ...opts,
+      ...(seen ? { seen } : {}),
+    });
+  };
+  // the newest `limit` matches, then as many of those as the page's bytes hold, the oldest
+  // going first: whatever is cut waits for `before`
+  let page = cutBelow(rows, rows.length > limit ? 1 : 0);
+  let hits = page.length === 0 ? "" : await render(page);
+  while (page.length > 1 && bytesOf(hits) > SEARCH_PAGE_BYTES) {
+    // in proportion, then a look again: a page of long lines fits in two or three
+    const keep = Math.floor(page.length * SEARCH_PAGE_BYTES / bytesOf(hits));
+    page = cutBelow(page, page.length - Math.max(1, Math.min(page.length - 1, keep)));
+    hits = await render(page);
   }
+  const more = page.length < rows.length;
   // a page that reaches one room's newest line is a reading of that room, the one a send
   // asks for (`unreadOf`): it carries the docs that name the room, whole
   const [newest] = conversations?.length === 1 && page.length > 0
@@ -4216,18 +4269,9 @@ async function search(
   const kept = newest && page.some((e) => e.id === newest.id)
     ? await roomDocs(ports, self.id, newest.envelope.service, conversations![0])
     : [];
-  const { lines, opts } = around > 0
-    ? await surround(log, page, around)
-    : { lines: page, opts: {} };
   const mine = contacts === undefined && profiles.length === 0 ? [] : await accounts(self, ports);
   const books = contacts === undefined ? [] : bookLines(mine, contacts);
-  const seen = await view.seen?.(lines);
-  const lines_ = page.length === 0 ? [] : [
-    renderHits(lines, view.session, view.roster, view.zone, view.connections, {
-      ...opts,
-      ...(seen ? { seen } : {}),
-    }),
-  ];
+  const lines_ = page.length === 0 ? [] : [hits];
   const older = more
     ? [`— older matches not shown — search again with before="${page[0].ts}" to read on —`]
     : [];
@@ -4381,11 +4425,10 @@ async function searchCalls(
     if (use.type === "tool_use" && done(use)) pairs.push({ use });
   }
   const ids = pairs.map((p) => p.use.id).sort().slice(-(limit + 1));
-  const more = ids.length > limit;
-  const page = more ? ids.slice(1) : ids;
-  if (page.length === 0) return "nothing matched";
+  const listed = ids.length > limit ? ids.slice(1) : ids;
+  if (listed.length === 0) return "nothing matched";
   const byId = new Map(pairs.map((p) => [p.use.id, p.use]));
-  const shown = await Promise.all(page.map(async (id) => {
+  const shown = await Promise.all(listed.map(async (id) => {
     const use = byId.get(id)!;
     return { use, answer: await answerOf(log, use) };
   }));
@@ -4398,10 +4441,16 @@ async function searchCalls(
       ...(use.agent?.session_id !== view.session.id ? { session: use.agent?.session_id } : {}),
     });
   });
-  const older = more
+  // as many of the newest as the page's bytes hold, as a page of lines does; an id bound
+  // is the log's own order, so no instant straddles the cut
+  let from = 0;
+  let size = bytesOf(lines.join("\n"));
+  while (from < lines.length - 1 && size > SEARCH_PAGE_BYTES) size -= bytesOf(lines[from++]) + 1;
+  const page = listed.slice(from);
+  const older = page.length < ids.length
     ? [`— older calls not shown — search again with before="${shortId(page[0])}" to read on —`]
     : [];
-  return [...lines, ...older].join("\n");
+  return [...lines.slice(from), ...older].join("\n");
 }
 
 /** A search bound (§6): a moment, or a line's id, which bounds by the log's own order and
@@ -4634,7 +4683,7 @@ export const OWN_TOOLS: ToolShape[] = [
           subject: { type: "string" },
           react: { type: "string" },
           action: { type: "string", enum: ACTIONS },
-          files: { type: "array", items: { type: "string" } },
+          files: { type: "array", items: { type: "string" }, maxItems: SEND_FILES },
           location: {
             type: "object",
             properties: {
@@ -4647,11 +4696,12 @@ export const OWN_TOOLS: ToolShape[] = [
           },
           contacts: {
             type: "array",
+            maxItems: SEND_CARDS,
             items: {
               type: "object",
               properties: {
                 name: { type: "string" },
-                phones: { type: "array", items: { type: "string" } },
+                phones: { type: "array", items: { type: "string" }, maxItems: CARD_PHONES },
               },
               required: ["name", "phones"],
             },
@@ -4672,15 +4722,15 @@ export const OWN_TOOLS: ToolShape[] = [
           connection: { type: "string" },
           before: { type: "string" },
           after: { type: "string" },
-          text: { type: "array", items: { type: "string" } },
-          limit: { type: "integer" },
-          around: { type: "integer" },
+          text: { type: "array", items: { type: "string" }, maxItems: SEARCH_PHRASES },
+          limit: { type: "integer", default: SEARCH_LIMIT, minimum: 1, maximum: SEARCH_MOST },
+          around: { type: "integer", default: 0, minimum: 0, maximum: AROUND_MAX },
           calls: { type: "boolean" },
           id: { type: "string" },
         },
       },
     },
-    vars: { search_limit: SEARCH_LIMIT, around_max: AROUND_MAX, call_clip: CALL_CLIP },
+    vars: { call_clip: CALL_CLIP },
   },
   {
     spec: {

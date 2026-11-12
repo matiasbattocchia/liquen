@@ -10,6 +10,11 @@
 export const MAX_LINES = 2000;
 export const MAX_BYTES = 50 * 1024;
 
+/** The most a call may ask for past those: four times each, some 50k tokens at the bytes'
+ *  end, which is a whole window's worth of one output. */
+export const MOST_LINES = 4 * MAX_LINES;
+export const MOST_BYTES = 4 * MAX_BYTES;
+
 export interface Truncation {
   text: string;
   truncated: boolean;

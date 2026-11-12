@@ -3755,6 +3755,54 @@ Deno.test("search hands back the line the window shows, and pages on the oldest 
   );
 });
 
+Deno.test("search holds a page to its bytes, the oldest of long matches waiting, and to five by default", async () => {
+  // six long lines that match, some 5k characters each: a page of 16KB holds three, and
+  // the closing line pages on from the oldest it shows. Seven short ones and no `limit`:
+  // five come back.
+  const row = (m: number, text: string): Draft<MessageEvent> => ({
+    ts: `2026-09-04T12:${String(m).padStart(2, "0")}:00Z`,
+    type: "message",
+    envelope: {
+      service: "local",
+      connection_address: "default",
+      conversation: { address: "gira", kind: "group", name: "Gira Norte" },
+      sender: { address: "german", name: "Germán" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  });
+  const long = (n: number) => `nafta ${n} ` + "x".repeat(5000);
+  await scenario(
+    [
+      ok([{ kind: "tool_use", name: "search", input: { text: ["nafta"], limit: 20 } }], "tool_use"),
+      ok([{
+        kind: "tool_use",
+        name: "search",
+        input: { text: ["nafta"], limit: 20, before: "2026-09-04T12:03:00Z" },
+      }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { text: ["peaje"] } }], "tool_use"),
+      ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+    ],
+    async ({ publish, read }) => {
+      await publish(principalMsg("qué gastamos"));
+      await waitFor(async () => (await read("tool_result")).length === 3);
+      const [page, rest, short] = (await read("tool_result"))
+        .map((e) => (e as ToolResultEvent).parts[0].data.output as string);
+      const shown = (s: string) => [...s.matchAll(/>(nafta \d|peaje \d)/g)].map((m) => m[1]);
+      assertEquals(shown(page), ["nafta 3", "nafta 4", "nafta 5"]);
+      assertMatch(page, /search again with before="2026-09-04T12:03:00(\.000)?Z" to read on —$/);
+      assertEquals(shown(rest), ["nafta 0", "nafta 1", "nafta 2"]);
+      assertEquals(rest.includes("older matches"), false);
+      assertEquals(shown(short), ["peaje 2", "peaje 3", "peaje 4", "peaje 5", "peaje 6"]);
+      assertStringIncludes(short, "older matches not shown");
+    },
+    {},
+    [
+      ...[0, 1, 2, 3, 4, 5].map((n) => row(n, long(n))),
+      ...[0, 1, 2, 3, 4, 5, 6].map((n) => row(10 + n, `peaje ${n}`)),
+    ],
+  );
+});
+
 Deno.test("search shows a sentence once: a mirror copy is not a hit, and a shared instant pages whole", async () => {
   // the CC of a turn into the principal's chat carries `extra.via` — the same words as the
   // mind row, on another surface. Search finds the original and stays quiet about the copy.
@@ -3862,7 +3910,7 @@ Deno.test("search around: a match among its neighbours, stretches merged, the ga
         [...text.matchAll(/<msg [^>]* match seen="window">([^<]*)</g)].map((m) => m[1]),
         ["nafta", "nafta de nuevo", "aceite y nafta"],
       );
-      assertStringIncludes(JSON.stringify(refused.parts), "around must be an integer from 0 to");
+      assertStringIncludes(JSON.stringify(refused.parts), "around is an integer, 0–10: got 99");
     },
     {},
     [

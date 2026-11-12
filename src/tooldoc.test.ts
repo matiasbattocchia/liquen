@@ -1,4 +1,11 @@
-import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
+import type Anthropic from "@anthropic-ai/sdk";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { checkToolDocs, toolDocName, type ToolShape, worded, wordedAll } from "./tooldoc.ts";
 import { OWN_TOOLS } from "./xi.ts";
 import { bashShape } from "./exec/bash.ts";
@@ -108,6 +115,31 @@ Deno.test("worded: a list of objects describes its items' fields", () => {
   });
 });
 
+Deno.test("worded: a bounded parameter's line ends with its schema's bounds, and says none itself", () => {
+  const bounded: ToolShape = {
+    spec: {
+      name: "pin",
+      input_schema: {
+        type: "object",
+        properties: {
+          at: { type: "string" },
+          limit: { type: "integer", default: 5, minimum: 1, maximum: 20 },
+        },
+        required: ["at"],
+      },
+    },
+  };
+  const props = worded(bounded, "Drop a pin.\n\n- at: where\n- limit: how many\n")
+    .input_schema.properties as Record<string, { description: string }>;
+  assertEquals(props.at.description, "where");
+  assertEquals(props.limit.description, "how many (optional; default 5; 1–20)");
+  assertThrows(
+    () => worded(bounded, "Drop a pin.\n\n- at: where\n- limit: how many (optional)\n"),
+    Error,
+    "system/tools/pin.md: `limit` says what its schema's bounds say",
+  );
+});
+
 Deno.test("worded: a tool with no parameters is prose alone", () => {
   const shape = { spec: { name: "ping", input_schema: { type: "object" as const } } };
   assertEquals(worded(shape, "Say hi.\n").description, "Say hi.");
@@ -132,11 +164,23 @@ Deno.test("the seeded docs word every builtin tool, the numbers filled from code
     await checkToolDocs(shapes, read);
     const tools = await wordedAll(shapes, read);
     const bash = tools.find((t) => t.name === "bash")!;
-    assertStringIncludes(bash.description!, "up to wait seconds (default 120)");
     assertStringIncludes(bash.description!, "past 2000 lines / 50KB");
     assertStringIncludes(bash.description!, "\n- aedit, over sed -i/perl -pi:");
+    const param = (t: Anthropic.Tool, key: string) =>
+      (t.input_schema.properties as Record<string, { description: string }>)[key].description;
+    assert(param(bash, "wait").endsWith("its end is told (optional; default 120; 0–600)"));
+    assert(param(bash, "max_bytes").endsWith("byte cap (optional; default 51200; 1–204800)"));
     const search = tools.find((t) => t.name === "search")!;
-    assertStringIncludes(search.description!, "(50 unless you set `limit`)");
+    assertStringIncludes(search.description!, "`limit` of them or as many as a page holds");
+    assert(param(search, "limit").endsWith("(optional; default 5; 1–20)"));
+    assert(param(search, "text").endsWith("(optional; up to 10)"));
+    const send = tools.find((t) => t.name === "send")!;
+    const card = (send.input_schema.properties as Record<string, Record<string, unknown>>)
+      .contacts.items as { properties: Record<string, { description: string }> };
+    assert(
+      card.properties.phones.description.endsWith("(up to 5)"),
+      "a required list says no optional",
+    );
     // each file declares itself a tool doc, one per shape
     const listed = (await docs.list({ agent: "a" })).filter((d) => d.header.kind === "tool");
     assertEquals(
