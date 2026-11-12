@@ -34,11 +34,18 @@
  * that thread). Attachments are file parts on the media shelf; inline images (signature
  * logos, pasted screenshots the body already reads around) are not attachments.
  *
+ * How the account's own mailbox shows a thread — archived, read, starred, trashed, spam,
+ * labelled, in a folder, deleted — is the thread's room line (§3: a `view` change), the
+ * account's own and nobody else's. The wire says it per message; the room is the thread,
+ * so a poll folds a thread's changes into one line (`foldView`, `viewRows`).
+ *
  * The cursor's namespace on the grant is `extra.mail_sync`, keyed by the folder or
  * mailbox the wire polls (`poll.ts`).
  */
 
 import { encodeBase64 } from "@std/encoding/base64";
+import { encodeHex } from "@std/encoding/hex";
+import { roomPart } from "../room.ts";
 import { createDispatcher, type DispatcherDeps } from "./dispatcher.ts";
 import { DispatchError } from "./errors.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
@@ -46,7 +53,15 @@ import type { Credentials } from "../store/credentials.ts";
 import type { GrantBroker } from "../proxy/grants.ts";
 import { bytesOf, isExternal, kindOf, saveMedia, tailOf } from "../store/media.ts";
 import type { Storage } from "../store/storage.ts";
-import type { Conversation, Draft, EventId, FilePart, MessageEvent, Service } from "../types.ts";
+import type {
+  Conversation,
+  Draft,
+  EventId,
+  FilePart,
+  MessageEvent,
+  RoomView,
+  Service,
+} from "../types.ts";
 import { findRoot, orgFlag } from "../config.ts";
 import { timedFetch } from "./http.ts";
 
@@ -212,6 +227,59 @@ export function mailRow(
     parts,
     extra: { ...m.extra, mail },
   };
+}
+
+/* ── the account's own view: a thread's changes, one line per poll ─────────────────── */
+
+/** A thread's view changes in one poll, keyed by its address. */
+export type ViewFold = Map<string, { conversation: Conversation; view: RoomView }>;
+
+/** One message's change to how the mailbox shows it, folded into its thread's: a field
+ *  takes the later word, a label ends on the side it moved to last, and the thread keeps
+ *  the latest name it was given. */
+export function foldView(fold: ViewFold, conversation: Conversation, change: RoomView): void {
+  const prior = fold.get(conversation.address);
+  const { labels, ...fields } = change;
+  const added = new Set(prior?.view.labels?.added);
+  const removed = new Set(prior?.view.labels?.removed);
+  for (const l of labels?.added ?? []) (removed.delete(l), added.add(l));
+  for (const l of labels?.removed ?? []) (added.delete(l), removed.add(l));
+  fold.set(conversation.address, {
+    conversation: conversation.name ? conversation : prior?.conversation ?? conversation,
+    view: { ...prior?.view, ...fields, labels: { added: [...added], removed: [...removed] } },
+  });
+}
+
+/** A poll's folded views as the threads' room lines (§3): the account's own, so the sender
+ *  is the account, and keyed per thread and per `batch` — the cursor the poll read from —
+ *  so a poll read again from the same cursor lands on the lines it wrote. A thread whose
+ *  fold moved nothing says nothing. */
+export async function viewRows(
+  base: { service: Service; connection_address: string },
+  fold: ViewFold,
+  batch: string,
+  ts: string,
+): Promise<Draft<MessageEvent>[]> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(batch));
+  const at = encodeHex(new Uint8Array(digest).slice(0, 8));
+  const account = base.connection_address.toLowerCase();
+  return [...fold.values()].flatMap(({ conversation, view }) => {
+    const part = roomPart({ view });
+    if (Object.keys(part.data).length === 0) return [];
+    return [
+      {
+        ts,
+        type: "message",
+        envelope: {
+          ...base,
+          conversation,
+          sender: { address: base.connection_address },
+          external_id: `mailview:${account}:${conversation.address}:${at}`,
+        },
+        parts: [part],
+      } satisfies Draft<MessageEvent>,
+    ];
+  });
 }
 
 /** The addressing a row kept, when it kept any: a row the wire has not echoed back yet
