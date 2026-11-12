@@ -14,7 +14,8 @@ import { checkStrings, connectorConfig, type ConnectorSpec } from "../../config.
  *  the history and the names of what it is in is the whole job — the four `:read`s are
  *  what `conversations.info` and `conversations.members` need for a room of each kind —
  *  and the attachments included: `files:read` is what lets a token fetch a shared file's
- *  `url_private` (the media seam's download); without it Slack answers a sign-in page. */
+ *  `url_private` (the media seam's download); without it Slack answers a sign-in page.
+ *  A pin is said only as an event, and `pins:read` is what delivers it. */
 const READ_SCOPES = [
   "channels:history",
   "groups:history",
@@ -28,6 +29,7 @@ const READ_SCOPES = [
   // the profile email — the handle the classifier scans the roster with (§4)
   "users:read.email",
   "files:read",
+  "pins:read",
 ];
 /** The BOT is one identity for the whole org. Its writes are what the rooms port asks
  *  of it (`rooms.ts`): a public channel is `channels:manage` (create, rename, kick, leave)

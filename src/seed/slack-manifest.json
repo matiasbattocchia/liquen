@@ -19,12 +19,26 @@
         "message.mpim",
         "member_joined_channel",
         "member_left_channel",
-        "channel_rename",
-        "group_rename",
         "channel_left",
         "group_left",
-        "channel_archive",
-        "group_archive"
+        "channel_created",
+        "channel_deleted",
+        "group_deleted",
+        "pin_added",
+        "pin_removed",
+        "channel_shared",
+        "channel_unshared",
+        "shared_channel_invite_received",
+        "shared_channel_invite_accepted",
+        "shared_channel_invite_approved",
+        "shared_channel_invite_declined",
+        "shared_channel_invite_requested",
+        "channel_id_changed",
+        "channel_history_changed",
+        "group_history_changed",
+        "im_history_changed",
+        "im_created",
+        "call_rejected"
       ],
       "user_events": [
         "message.channels",
@@ -33,8 +47,8 @@
         "message.mpim",
         "member_joined_channel",
         "member_left_channel",
-        "channel_rename",
-        "group_rename"
+        "pin_added",
+        "pin_removed"
       ]
     },
     "socket_mode_enabled": true,

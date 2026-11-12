@@ -142,7 +142,12 @@ Deno.test("slack catch-up: the gap is read back per room from the log's newest r
       }
       assertEquals(c.params.oldest, t("2026-09-28T13:00:00.000Z")); // the workspace's newest
       return c.params.channel === "C2"
-        ? { messages: [{ ts: "1790598610.000000", user: "U7", text: "private" }] }
+        ? {
+          messages: [
+            { ts: "1790598610.000000", user: "U7", text: "private" },
+            { ts: "1790598620.000000", user: "U7", subtype: "group_topic", topic: "Q4" },
+          ],
+        }
         : { messages: [] };
     },
     "conversations.replies": (c: Call) => {
@@ -170,7 +175,7 @@ Deno.test("slack catch-up: the gap is read back per room from the log's newest r
   });
   await catchUp.run();
 
-  assertEquals(done, [["T1", 5]]);
+  assertEquals(done, [["T1", 6]]);
   assertEquals(log.batches.length, 1); // one batch per workspace
   const by = (id: string) => log.batches[0].find((d) => d.envelope.external_id === id)!;
   const root = by("slack:T1:C1:1790598600.000100");
@@ -195,6 +200,10 @@ Deno.test("slack catch-up: the gap is read back per room from the log's newest r
   // a join the gap swallowed is read back as the room's own line
   assertEquals(by("slack:T1:C1:1790598660.000000").parts, [
     { type: "data", kind: "room", data: { joined: [{ address: "U9" }] } },
+  ]);
+  // and a private room's change, said in its own subtype, the same way
+  assertEquals(by("slack:T1:C2:1790598620.000000").parts, [
+    { type: "data", kind: "room", data: { topic: "Q4" } },
   ]);
   // ana's token lists her rooms: joined C1 and D1, left C9 (the C1 messages' own
   // passive leg enrolls her there again — the same row)

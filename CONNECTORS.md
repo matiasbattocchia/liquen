@@ -498,10 +498,21 @@ commercially distributed non-Marketplace app created after 2025-05-29 reads
 `conversations.invite` for a named one, private when the send named a group and public
 when it named a channel; `members` pages `conversations.members`, and `join`, `leave`,
 `add`, `remove` and `rename` are the method of the same name, a kick one person a call.
-What the room shows of a change is Slack's own message about it — `channel_join` (with
-its `inviter` when someone added them), `channel_leave`, `channel_name` — mapped to the
-`room` line of §1 rather than to words the mover typed, keyed on its `ts` like any row,
-so the catch-up reads a swallowed one back; a rename also teaches the name directory.
+What the room shows of a change is Slack's own message about it, a subtype of its own —
+`channel_join` (with its `inviter` when someone added them), `channel_leave`,
+`channel_name` (with `old_name`), the topic, the purpose, archive and unarchive, the
+posting rule, a conversion to private or public, a reminder, a locked thread, a huddle,
+and each `group_` form of a private channel's — mapped to the `room` line of §1 rather
+than to words the mover typed, keyed on its `ts` like any row, so the catch-up reads a
+swallowed one back; a rename also teaches the name directory. A huddle is Slackbot's
+message, started when posted and ended by the rewrite that gives it an end. Where Slack
+has no message for a change, the event is the line: `channel_created`, `channel_deleted`
+and `group_deleted`, `pin_added` and `pin_removed` (pointing at the message, `pins:read`),
+`channel_shared` and `channel_unshared`, the `shared_channel_invite_*` five,
+`channel_id_changed` (in the old room, naming the new), the `*_history_changed` three,
+`im_created`, `call_rejected` — each keyed on its `event_ts`, or on what happens to a room
+once (`created`, `deleted`), so a retry is the same line. An event that has a message twin
+publishes nothing.
 Every leg resolves its token as the dispatcher does (`slackTokenFor`): the agent's own
 grant when the vault holds one, else the workspace bot, so the room is opened by the
 grant that posts in it. A channel's name is given as Slack takes one — lowercase, `-` and
@@ -528,11 +539,11 @@ adopts a chat from its lines) — writing `mirrors.rooms.<agent>` with the
 channel's id before that line lands, so the line is already the room's; a rename leaves
 the record where it is, and a second channel wearing the name is nobody's while the first
 holds it. The bot leaving (`member_left_channel` for its own user, `channel_left`,
-`group_left`, its `channel_leave` line) or the channel being archived (`channel_archive`,
-`group_archive`) patches the key away. Each move publishes a `room` line into the agent's
-mind — joined, or left, the channel by its `#name` — which the mirror carries to every
-surface as `[system]`. A bot pasted with `--agent` is that agent's own account: it hosts no
-room, and its principals' DMs with it are recorded as `mirrors.dms`.
+`group_left`, its `channel_leave` line) or the channel's archive line patches the key
+away. `channel_left` is also the room's line of the
+account out of it, unless the room's own leave line for the bot came within the minute
+before. A bot pasted with `--agent` is that agent's own account: it hosts no room, and its
+principals' DMs with it are recorded as `mirrors.dms`.
 
 Remaining:
 

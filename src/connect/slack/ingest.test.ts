@@ -634,24 +634,6 @@ Deno.test("slack: the room's name rides every message's conversation, from the d
   });
 });
 
-Deno.test("slack: channel_rename is the directory's push leg for rooms — learned, nothing published", async () => {
-  const { names, learned } = fakeNames({ "T1:C1": "general" });
-  const { handler, published } = harness(SECRET, undefined, undefined, names);
-  await handler(
-    await signedReq(messageEvent({
-      event: {
-        type: "channel_rename",
-        channel: { id: "C1", name: "anuncios", name_normalized: "anuncios", created: 1 },
-        event_ts: "9.9",
-      },
-    })),
-  );
-  assertEquals(published.length, 0);
-  assertEquals(learned, ["T1:C1=anuncios"]);
-  await handler(await signedReq(messageEvent()));
-  assertEquals((published[0] as MessageEvent).envelope.conversation.name, "anuncios");
-});
-
 Deno.test("slack: a join, a leave and a rename are the room's own lines — from whoever made them", async () => {
   const { names, learned } = fakeNames({ "T1:U7": "Ana", "T1:U8": "Bea", "T1:C1": "general" });
   const { handler, published } = harness(SECRET, undefined, undefined, names);
@@ -677,8 +659,13 @@ Deno.test("slack: a join, a leave and a rename are the room's own lines — from
   assertEquals(added.parts, [{
     type: "data",
     kind: "room",
-    data: { joined: [{ address: "U8", name: "Bea" }] },
+    data: { joined: [{ address: "U8", name: "Bea" }], reason: "added" },
   }]);
+  assertEquals(joined.parts[0], {
+    type: "data",
+    kind: "room",
+    data: { joined: [{ address: "U8", name: "Bea" }] },
+  });
   assertEquals(joined.envelope.sender, { address: "U8", name: "Bea" });
   assertEquals(left.parts[0], {
     type: "data",
@@ -687,8 +674,409 @@ Deno.test("slack: a join, a leave and a rename are the room's own lines — from
   });
   assertEquals(renamed.envelope.sender, { address: "U7", name: "Ana" });
   assertEquals(renamed.envelope.conversation.name, "ops");
-  assertEquals(renamed.parts[0], { type: "data", kind: "room", data: { name: "ops" } });
+  assertEquals(renamed.parts[0], {
+    type: "data",
+    kind: "room",
+    data: { name: "ops", was: "general" },
+  });
   assertEquals(learned, ["T1:C1=ops"]);
+});
+
+Deno.test("slack: every room subtype is the room's line — a private channel's as a public one's, keyed on its ts", async () => {
+  const cases: {
+    event: Record<string, unknown>;
+    data: Record<string, unknown>;
+    sender?: string;
+    ref?: string;
+  }[] = [
+    {
+      event: { subtype: "group_join", user: "U8", inviter: "U7" },
+      data: { joined: [{ address: "U8", name: "Bea" }], reason: "added" },
+      sender: "U7",
+    },
+    {
+      event: { subtype: "group_leave", user: "U8" },
+      data: { left: [{ address: "U8", name: "Bea" }] },
+      sender: "U8",
+    },
+    {
+      event: { subtype: "group_name", user: "U7", name: "ops", old_name: "ops-old" },
+      data: { name: "ops", was: "ops-old" },
+      sender: "U7",
+    },
+    {
+      event: { subtype: "channel_topic", user: "U7", topic: "Q4 launch" },
+      data: { topic: "Q4 launch" },
+      sender: "U7",
+    },
+    { event: { subtype: "group_topic", user: "U7", topic: "" }, data: { topic: "" }, sender: "U7" },
+    {
+      event: { subtype: "channel_purpose", user: "U7", purpose: "Where launches are planned" },
+      data: { description: "Where launches are planned" },
+      sender: "U7",
+    },
+    {
+      event: { subtype: "group_purpose", user: "U7", purpose: "x" },
+      data: { description: "x" },
+      sender: "U7",
+    },
+    {
+      event: { subtype: "channel_archive", user: "U7" },
+      data: { state: "archived" },
+      sender: "U7",
+    },
+    { event: { subtype: "group_archive", user: "U7" }, data: { state: "archived" }, sender: "U7" },
+    {
+      event: { subtype: "channel_unarchive", user: "U7" },
+      data: { state: "unarchived" },
+      sender: "U7",
+    },
+    {
+      event: { subtype: "group_unarchive", user: "U7" },
+      data: { state: "unarchived" },
+      sender: "U7",
+    },
+    {
+      event: { subtype: "channel_posting_permissions", user: "U7" },
+      data: { settings: { send: "changed" } },
+      sender: "U7",
+    },
+    {
+      event: { subtype: "channel_convert_to_private", user: "U7" },
+      data: { settings: { private: true } },
+      sender: "U7",
+    },
+    {
+      event: { subtype: "channel_convert_to_public", user: "U7" },
+      data: { settings: { private: false } },
+      sender: "U7",
+    },
+    {
+      event: {
+        subtype: "reminder_add",
+        user: "U7",
+        text: "set up a reminder “standup at 10” in this channel at 9AM every weekday.",
+      },
+      data: { reminder: "standup at 10" },
+      sender: "U7",
+    },
+    {
+      event: { subtype: "message_locked", user: "U7", thread_ts: "0.5" },
+      data: { state: "locked" },
+      sender: "U7",
+      ref: "slack:T1:C1:0.5",
+    },
+    {
+      event: { subtype: "huddle_thread", user: "U7", room: { date_start: 100, date_end: 0 } },
+      data: { call: { state: "started", kind: "huddle" } },
+    },
+    {
+      event: {
+        subtype: "huddle_thread",
+        user: "U7",
+        room: { date_start: 100, date_end: 940, participant_history: ["U7", "U8", 3] },
+      },
+      data: {
+        call: {
+          state: "ended",
+          kind: "huddle",
+          seconds: 840,
+          with: [{ address: "U7", name: "Ana" }, { address: "U8", name: "Bea" }],
+        },
+      },
+    },
+  ];
+  for (const [i, c] of cases.entries()) {
+    const { names } = fakeNames({ "T1:U7": "Ana", "T1:U8": "Bea" });
+    const { handler, published } = harness(SECRET, undefined, undefined, names);
+    const ts = `2.${i}`;
+    await handler(
+      await signedReq(messageEvent({
+        event: { type: "message", channel: "C1", channel_type: "group", ts, ...c.event },
+      })),
+    );
+    const subtype = c.event.subtype;
+    assertEquals(published.length, 1, `${subtype}`);
+    const line = published[0] as MessageEvent;
+    assertEquals(line.parts, [{ type: "data", kind: "room", data: c.data }], `${subtype}`);
+    assertEquals(line.envelope.sender?.address, c.sender, `${subtype}`);
+    assertEquals(line.envelope.external_id, `slack:T1:C1:${ts}`, `${subtype}`);
+    assertEquals(line.envelope.conversation.kind, "group", `${subtype}`);
+    assertEquals(line.payload?.ref_external_id, c.ref, `${subtype}`);
+    assertEquals((line.extra?.slack as { subtype: string }).subtype, subtype);
+  }
+});
+
+Deno.test("slack: a pin's own message says nothing — the pin event is its line", async () => {
+  const { handler, published } = harness(SECRET);
+  for (const subtype of ["pinned_item", "unpinned_item"]) {
+    await handler(
+      await signedReq(messageEvent({
+        event: {
+          type: "message",
+          subtype,
+          channel: "C1",
+          channel_type: "channel",
+          user: "U7",
+          text: "pinned",
+          ts: "3.1",
+        },
+      })),
+    );
+  }
+  assertEquals(published, []);
+});
+
+Deno.test("slack: a huddle's message rewritten as it ends is the room's line of the call ended; a rewrite while it runs says nothing", async () => {
+  const { handler, published } = harness(SECRET);
+  const changed = (room: unknown, previous: unknown, event_ts: string) =>
+    signedReq(messageEvent({
+      event: {
+        type: "message",
+        subtype: "message_changed",
+        channel: "C1",
+        channel_type: "channel",
+        ts: event_ts,
+        event_ts,
+        message: { type: "message", subtype: "huddle_thread", user: "U7", ts: "4.0", room },
+        previous_message: { type: "message", subtype: "huddle_thread", ts: "4.0", room: previous },
+      },
+    }));
+  const running = { date_start: 100, date_end: 0, participant_history: ["U7"] };
+  const ended = {
+    date_start: 100,
+    date_end: 160,
+    has_ended: true,
+    participant_history: ["U7", "U8"],
+  };
+  await handler(await changed(running, { date_start: 100, date_end: 0 }, "4.1"));
+  await handler(await changed(ended, running, "4.2"));
+  await handler(await changed(ended, ended, "4.3"));
+  assertEquals(published.length, 1);
+  const line = published[0] as MessageEvent;
+  assertEquals(line.envelope.external_id, "slack:T1:C1:4.2");
+  assertEquals(line.envelope.sender, undefined);
+  assertEquals(line.parts[0], {
+    type: "data",
+    kind: "room",
+    data: {
+      call: {
+        state: "ended",
+        kind: "huddle",
+        seconds: 60,
+        with: [{ address: "U7" }, { address: "U8" }],
+      },
+    },
+  });
+});
+
+Deno.test("slack: a room's change said only as an event is the room's line — in the room it names, keyed so a retry is the same line", async () => {
+  const cases: {
+    event: Record<string, unknown>;
+    conversation: string;
+    id: string;
+    data: Record<string, unknown>;
+    sender?: string;
+    ref?: string;
+    kind?: string;
+  }[] = [
+    {
+      event: {
+        type: "channel_created",
+        event_ts: "5.0",
+        channel: {
+          id: "C5",
+          name: "launch",
+          created: 1700000000,
+          creator: "U7",
+          is_private: false,
+        },
+      },
+      conversation: "C5",
+      id: "created",
+      data: { state: "created", name: "launch" },
+      sender: "U7",
+      kind: "channel",
+    },
+    {
+      event: { type: "channel_deleted", channel: "C5" },
+      conversation: "C5",
+      id: "deleted",
+      data: { state: "deleted" },
+    },
+    {
+      event: { type: "group_deleted", channel: "G5", event_ts: "5.1" },
+      conversation: "G5",
+      id: "deleted",
+      data: { state: "deleted" },
+    },
+    {
+      event: {
+        type: "pin_added",
+        user: "U7",
+        channel_id: "C1",
+        item: { type: "message", channel: "C1", message: { ts: "1.5" } },
+        event_ts: "5.2",
+      },
+      conversation: "C1",
+      id: "5.2",
+      data: { pinned: true },
+      sender: "U7",
+      ref: "slack:T1:C1:1.5",
+    },
+    {
+      event: {
+        type: "pin_removed",
+        user: "U7",
+        channel_id: "C1",
+        item: { type: "message", channel: "C1", message: { ts: "1.5" } },
+        event_ts: "5.3",
+      },
+      conversation: "C1",
+      id: "5.3",
+      data: { pinned: false },
+      sender: "U7",
+      ref: "slack:T1:C1:1.5",
+    },
+    {
+      event: { type: "channel_shared", connected_team_id: "TACME", channel: "C1", event_ts: "5.4" },
+      conversation: "C1",
+      id: "5.4",
+      data: { shared: { added: "TACME" } },
+    },
+    {
+      event: {
+        type: "channel_unshared",
+        previously_connected_team_id: "TACME",
+        channel: "C1",
+        event_ts: "5.5",
+      },
+      conversation: "C1",
+      id: "5.5",
+      data: { shared: { removed: "TACME" } },
+    },
+    {
+      event: {
+        type: "shared_channel_invite_accepted",
+        invite: { id: "I1", inviting_team: { id: "TACME", name: "Acme" } },
+        channel: { id: "C1", name: "general" },
+        event_ts: "5.6",
+      },
+      conversation: "C1",
+      id: "5.6",
+      data: { invite: { state: "accepted", from: "Acme" } },
+    },
+    {
+      event: {
+        type: "shared_channel_invite_requested",
+        channel_id: "C1",
+        actor: { id: "U7" },
+        event_ts: "5.7",
+      },
+      conversation: "C1",
+      id: "5.7",
+      data: { invite: { state: "requested" } },
+    },
+    {
+      event: {
+        type: "channel_id_changed",
+        old_channel_id: "G1",
+        new_channel_id: "C1",
+        event_ts: "5.8",
+      },
+      conversation: "G1",
+      id: "5.8",
+      data: { moved: { to: "C1" } },
+    },
+    {
+      event: {
+        type: "group_history_changed",
+        channel: "G1",
+        latest: "1",
+        ts: "1",
+        event_ts: "5.9",
+      },
+      conversation: "G1",
+      id: "5.9",
+      data: { history: "changed" },
+    },
+    {
+      event: {
+        type: "im_created",
+        user: "U8",
+        channel: { id: "D1", is_im: true, user: "U8", created: 1700000000 },
+      },
+      conversation: "D1",
+      id: "created",
+      data: { state: "created", joined: [{ address: "U8", name: "Bea" }] },
+      sender: "U8",
+      kind: "direct",
+    },
+    {
+      event: {
+        type: "call_rejected",
+        call_id: "R1",
+        user_id: "U8",
+        channel_id: "D1",
+        external_unique_id: "x",
+      },
+      conversation: "D1",
+      id: "call.R1",
+      data: { call: { state: "rejected" } },
+      sender: "U8",
+    },
+  ];
+  for (const c of cases) {
+    const { names } = fakeNames({ "T1:U7": "Ana", "T1:U8": "Bea" });
+    const { handler, published } = harness(SECRET, undefined, undefined, names);
+    const type = c.event.type;
+    await handler(await signedReq(messageEvent({ event: c.event })));
+    await handler(await signedReq(messageEvent({ event: c.event }))); // the retry
+    assertEquals(published.length, 2, `${type}`);
+    const [line, retry] = published as MessageEvent[];
+    assertEquals(retry.envelope.external_id, line.envelope.external_id, `${type}`);
+    assertEquals(line.parts, [{ type: "data", kind: "room", data: c.data }], `${type}`);
+    assertEquals(line.envelope.conversation.address, c.conversation, `${type}`);
+    assertEquals(line.envelope.conversation.kind, c.kind, `${type}`);
+    assertEquals(line.envelope.external_id, `slack:T1:${c.conversation}:${c.id}`, `${type}`);
+    assertEquals(line.envelope.sender?.address, c.sender, `${type}`);
+    assertEquals(line.payload?.ref_external_id, c.ref, `${type}`);
+    assertEquals((line.extra?.slack as { event: string }).event, type);
+  }
+});
+
+Deno.test("slack: what names no room or no message says nothing — a history change with no room, a pinned file", async () => {
+  const { handler, published } = harness(SECRET);
+  for (
+    const event of [
+      { type: "channel_history_changed", latest: "1", ts: "1", event_ts: "6.0" },
+      {
+        type: "pin_added",
+        user: "U7",
+        channel_id: "C1",
+        item: { type: "file", channel: "C1", file: { id: "F1" } },
+        event_ts: "6.1",
+      },
+    ]
+  ) {
+    await handler(await signedReq(messageEvent({ event })));
+  }
+  assertEquals(published, []);
+});
+
+Deno.test("slack: a new channel's event teaches the directory its name", async () => {
+  const { names, learned } = fakeNames();
+  const { handler, published } = harness(SECRET, undefined, undefined, names);
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "channel_created",
+        channel: { id: "C5", name: "launch", created: 1700000000, creator: "U7" },
+      },
+    })),
+  );
+  assertEquals(learned, ["T1:C5=launch"]);
+  assertEquals((published[0] as MessageEvent).envelope.conversation.name, "launch");
 });
 
 Deno.test("slack: no directory ⇒ bare ids — sender unnamed, mentions decode to @<id>", async () => {
@@ -1318,4 +1706,77 @@ Deno.test("the bot's arrival, said twice at once by Slack (§4): only the room's
   // one adoption, recorded once; the room's own line of the join is an event like any other
   assertEquals(writes, 1);
   assertEquals(published.map((e) => e.envelope.conversation.address), ["C9"]);
+});
+
+Deno.test("the account out of a room (§4): the steering is released and the room's line says it once; an archive line releases too", async () => {
+  const { names } = fakeNames({ "T1:UBOT": "liquen", "T1:U7": "Ana" });
+  const bot: ConnectionRow = {
+    service: "slack",
+    address: "T1:UBOT",
+    credentialKey: "slack:T1:org",
+    extra: { mirrors: { rooms: { ventas: "C9", compras: "C8", soporte: "C7" } } },
+  };
+  const written: ConnectionRow[] = [];
+  const store: NonNullable<SlackWebhookDeps["store"]> = {
+    connection: (service, address) =>
+      Promise.resolve(service === "slack" && address === bot.address ? bot : null),
+    upsertMemberships: () => Promise.resolve(),
+    upsertConnections: (rows) => {
+      written.push(...rows);
+      return Promise.resolve();
+    },
+    deleteMemberships: () => Promise.resolve(),
+  };
+  const { handler, published } = harness(SECRET, store, undefined, names);
+  const asBot = (event: Record<string, unknown>) =>
+    signedReq(messageEvent({ authorizations: [{ user_id: "UBOT", is_bot: true }], event }));
+
+  // taken out of #ventas, said only as the account's own event: the line is the event's,
+  // from the one who took it out
+  await handler(
+    await asBot({ type: "channel_left", channel: "C9", actor_id: "U7", event_ts: "7.0" }),
+  );
+  assertEquals(written.at(-1)?.extra, { mirrors: { rooms: { ventas: null } } });
+  assertEquals(published.length, 1);
+  const out = published[0] as MessageEvent;
+  assertEquals(out.envelope.external_id, "slack:T1:C9:7.0");
+  assertEquals(out.envelope.sender, { address: "U7", name: "Ana" });
+  assertEquals(out.parts[0], {
+    type: "data",
+    kind: "room",
+    data: { left: [{ address: "UBOT", name: "liquen" }], reason: "removed" },
+  });
+
+  // leaving #compras is said by the room's own line first: the event that follows is the
+  // same leave, and releases without a second line
+  await handler(
+    await asBot({
+      type: "message",
+      subtype: "channel_leave",
+      channel: "C8",
+      channel_type: "channel",
+      user: "UBOT",
+      ts: "7.1",
+    }),
+  );
+  assertEquals(written.at(-1)?.extra, { mirrors: { rooms: { compras: null } } });
+  await handler(
+    await asBot({ type: "channel_left", channel: "C8", actor_id: "UBOT", event_ts: "7.2" }),
+  );
+  assertEquals(published.length, 2);
+  assertEquals((published[1] as MessageEvent).envelope.sender?.address, "UBOT");
+
+  // #soporte archived: its line releases the room
+  await handler(
+    await asBot({
+      type: "message",
+      subtype: "channel_archive",
+      channel: "C7",
+      channel_type: "channel",
+      user: "U7",
+      ts: "7.3",
+    }),
+  );
+  assertEquals(written.at(-1)?.extra, { mirrors: { rooms: { soporte: null } } });
+  assertEquals(published.length, 3);
 });

@@ -45,14 +45,7 @@
  */
 
 import { SENDER_EMAIL } from "../../sender.ts";
-import type {
-  ChannelJoinMessageEvent,
-  ChannelLeaveMessageEvent,
-  ChannelNameMessageEvent,
-  MemberJoinedChannelEvent,
-  MemberLeftChannelEvent,
-  SlackEvent,
-} from "@slack/types";
+import type { MemberJoinedChannelEvent, MemberLeftChannelEvent, SlackEvent } from "@slack/types";
 import { roomPart } from "../../room.ts";
 import type { Appender } from "../../store/log.ts";
 import {
@@ -66,7 +59,15 @@ import { setState } from "../health.ts";
 import { SIGNED_OUT_NAMES } from "./dispatch.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
-import type { Conversation, Draft, FilePart, MessageEvent, Part, RoomMember } from "../../types.ts";
+import type {
+  Conversation,
+  Draft,
+  FilePart,
+  MessageEvent,
+  Part,
+  RoomChange,
+  RoomMember,
+} from "../../types.ts";
 import { fromSlack } from "../flavor.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
@@ -124,7 +125,8 @@ export interface SlackNames {
    *  subject of its own, §3). Cached after the first hit; null = unresolvable right now
    *  and UNCACHED, so a later delivery retries. */
   roomOf(team: string, channel: string, via?: string[]): Promise<string | null>;
-  /** The push leg: `channel_rename` / `group_rename` deliveries carry the new subject. */
+  /** The push leg: a room's rename line (`channel_name`, `group_name`) and a new
+   *  channel's `channel_created` carry the subject. */
   learnRoom(team: string, channel: string, name: string): void;
 }
 
@@ -265,6 +267,9 @@ export type WebhookHandler = (req: Request) => Promise<Response>;
 /** Build the ingest handler. Pure over its deps — call once, serve (or carry) anywhere. */
 export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
   const now = deps.now ?? (() => new Date().toISOString());
+  // when the room's own line of the bot leaving was heard, by room: the account's
+  // `channel_left` that follows it is the same fact
+  const botLeft = new Map<string, number>();
 
   return async (req) => {
     if (req.method !== "POST") return text(405, "method not allowed");
@@ -337,12 +342,6 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       if (u?.id && name) deps.names?.learn(team, u.id, name);
       return;
     }
-    // the directory's other push leg: a room's new subject rides the rename event
-    if (e.type === "channel_rename" || e.type === "group_rename") {
-      const c = e.channel as { id?: string; name?: string } | undefined;
-      if (c?.id && c.name) deps.names?.learnRoom(team, c.id, c.name);
-      return;
-    }
     // the membership mirror, active leg (§4): joins/leaves move rows, nothing published —
     // but the bot's own leave is a room it is out of (steering rooms). Its arrival adopts
     // nothing: a room is adopted from its lines alone (the room's own "joined" line is the
@@ -359,15 +358,50 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       await mirrorMember(e, team, deps.store);
       return;
     }
-    // a room the bot is out of: it left, or the channel is archived
-    if (
-      e.type === "channel_left" || e.type === "group_left" || e.type === "channel_archive" ||
-      e.type === "group_archive"
-    ) {
-      const channel = (e as { channel?: unknown }).channel;
-      if (typeof channel !== "string") return;
+    // the account itself is out of a room: whatever steering it was is released, and the
+    // room's line says so — unless the room's own leave line for the bot was just heard,
+    // which already did. The one who took it out, when the wire names someone else, is
+    // the line's sender
+    if (e.type === "channel_left" || e.type === "group_left") {
+      if (typeof e.channel !== "string") return;
       const anchor = anchorOf(team, payload.authorizations);
-      await releaseRoom(deps, team, anchor, channel);
+      await releaseRoom(deps, team, anchor, e.channel);
+      const bot = botOf(team, anchor);
+      const key = `${team}:${e.channel}`;
+      const twin = Date.now() - (botLeft.get(key) ?? -Infinity) < LEAVE_TWIN_MS;
+      botLeft.delete(key);
+      if (!bot || twin || !e.event_ts) return;
+      const by = e.actor_id && e.actor_id !== bot ? e.actor_id : undefined;
+      await deps.publish(
+        await roomLine(
+          {
+            channel: e.channel,
+            id: e.event_ts,
+            ts: slackTime(e.event_ts, now),
+            by,
+            change: { left: [{ address: bot }], ...(by ? { reason: "removed" } : {}) },
+            wire: { event: e.type },
+          },
+          team,
+          anchor,
+          payload.authorizations,
+          deps.store,
+          deps.names,
+        ),
+      );
+      return;
+    }
+    // a room's change Slack says only as an event, never as a line in the room: the event
+    // is the line
+    const said = roomEvent(e, now);
+    if (said) {
+      if (e.type === "channel_created" && e.channel.name) {
+        deps.names?.learnRoom(team, said.channel, e.channel.name);
+      }
+      const anchor = anchorOf(team, payload.authorizations);
+      await deps.publish(
+        await roomLine(said, team, anchor, payload.authorizations, deps.store, deps.names),
+      );
       return;
     }
     // a reaction is an ACTION event (§3): add/remove + the reacted message's id in
@@ -415,11 +449,16 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
 
     const anchor = anchorOf(team, payload.authorizations);
     // a room the bot is met in may be an agent's steering room: recorded before the line
-    // that met it lands, so that line is already the room's
+    // that met it lands, so that line is already the room's. The room's line of the bot
+    // leaving, or of the channel archived, is the bot out of it
     if (e.channel && (e.channel_type === "channel" || e.channel_type === "group")) {
       const via = boundUsers(payload.authorizations);
-      const left = e.subtype === "channel_leave" && e.user === botOf(team, anchor);
-      if (left) await releaseRoom(deps, team, anchor, e.channel);
+      const { subtype, user } = e as RoomMessage;
+      const left = (subtype === "channel_leave" || subtype === "group_leave") &&
+        user === botOf(team, anchor);
+      if (left) botLeft.set(`${team}:${e.channel}`, Date.now());
+      const archived = subtype === "channel_archive" || subtype === "group_archive";
+      if (left || archived) await releaseRoom(deps, team, anchor, e.channel);
       else await adoptRoom(deps, team, anchor, e.channel, via);
     }
     const msgs = await mapMessage(
@@ -624,11 +663,9 @@ export async function mapMessage(
       status: { state: "deleted", deleted_at: e.event_ts ?? ts },
     } as unknown as Draft<MessageEvent>]; // the stamp is partless by design
   }
-  if (
-    e.subtype === "channel_join" || e.subtype === "channel_leave" ||
-    e.subtype === "channel_name"
-  ) {
-    return await mapRoomLine(e, team, anchor, authorizations, store, names, ctx);
+  const subtype: string | undefined = e.subtype;
+  if (subtype && ROOM_SUBTYPES.has(subtype)) {
+    return await mapRoomLine(e as RoomMessage, team, anchor, authorizations, store, names, ctx);
   }
 
   // plain message, an edit (message_changed nests the new content — its OWN event, the
@@ -640,8 +677,23 @@ export async function mapMessage(
   // subtype when its attachments change (a link unfurling), the text untouched, and that
   // delivery states nothing the row does not already hold
   if (edit) {
-    const changed = e.message as { edited?: unknown; text?: string };
-    const previous = e.previous_message as { text?: string } | undefined;
+    const changed = e.message as RoomMessage & { edited?: unknown };
+    const previous = e.previous_message as RoomMessage | undefined;
+    // a huddle's message is rewritten as it runs, and the rewrite that ends it is the
+    // room's line of the call ended, its own line beside the one that started it
+    if (changed.subtype === "huddle_thread") {
+      const at = e.event_ts ?? e.ts;
+      if (!at || !huddleOf(changed.room).ended || huddleOf(previous?.room).ended) return [];
+      return await mapRoomLine(
+        { ...changed, channel: e.channel, channel_type: e.channel_type, ts: at },
+        team,
+        anchor,
+        authorizations,
+        store,
+        names,
+        ctx,
+      );
+    }
     if (changed.edited === undefined && changed.text === previous?.text) return [];
   }
   const inner = edit ? e.message : e;
@@ -700,7 +752,7 @@ export async function mapMessage(
   };
   // sender.name and conversation.name are the SERVICE's display facts — Slack's events
   // carry neither, so the name directory asks the service itself (users.info /
-  // conversations.info, the rename and profile events pushing updates); still nothing of
+  // conversations.info, the rename lines and profile events pushing updates); still nothing of
   // ours: identity resolution is the classifier's business (§3)
   const who = m.user ? await names?.nameOf(team, m.user, via) : undefined;
   const email = m.user ? await names?.emailOf(team, m.user, via) : undefined;
@@ -758,14 +810,74 @@ export async function mapMessage(
   }];
 }
 
-/** A room's change is the room's own line (§3). Slack says a join, a leave and a rename as
- *  messages of their own subtypes, whose text ("<@U…> has joined the channel") is Slack's
- *  wording, not anything the mover typed — so the line is a `room` part, from whoever made
- *  the change: the inviter who added someone, else the one who moved or renamed. Keyed on
- *  the message's own ts like any row, so the live delivery and the catch-up's read of it
- *  merge. A rename also teaches the name directory the room's new name. */
+/** The subtypes that are a room's change rather than anything said in it. A private
+ *  channel's (`group_…`) say the same as a public one's. */
+const ROOM_SUBTYPES = new Set([
+  "channel_join",
+  "group_join",
+  "channel_leave",
+  "group_leave",
+  "channel_name",
+  "group_name",
+  "channel_topic",
+  "group_topic",
+  "channel_purpose",
+  "group_purpose",
+  "channel_archive",
+  "group_archive",
+  "channel_unarchive",
+  "group_unarchive",
+  "channel_posting_permissions",
+  "channel_convert_to_private",
+  "channel_convert_to_public",
+  "huddle_thread",
+  "reminder_add",
+  "message_locked",
+]);
+
+/** A room subtype's message: what any of them may carry. `@slack/types` types the
+ *  documented few; `huddle_thread`, `reminder_add`, `message_locked` and the `group_`
+ *  forms are Slack's own undocumented shapes, so every field is a guess the mapping
+ *  guards. */
+interface RoomMessage {
+  subtype?: string;
+  ts?: string;
+  channel?: string;
+  channel_type?: string;
+  user?: string;
+  inviter?: string;
+  name?: string;
+  old_name?: string;
+  topic?: string;
+  purpose?: string;
+  text?: string;
+  thread_ts?: string;
+  room?: unknown;
+}
+
+/** A huddle as its message's `room` says it: ended once it has an end (or says so),
+ *  with everyone who was ever in it and how long it ran. */
+function huddleOf(room: unknown): { ended: boolean; seconds?: number; with: string[] } {
+  const r = typeof room === "object" && room !== null ? room as Record<string, unknown> : {};
+  const start = typeof r.date_start === "number" && r.date_start > 0 ? r.date_start : undefined;
+  const end = typeof r.date_end === "number" && r.date_end > 0 ? r.date_end : undefined;
+  const people = Array.isArray(r.participant_history) ? r.participant_history : [];
+  return {
+    ended: r.has_ended === true || end !== undefined,
+    ...(start !== undefined && end !== undefined && end >= start ? { seconds: end - start } : {}),
+    with: people.filter((p): p is string => typeof p === "string"),
+  };
+}
+
+/** A room's change is the room's own line (§3). Slack says most of them as messages of
+ *  their own subtypes, whose text ("<@U…> has joined the channel") is Slack's wording, not
+ *  anything the mover typed — so the line is a `room` part, from whoever made the change:
+ *  the inviter who added someone, else the one who moved, renamed, set or archived. A
+ *  huddle is Slackbot's message and the room's own (no sender). Keyed on the message's own
+ *  ts like any row, so the live delivery and the catch-up's read of it merge. A rename
+ *  also teaches the name directory the room's new name. */
 async function mapRoomLine(
-  e: ChannelJoinMessageEvent | ChannelLeaveMessageEvent | ChannelNameMessageEvent,
+  m: RoomMessage,
   team: string,
   anchor: string,
   authorizations: Authorization[] | undefined,
@@ -773,42 +885,289 @@ async function mapRoomLine(
   names: SlackNames | undefined,
   ctx: MapCtx,
 ): Promise<Draft<MessageEvent>[]> {
-  if (!e.ts || !e.channel || !e.user) return [];
+  if (!m.ts || !m.channel || !m.subtype) return [];
+  const mover = m.user ? [{ address: m.user }] : [];
+  const verb = m.subtype.replace(/^(channel|group)_/, "");
+  let by = m.user;
+  let ref: string | undefined;
+  let change: RoomChange;
+  switch (verb) {
+    case "join":
+      change = { joined: mover, ...(m.inviter ? { reason: "added" as const } : {}) };
+      by = m.inviter ?? m.user;
+      break;
+    case "leave":
+      change = { left: mover };
+      break;
+    case "name":
+      if (m.name) names?.learnRoom(team, m.channel, m.name);
+      change = { name: m.name, was: m.old_name };
+      break;
+    case "topic":
+      change = { topic: m.topic ?? "" };
+      break;
+    case "purpose":
+      change = { description: m.purpose ?? "" };
+      break;
+    case "archive":
+      change = { state: "archived" };
+      break;
+    case "unarchive":
+      change = { state: "unarchived" };
+      break;
+    case "posting_permissions":
+      // the rule itself is not on the wire
+      change = { settings: { send: "changed" } };
+      break;
+    case "convert_to_private":
+    case "convert_to_public":
+      change = { settings: { private: verb === "convert_to_private" } };
+      break;
+    case "huddle_thread": {
+      const h = huddleOf(m.room);
+      change = {
+        call: h.ended
+          ? {
+            state: "ended",
+            kind: "huddle",
+            seconds: h.seconds,
+            with: h.with.map((address) => ({ address })),
+          }
+          : { state: "started", kind: "huddle" },
+      };
+      by = undefined;
+      break;
+    }
+    case "reminder_add":
+      // Slack's sentence quotes what the reminder says: “standup” in this channel at 10AM
+      change = { reminder: m.text?.match(/[“"]([^”"]+)[”"]/)?.[1] ?? m.text };
+      break;
+    default: // message_locked: the thread is its first message's
+      change = { state: "locked" };
+      if (m.thread_ts) ref = m.thread_ts;
+  }
+  return [
+    await roomLine(
+      {
+        channel: m.channel,
+        id: m.ts,
+        ts: slackTime(m.ts, ctx.now),
+        by,
+        change,
+        ref,
+        type: m.channel_type,
+        wire: { subtype: m.subtype },
+      },
+      team,
+      anchor,
+      authorizations,
+      store,
+      names,
+    ),
+  ];
+}
+
+/** One room line, wherever Slack said it: in `channel`, keyed `slack:<team>:<channel>:<id>`
+ *  (the message's ts, or the event's own stable identity, so a retry or a re-read merges),
+ *  from `by` (absent: the account's own — Slackbot's or the workspace's word, no person),
+ *  pointing at the message `ref` names when it is about one. Everyone the change moves is
+ *  named here, from the directory, as a sender is. */
+interface RoomLineSpec {
+  channel: string;
+  id: string;
+  ts: string;
+  by?: string;
+  change: RoomChange;
+  /** The ts of the message the change is about (a pin, a locked thread). */
+  ref?: string;
+  /** The wire's `channel_type`, when it said one. */
+  type?: string;
+  /** How the wire said it: the message subtype, or the event's type. */
+  wire: { subtype: string } | { event: string };
+}
+
+async function roomLine(
+  line: RoomLineSpec,
+  team: string,
+  anchor: string,
+  authorizations: Authorization[] | undefined,
+  store: Store | undefined,
+  names: SlackNames | undefined,
+): Promise<Draft<MessageEvent>> {
   const via = boundUsers(authorizations);
-  const person = async (id: string): Promise<RoomMember> => {
-    const name = await names?.nameOf(team, id, via);
-    return { address: id, ...(name ? { name } : {}) };
+  const person = async ({ address }: RoomMember): Promise<RoomMember> => {
+    const name = await names?.nameOf(team, address, via);
+    return { address, ...(name ? { name } : {}) };
   };
-  const mover = await person(e.user);
-  if (e.subtype === "channel_name" && e.name) names?.learnRoom(team, e.channel, e.name);
-  const part = e.subtype === "channel_join"
-    ? roomPart({ joined: [mover] })
-    : e.subtype === "channel_leave"
-    ? roomPart({ left: [mover] })
-    : roomPart({ name: e.name });
-  const inviter = e.subtype === "channel_join" && e.inviter ? await person(e.inviter) : undefined;
-  const sender = inviter ?? mover;
-  const owner = await memberOf(store, names, team, sender.address, via);
-  const kind = KIND[e.channel_type];
-  const room = await names?.roomOf(team, e.channel, via);
-  return [{
-    ts: slackTime(e.ts, ctx.now),
+  const everyone = (people: RoomMember[] | undefined) =>
+    people ? Promise.all(people.map(person)) : undefined;
+  const { change } = line;
+  const named: RoomChange = {
+    ...change,
+    joined: await everyone(change.joined),
+    left: await everyone(change.left),
+    ...(change.call ? { call: { ...change.call, with: await everyone(change.call.with) } } : {}),
+  };
+  const sender = line.by ? await person({ address: line.by }) : undefined;
+  const owner = await memberOf(store, names, team, line.by, via);
+  const kind = line.type ? KIND[line.type] : undefined;
+  const room = await names?.roomOf(team, line.channel, via);
+  return {
+    ts: line.ts,
     type: "message",
     ...(owner ? { agent: { id: owner } } : {}),
+    ...(line.ref
+      ? { payload: { ref_external_id: `slack:${team}:${line.channel}:${line.ref}` } }
+      : {}),
     envelope: {
       service: "slack",
       connection_address: anchor,
       conversation: {
-        address: e.channel,
+        address: line.channel,
         ...(kind ? { kind } : {}),
         ...(room ? { name: room } : {}),
       },
-      sender,
-      external_id: `slack:${team}:${e.channel}:${e.ts}`,
+      ...(sender ? { sender } : {}),
+      external_id: `slack:${team}:${line.channel}:${line.id}`,
     },
-    parts: [part],
-    extra: { slack: { subtype: e.subtype, ...(authorizations ? { authorizations } : {}) } },
-  }];
+    parts: [roomPart(named)],
+    extra: { slack: { ...line.wire, ...(authorizations ? { authorizations } : {}) } },
+  };
+}
+
+/** The room changes Slack says only as events, as the line each one is: in the room the
+ *  event names, keyed on the event's own ts (a retry is the same line) or, for what
+ *  happens to a room once, on what happened. Null for every other event, and for one
+ *  that names no room. */
+function roomEvent(e: SlackEvent, now: () => string): RoomLineSpec | null {
+  const wire = { event: e.type };
+  switch (e.type) {
+    case "channel_created": {
+      const c = e.channel;
+      if (!c?.id) return null;
+      return {
+        channel: c.id,
+        id: "created",
+        ts: slackTime(c.created ? String(c.created) : e.event_ts, now),
+        by: c.creator || undefined,
+        change: { state: "created", name: c.name },
+        type: c.is_private ? "group" : "channel",
+        wire,
+      };
+    }
+    case "channel_deleted":
+    case "group_deleted": {
+      // Slack does not say who
+      const at = (e as { event_ts?: string }).event_ts;
+      return typeof e.channel === "string"
+        ? {
+          channel: e.channel,
+          id: "deleted",
+          ts: slackTime(at, now),
+          change: { state: "deleted" },
+          wire,
+        }
+        : null;
+    }
+    case "pin_added":
+    case "pin_removed": {
+      // a message pinned or unpinned; a pinned file is no message a line can point at
+      const channel = e.channel_id ?? e.item?.channel;
+      const ref = e.item?.type === "message" ? e.item.message?.ts : undefined;
+      if (!channel || !ref || !e.event_ts) return null;
+      return {
+        channel,
+        id: e.event_ts,
+        ts: slackTime(e.event_ts, now),
+        by: e.user,
+        change: { pinned: e.type === "pin_added" },
+        ref,
+        wire,
+      };
+    }
+    case "channel_shared":
+    case "channel_unshared": {
+      if (!e.channel || !e.event_ts) return null;
+      // the other organization by its team id: the event names no more of it
+      const shared = e.type === "channel_shared"
+        ? { added: e.connected_team_id }
+        : { removed: e.previously_connected_team_id };
+      return {
+        channel: e.channel,
+        id: e.event_ts,
+        ts: slackTime(e.event_ts, now),
+        change: { shared },
+        wire,
+      };
+    }
+    case "shared_channel_invite_received":
+    case "shared_channel_invite_accepted":
+    case "shared_channel_invite_approved":
+    case "shared_channel_invite_declined":
+    case "shared_channel_invite_requested": {
+      const channel = e.type === "shared_channel_invite_requested" ? e.channel_id : e.channel?.id;
+      const from = e.type === "shared_channel_invite_requested"
+        ? undefined
+        : e.invite?.inviting_team?.name;
+      if (!channel || !e.event_ts) return null;
+      return {
+        channel,
+        id: e.event_ts,
+        ts: slackTime(e.event_ts, now),
+        change: { invite: { state: e.type.slice("shared_channel_invite_".length), from } },
+        wire,
+      };
+    }
+    case "channel_id_changed":
+      // the line stands in the old room and names the new one
+      if (!e.old_channel_id || !e.new_channel_id || !e.event_ts) return null;
+      return {
+        channel: e.old_channel_id,
+        id: e.event_ts,
+        ts: slackTime(e.event_ts, now),
+        change: { moved: { to: e.new_channel_id } },
+        wire,
+      };
+    case "channel_history_changed":
+    case "group_history_changed":
+    case "im_history_changed": {
+      // Slack's documented payload names no room: the line is written only when it does
+      const channel = (e as { channel?: unknown }).channel;
+      if (typeof channel !== "string" || !e.event_ts) return null;
+      return {
+        channel,
+        id: e.event_ts,
+        ts: slackTime(e.event_ts, now),
+        change: { history: "changed" },
+        wire,
+      };
+    }
+    case "im_created": {
+      const c = e.channel as { id?: string; created?: number };
+      if (!c?.id || !e.user) return null;
+      return {
+        channel: c.id,
+        id: "created",
+        ts: slackTime(c.created ? String(c.created) : undefined, now),
+        by: e.user,
+        change: { state: "created", joined: [{ address: e.user }] },
+        type: "im",
+        wire,
+      };
+    }
+    case "call_rejected":
+      if (!e.channel_id || !e.call_id) return null;
+      return {
+        channel: e.channel_id,
+        id: `call.${e.call_id}`,
+        ts: now(),
+        by: e.user_id,
+        change: { call: { state: "rejected" } },
+        wire,
+      };
+    default:
+      return null;
+  }
 }
 
 /** Slack's mention encodings → display text + `payload.mentions` entries. `<@U123>`
@@ -885,6 +1244,9 @@ const FRESH_MS = 5 * 60 * 1000;
  *  an error means the far side is unwell and the wait is longer. */
 const RECONNECT_MS = 1_000;
 const RECONNECT_ERROR_MS = 5_000;
+/** How long after the room's line of the bot leaving the account's own `channel_left` is
+ *  that same leave, said twice. */
+const LEAVE_TWIN_MS = 60_000;
 /** A socket back after this long was an outage, not a blip, and the gap is read back. */
 const CATCH_UP_AFTER_MS = 5_000;
 /** How long every socket may be gone before the workspaces read `unavailable` (§5): a
