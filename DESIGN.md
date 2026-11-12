@@ -4009,8 +4009,7 @@ no sent message without its call; worth it once scripts see real use).
   which tails the log, acts and writes the outcome onto that row, as a dispatcher writes a
   send's delivery. A send is already this round trip between processes. What it buys over
   a socket: delivery across hosts where the log is Postgres, a request kept while main is
-  down, and every roster change in the record with its outcome. Today these requests go
-  over main's socket.
+  down, and every roster change in the record with its outcome.
 - Rejected & why (for future selves): **A2A** as gateway protocol (peer-protocol ceremony
   vs driver shape — open-bsp already ships A2A types); **MCP channels** for ingestion
   (local-subprocess topology, can't publish to a log).
