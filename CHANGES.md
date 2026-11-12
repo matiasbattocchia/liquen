@@ -24,21 +24,23 @@ Decided 12 Nov 2026. Driven by turtle-agents' requirements for agents made at ru
 ## 1. Two tables hold what the file declares: `agents` and `config`
 
 `agents` is the roster, the org's `/etc/passwd`: who exists and who steers whom —
-`agent_id`, the mind session, `name`, `email`, `phone`, `principals`. These are the columns
+`agent_id`, the mind session, `name`, `email`, `phone`, `principals`, and the backlog
+floor (5), a fact of the agent rather than a setting. Most are the columns
 SQL joins: the roster views (`principals`, `aliases`) and the ingest classifier read them,
 and policy and routing stand on those views. It carries no settings.
 
 `config` is `(scope, key, value)`, the value JSON, a row per leaf: `model`, `rules` (one
 array, one value), `listen`. The scopes are the file's sections: `shared`, `shared.agents`,
 `agents.<name>`, `connections.<service>`, `processors`. A row present is a key set; no row
-is a key inherited, and `null` is a value ("every tool", "never sleeps"). An agent's
+is a key inherited, and `null` is a value ("every tool", "never sleeps"). `system` and
+`edge` are scopes too, their readers reading the store. An agent's
 setting resolves `agents.<name>` → `shared.agents` → the catalog's constant, a join on
 equal `key`, at read time: `configOf` takes the shared scope beside the row, so a change to
 `shared.agents` reaches every agent that does not set the key itself. `mind` is a setting
 like the rest, and the `principals` view resolves it with a `coalesce` over `config`.
 
-`deployment` stays in the file: it names where the store is. Whether `edge` and `system`
-join the store or stay with it is open.
+`deployment` stays in the file, the one section the store cannot hold: it names where the
+store is.
 
 A `connections.<service>` scope is the connector's knobs, and its presence is what spawns
 the connector: `connectorConfig` reads the store. The `connections` table is per account
@@ -51,8 +53,9 @@ room routed to an agent (8) is a `mirrors.rooms` entry there.
 boot error for an unknown key. No command writes it; `liquen init` lays the commented
 template once, and from then on humans and repos write it (turtle-agents' `sync.ts` among
 them). Every org on this machine and turtle-agents' template are converted by hand, with
-the catalog, in one change. YAML reads `+5491133585694` as a number, so a phone is
-quoted; the catalog's string check refuses one that is not.
+the catalog, in one change. A phone is taken quoted or bare: YAML reads
+`+5491133585694` as a number, and the catalog takes a number there as its digits, which
+is all a handle is compared by.
 
 ## 3. Commands write the store, never the file
 
@@ -77,9 +80,10 @@ volume owns the rest.
 
 ## 5. The backlog floor
 
-An agent made at runtime owes history from the moment it was made. Today every boot
-recomputes every agent's floor as the boot's time less `backlogHours`; whether the floor
-becomes a fact written once per agent is open.
+The floor is a fact of the agent, written once when its row is made: that moment less
+`backlogHours`, a column of `agents`. A boot never moves it, so the history an agent's
+prompt opens on stays put and its cache with it. A row without one gets it the first time
+boot sees it, the same write.
 
 ## Docs
 
