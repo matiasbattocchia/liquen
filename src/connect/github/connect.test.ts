@@ -499,6 +499,7 @@ Deno.test("app door: the form link carries the org's own event list, and the web
   assertEquals(q.getAll("events[]"), ["issues", "pull_request"]);
   assertEquals(q.get("issues"), "write");
   assertEquals(q.get("pull_requests"), "write");
+  assertEquals(q.get("discussions"), "read");
   // GitHub cannot deliver to a laptop, and a link cannot carry a secret: the form's blanks
   assertEquals(q.get("webhook_active"), "false");
   assertEquals(q.get("webhook_url"), null);
