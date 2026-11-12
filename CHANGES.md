@@ -1,7 +1,7 @@
 # Next batch: the org's configuration lives in the store
 
 Decided 12 Nov 2026. Driven by turtle-agents' requirements for agents made at runtime;
-1 and 2 below are settled, 3 to 8 are still to discuss.
+1 to 3 below are settled, 4 to 8 are still to discuss.
 
 1. Runtime roster: the roster lives in the org's registry on the volume, so agents added
    at runtime survive restarts and rolls.
@@ -24,10 +24,11 @@ Decided 12 Nov 2026. Driven by turtle-agents' requirements for agents made at ru
 ## 1. Two tables hold what the file declares: `agents` and `config`
 
 `agents` is the roster, the org's `/etc/passwd`: who exists and who steers whom —
-`agent_id`, the mind session, `name`, `email`, `phone`, `principals`, and the backlog
-floor (5), a fact of the agent rather than a setting. Most are the columns
-SQL joins: the roster views (`principals`, `aliases`) and the ingest classifier read them,
-and policy and routing stand on those views. It carries no settings.
+`agent_id`, the mind session, `name`, `email`, `phone`, and the backlog floor (5), a fact
+of the agent rather than a setting. Who steers whom is its own table, `steers(agent_id,
+principal, rank)` (7). Most are the columns SQL joins: the roster views (`principals`,
+`aliases`) and the ingest classifier read them, and policy and routing stand on those
+views. It carries no settings.
 
 `config` is `(scope, key, value)`, the value JSON, a row per leaf: `model`, `rules` (one
 array, one value), `listen`. The scopes are the file's sections: `shared`, `shared.agents`,
@@ -70,8 +71,8 @@ main takes the change for that one agent, the others running on (6).
 ## 4. Boot and reload apply the file to the store
 
 Boot is a reload at start. A key the file declares overwrites the store's; a key it leaves
-out keeps the store's value; an agent it does not declare is left alone and named loudly
-at boot. Removing a key from the file stops pinning it, and does not reset it.
+out keeps the store's value; an agent it does not declare is left alone, and named at
+boot when idle (7). Removing a key from the file stops pinning it, and does not reset it.
 
 So every key has one owner: the file when it declares it, runtime otherwise. A command
 that would change a key the file declares refuses: `agents.dubiku.model is declared in
@@ -113,6 +114,45 @@ up. A change of settings is neither: the runner's config and transport are read 
 invocation, so main replaces the agent's config and its `stock` transport, as `tune` does
 for an attached CLI, and the next turn runs on them while the running one finishes as it
 began. A change of `export` also tells the sandbox.
+
+## 7. Removal is total, and the database enforces it
+
+`liquen agent --remove <name>` brings the agent down (6), then deletes it in one
+transaction, and its folder and Unix user after it commits. An agent the file declares
+refuses: `agents.<name> is declared in config.yaml; remove it there first`; taken out of
+the file, it is an undeclared agent, still running, until the command removes it.
+
+The store's references to an agent are foreign keys, the same on both engines (SQLite's
+`PRAGMA foreign_keys = ON` on every connection `openLog` opens):
+
+- `steers.agent_id` and `steers.principal` reference `agents` `ON DELETE RESTRICT`: an
+  agent another agent names as its principal is refused removal, and the refusal names
+  who. The `principals` view reads `steers` for the declared part and keeps the derived
+  part (§4's ownership rules) as it is;
+- `memberships`, `connections`, `credentials`, `rules` and `locks` reference `agents`
+  `ON DELETE CASCADE`: what the agent owns goes with its row, its keys and its grants
+  included;
+- `config`'s `agents.<name>` scope and, under `docs: database`, the agent's docs are
+  deleted in the same transaction: a scope is a string, no key;
+- `events`, `usage` and `egress` are history and reference nothing: their `agent_id`
+  stamps stay.
+
+Nothing the agent saw leaks by it: with its connection rows and memberships gone, its
+traffic is visible through no branch of the law, and other agents' memberships in shared
+rooms are their own. A `mirrors.rooms` entry naming it drops out of `aliases` by the join.
+
+A name added again is the agent coming back: its mind room is `mind@<name>`, the log keeps
+it, and the new membership grants it whole, so the agent reads its history again. Its
+folder, its keys, its verdicts and its grants are gone; an account granted again brings
+that account's history back with it.
+
+The store holds orphans from boot's mirror deletes (memberships and connections of agents
+no longer in the roster), and a constraint is not added over them: the change that adds
+the keys deletes them first, on both engines.
+
+**Idle.** An undeclared agent with no turn for 30 days (`IDLE_DAYS`, its last `usage`
+row) is named at boot, one line for all of them. `liquen agent` with no name lists every
+agent: declared or not, running or paused, its last turn.
 
 ## Docs
 
