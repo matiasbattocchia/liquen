@@ -116,7 +116,7 @@ Deno.test("runner: a mind has a keeper, kept where its provider is Anthropic; a 
         made.push(w);
         return {
           through: (t, kept) => (w.kept.push(kept), t),
-          stop: () => w.stopped++,
+          stop: () => (w.stopped++, undefined),
         };
       },
     };

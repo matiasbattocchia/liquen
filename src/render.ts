@@ -194,7 +194,12 @@ export function systemSections(docs: DocEntry[], env: Env = {}): PrefixSection[]
   // a tool doc is the tool's words, which the request's `tools` carry (tooldoc.ts)
   const ordered = docs.filter((d) => d.header.kind !== "tool").sort(byCascade);
   const out: PrefixSection[] = ordered.filter((d) => d.body !== undefined)
-    .map((d) => ({ key: d.header.handle, text: section(d), doc: true as const }));
+    .map((d) => ({
+      key: d.header.handle,
+      text: section(d),
+      doc: true as const,
+      ...(d.header.kind === "memory" ? { memory: true as const } : {}),
+    }));
 
   const pointers = ordered.filter((d) => d.body === undefined);
   if (pointers.length > 0) {
@@ -217,23 +222,27 @@ export function systemSections(docs: DocEntry[], env: Env = {}): PrefixSection[]
   return out;
 }
 
-/** The sections as the request's `system`: the docs' bodies one block, each harness
- *  section its own under a rule, one cache mark at the end. */
+/** The sections as the request's `system`: the docs' bodies, each harness section its own
+ *  block under a rule, and one cache mark. The bodies are two blocks, the words people
+ *  write and then the memories, joined as one text, so the mark can close the first. */
 export function systemBlocks(sections: PrefixSection[]): TextBlockParam[] {
   const blocks: TextBlockParam[] = [];
-  const add = (text: string) =>
-    blocks.push({ type: "text", text: (blocks.length ? RULE : "") + text.trimEnd() });
+  const add = (text: string, joint = RULE) =>
+    blocks.push({ type: "text", text: (blocks.length ? joint : "") + text.trimEnd() });
+  const join = (bodies: PrefixSection[]) => bodies.map((s) => s.text).join("\n\n");
 
-  const bodies = sections.filter((s) => s.doc);
-  if (bodies.length > 0) add(bodies.map((s) => s.text).join("\n\n"));
+  const written = sections.filter((s) => s.doc && !s.memory);
+  const kept = sections.filter((s) => s.memory);
+  if (written.length > 0) add(join(written));
+  if (kept.length > 0) add(join(kept), "\n\n");
   for (const s of sections.filter((s) => !s.doc)) add(s.text);
 
-  const last = blocks.at(-1);
-  // caches tools + the full system prefix. The hour TTL, not the default five minutes: docs
-  // change when a human edits one, and an agent that wakes every twenty minutes was paying
-  // to re-write this block each time (a 1h write is 2x input against 1.25x, and reads at
-  // 0.1x cover it after the first hit).
-  if (last) last.cache_control = { type: "ephemeral", ttl: "1h" };
+  // One hour's mark, on the tools and the words people write. Those outlast a checkpoint,
+  // which takes up the memories the agent rewrote since the last one, so the call after it
+  // reads them back and writes only the rest. The window's marks cover everything after
+  // them; a prefix of no instructions is marked whole.
+  const mark = blocks[written.length > 0 ? 0 : blocks.length - 1];
+  if (mark) mark.cache_control = { type: "ephemeral", ttl: "1h" };
   return blocks;
 }
 

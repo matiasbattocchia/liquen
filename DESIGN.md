@@ -1624,8 +1624,9 @@ before plus new rows, until a checkpoint moves the floor:
   one's tail is the next one's: a tool round-trip, and the next turn after a wake, read back
   everything already paid for (0.1× input) and write only the new rows. The hour, because
   the next request is often more than five minutes away; a 2× write on each step's new rows
-  buys 0.1× reads across the gaps between wakes. Four marks in all: the system prefix, the
-  previous request's tail, this one's, and the pinned cut (§5 Compaction). A read lands only
+  buys 0.1× reads across the gaps between wakes. Four marks in all: the tools and the
+  instructions (§5 The system prompt), the previous request's tail, this one's, and the
+  pinned cut (§5 Compaction). A read lands only
   where an earlier request placed a mark, or within 20 blocks behind one, and a read
   refreshes every entry the request's marks reach; an entry no request reaches dies an hour
   after its last read. A tail that closes on the anchor carries its mark on the text inside
@@ -1637,10 +1638,14 @@ before plus new rows, until a checkpoint moves the floor:
   the next, twenty in a row at most, some eighteen hours: the list prices put a write at 20
   to 80 reads, so a run that never meets a turn costs at most one write more than the
   lapse. The night is the gap it pays most across: the morning's first turn reads what the
-  evening's last one wrote. Any call the mind makes takes the timer over, and a checkpoint
-  arms none, since the next turn renders past it. A named session has none: its work ends,
-  and the next brief may be days away. Only an Anthropic transport is kept, and a replay is
-  metered as `keepalive`.
+  evening's last one wrote. A call that answers takes the timer over, and a checkpoint arms
+  none, since the next turn renders past it. A call that fails read nothing, so the replay
+  armed before it stays armed. A replay due after its hour ran out, as on a machine that
+  slept through it, stands down: it would write the cache, not read it. A stopping process
+  leaves each mind's owed replay in `data/run/<agent>.keep.json`, and the next boot's
+  keeper takes it up, so a restart inside the hour keeps the cache. A named session has
+  none: its work ends, and the next brief may be days away. Only an Anthropic transport is
+  kept, and a replay is metered as `keepalive`.
 
 ### Media (kept like the rest, until the checkpoint)
 
@@ -1776,11 +1781,14 @@ is the quiet default. **`## Processors`**, when the org configured one, says onc
 of the listed kinds is made readable on its own, so the model waits for the `<transcript>`
 instead of opening the file. A listing with nothing in it is absent, the way the anchor's
 sections are. Harness-authored, so no doc edit can lose any of it, and stable between
-grants, so the prefix stays cached. One cache breakpoint at the end — the
-first of the three the request carries; the other two are the window's (above) — so
-the whole prefix is a single region and the section order is the model's reading order,
-words before the facts they are spent on. An hour's TTL, not the default five minutes: an
-agent that wakes every twenty minutes reads it back on every wake. Between checkpoints the
+grants, so the prefix stays cached. The section order is the model's reading order,
+words before the facts they are spent on, and one of the request's four cache marks sits
+inside it: after the words people write, before the memories. Those are two blocks the
+model reads as one text, and the mark closes the first, so the tools and the instructions
+are their own cached region. A checkpoint takes up the memories the agent rewrote since
+the last one, and the call after it reads that region back and writes only the rest;
+the window's marks cover everything past it. An hour's TTL, not the default five
+minutes: an agent that wakes every twenty minutes reads it back on every wake. Between checkpoints the
 request reads the prefix the first `prefix` event since the checkpoint holds (above): a
 doc edit reaches the model as a notice where it was read, and the prefix at the next
 checkpoint.

@@ -62,9 +62,11 @@ import type { AgentRow } from "./store/agents.ts";
 import { seedAgent, seedOrg } from "./store/seed.ts";
 import {
   checkProvider,
+  leaveOwed,
   metered,
   type ModelTransport,
   providerOf,
+  takeOwed,
   transports,
   vaultKeys,
   type Warmth,
@@ -413,8 +415,10 @@ export async function start(
       agentId,
     );
   const stock = new Map(principals.map((p) => [p.agentId, meter(p.agentId, transportFor(p))]));
-  // each mind's keeper (§5), every one of them stopped with the org
-  const keepers = new Set<Warmth>();
+  // each mind's keeper (§5), every one of them stopped with the org. The ping a keeper
+  // still owes waits in a file of its agent's for the next boot's keeper to take up
+  const keepers = new Map<string, Warmth>();
+  const owedAt = (agentId: string) => `${dir}/run/${agentId}.keep.json`;
   // the runner (§4): one builder for the mind and every named session, over the store,
   // the row and these ports — the process's own part is the fan-outs and the transports
   const host: Host = {
@@ -428,9 +432,9 @@ export async function start(
     // same map, keyed on the agent. Explicit principals search their own view
     ...(derived ? { history: historyFor } : {}),
     transport: (agentId) => stock.get(agentId)!,
-    warmth: () => {
-      const w = warmth();
-      keepers.add(w);
+    warmth: (agentId) => {
+      const w = warmth({ owed: takeOwed(owedAt(agentId)) });
+      keepers.set(agentId, w);
       return w;
     },
     sandbox,
@@ -781,7 +785,7 @@ export async function start(
       clearInterval(collector);
       for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
       settling.clear();
-      for (const w of keepers) w.stop();
+      for (const [agentId, w] of keepers) leaveOwed(owedAt(agentId), w.stop());
       for (const unsub of unsubs) unsub();
       await doors.close(); // stop taking syscalls before the log goes away
       // Bound the settle. A turn wedged on a hung model connection (e.g. a network

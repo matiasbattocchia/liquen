@@ -110,11 +110,30 @@ Deno.test("on the table, the index says what opens a handle: `read`, not the she
   );
 });
 
-Deno.test("one cache breakpoint, on the last — an HOUR, since docs change when a human edits", () => {
+Deno.test("one cache breakpoint, an HOUR, on the words people write", () => {
   const blocks = renderSystem(clinicDocs());
   assertEquals(blocks.length, 2);
-  assertEquals(blocks[0].cache_control, undefined);
-  assertEquals(blocks.at(-1)!.cache_control, { type: "ephemeral", ttl: "1h" });
+  assertEquals(blocks[0].cache_control, { type: "ephemeral", ttl: "1h" });
+  assertEquals(blocks.at(-1)!.cache_control, undefined);
+});
+
+Deno.test("the memories are a block of their own past the mark, read as one text with the words", () => {
+  const docs = [
+    ...clinicDocs(),
+    doc("agent", "memory", "memories", { load: "always" }, "Ana prefiere los martes."),
+  ];
+  const blocks = renderSystem(docs);
+  assertEquals(blocks.length, 3);
+  assertEquals(blocks.map((b) => b.cache_control !== undefined), [true, false, false]);
+  assert(blocks[1].text.startsWith("\n\n[") && blocks[1].text.includes("Ana prefiere"));
+  // the text the model reads is the one it read when the bodies were one block
+  const memory = systemSections(docs).find((s) => s.memory)!;
+  const words = systemSections(docs).filter((s) => s.doc && !s.memory).map((s) => s.text);
+  assertEquals(blocks[0].text + blocks[1].text, [...words, memory.text].join("\n\n"));
+
+  const onlyKept = renderSystem([doc("agent", "memory", "memories", { load: "always" }, "x")]);
+  assertEquals(onlyKept.length, 1);
+  assertEquals(onlyKept[0].cache_control, { type: "ephemeral", ttl: "1h" });
 });
 
 Deno.test("a tool doc is neither inlined nor indexed: its words ride the request's tools", () => {

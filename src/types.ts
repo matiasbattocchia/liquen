@@ -847,6 +847,8 @@ export interface PrefixSection {
   key: string;
   text: string;
   doc?: true;
+  /** A memory doc's body: what the agent keeps, and rewrites as it learns. */
+  memory?: true;
 }
 
 /** The system prefix a step's request was made with (§5), whole. nu writes it with the

@@ -2,11 +2,14 @@ import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   ANTHROPIC,
+  CACHE_HOUR_MS,
   checkProvider,
   GOOGLE,
+  leaveOwed,
   type ModelTransport,
   providerOf,
   silenced,
+  takeOwed,
   transports,
   vaultKeys,
   warmth,
@@ -289,5 +292,59 @@ Deno.test("warmth: a failed ping ends the run, and stop ends it for good", async
   } finally {
     console.error = error;
     failed.stop();
+  }
+});
+
+Deno.test("warmth: a call that fails leaves the ping armed before it", async () => {
+  const w = warmth({ everyMs: 40, pings: 1 });
+  const { seen, t } = calls([1]);
+  try {
+    const through = w.through(t);
+    await through(REQUEST, undefined, { kind: "think" });
+    await assertRejects(() => through(REQUEST, undefined, { kind: "think" }));
+    await wait(100);
+    assertEquals(seen.map((c) => c.kind), ["think", "think", "keepalive"]);
+  } finally {
+    w.stop();
+  }
+});
+
+Deno.test("warmth: a ping whose hour ran out stands down, since it would write", async () => {
+  let clock = 0;
+  const w = warmth({ everyMs: 20, pings: 5, now: () => clock });
+  const { seen, t } = calls();
+  try {
+    await w.through(t)(REQUEST, undefined, { kind: "think" });
+    clock = CACHE_HOUR_MS; // the machine slept through it
+    await wait(60);
+    assertEquals(seen.map((c) => c.kind), ["think"]);
+    assertEquals(w.stop(), undefined);
+  } finally {
+    w.stop();
+  }
+});
+
+Deno.test("warmth: a stopped keeper hands over the ping it owes, and the next one sends it", async () => {
+  const dir = await Deno.makeTempDir();
+  const path = `${dir}/run/a1.keep.json`;
+  const before = warmth({ everyMs: 20, pings: 3 });
+  const first = calls();
+  const after = calls();
+  try {
+    await before.through(first.t)(REQUEST, undefined, { kind: "think" });
+    leaveOwed(path, before.stop());
+    const owed = takeOwed(path);
+    assertEquals(owed?.params, REQUEST);
+    assertEquals(owed?.left, 3);
+    assertEquals(takeOwed(path), undefined); // taken once
+    const next = warmth({ everyMs: 20, pings: 3, owed });
+    next.through(after.t);
+    await wait(150);
+    next.stop();
+    assertEquals(first.seen.map((c) => c.kind), ["think"]);
+    assertEquals(after.seen.map((c) => c.kind), ["keepalive", "keepalive", "keepalive"]);
+    assertEquals(after.seen[0].max_tokens, 0);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

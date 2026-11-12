@@ -38,7 +38,7 @@ export interface Host {
   /** The agent's stock transport, metered in its name (§2 telemetry). */
   transport: (agentId: string) => ModelTransport;
   /** A keeper for each mind's cache (§5). Absent: a quiet mind's cache lapses. */
-  warmth?: () => Warmth;
+  warmth?: (agentId: string) => Warmth;
   /** The exec plane (§9). Absent: no shell, no ambient lines, no file scope — an edge host. */
   sandbox?: Sandbox;
   contact?: XiPorts["contact"];
@@ -113,7 +113,7 @@ export function runnerFor(
   const reach = host.reach?.({ agent: agentId });
   const exec = box || reach ? { exec: { ...box?.exec, ...(reach ? docTools(reach) : {}) } } : {};
   // the mind's next turn is always coming; a named session's work ends, and its cache with it
-  const warmth = sessionId === MIND ? host.warmth?.() : undefined;
+  const warmth = sessionId === MIND ? host.warmth?.(agentId) : undefined;
   return {
     config: { ...configOf(row, sessionId), ...(box ? { home: box.home } : {}), ...seams },
     log: slog,
