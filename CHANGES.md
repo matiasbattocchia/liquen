@@ -65,7 +65,7 @@ agent <name>` is an upsert: it makes the agent or changes it, a flag per setting
 `--unset <key>` deletes a row so the key inherits again. `liquen config` prints the
 store's state as YAML, read-only: what a human copies into the file to pin.
 
-How main takes one agent's change without restarting the others is to be settled.
+main takes the change for that one agent, the others running on (6).
 
 ## 4. Boot and reload apply the file to the store
 
@@ -84,6 +84,35 @@ The floor is a fact of the agent, written once when its row is made: that moment
 `backlogHours`, a column of `agents`. A boot never moves it, so the history an agent's
 prompt opens on stays put and its cache with it. A row without one gets it the first time
 boot sees it, the same write.
+
+## 6. main brings one agent up, down, or changes it, and boot is up for each row
+
+main builds what an agent runs on from the roster it read at start, so today the only way
+it takes a change is a restart, which cuts every agent's turn and ends every agent's
+background jobs. Instead each agent's part is held by agent, and two steps make or undo it:
+
+**Up** — the agent's entries, its writes, and its subscription:
+
+- its metered transport in `stock`; its runner in a map keyed by agent, which the named
+  sessions and `tune` look it up in, and which the clock and the presence handler already
+  read on every call;
+- its ground in the sandbox, through a new `add(agentId)`: on this machine its folder,
+  `bin/`, its proxy nonce and its exports; on the gateway its sandbox;
+- the provider check, the mind's membership, `seedAgent`, the folder and its Unix user
+  (requirement 4), each a write that converges;
+- its subscription to its own view of the log, its unsubscribe kept by agent, then the
+  trigger-less look at what the log owes it.
+
+**Down** — the same, undone: the unsubscribe, its debounce timer cleared, its turns in
+flight waited out, its keeper stopped, its transport and named runners dropped, and
+`remove(agentId)` on the sandbox, which ends that agent's shells and no one else's.
+
+Boot is up for each row. A command that adds an agent brings it up; one that removes it,
+or pauses it (`mind: false`), brings it down once no turn of it runs; unpausing brings it
+up. A change of settings is neither: the runner's config and transport are read at every
+invocation, so main replaces the agent's config and its `stock` transport, as `tune` does
+for an attached CLI, and the next turn runs on them while the running one finishes as it
+began. A change of `export` also tells the sandbox.
 
 ## Docs
 
