@@ -102,11 +102,12 @@ export async function connectGithubApp(
 }
 
 /** The registration form, prefilled by URL parameters (GitHub reads them at
- *  /settings/apps/new): the name, the two permissions a commenter needs, the events the
- *  ingest maps — `connections.github.events`, so the subscription and the mapping stay the
- *  one list — and the webhook, on and addressed at the org's public door when the org has
- *  one (`webhook`: `<edge.publicUrl>/github/ingest`), off when GitHub cannot reach it. A
- *  link cannot carry a secret, so that is the form's own blank. */
+ *  /settings/apps/new): the name, the two permissions a commenter needs and the read that
+ *  discussions' events ride on, the events the ingest maps — `connections.github.events`,
+ *  so the subscription and the mapping stay the one list — and the webhook, on and
+ *  addressed at the org's public door when the org has one (`webhook`:
+ *  `<edge.publicUrl>/github/ingest`), off when GitHub cannot reach it. A link cannot carry
+ *  a secret, so that is the form's own blank. */
 export function appForm(org: string, events: string[], webhook?: string): string {
   const form = new URL("https://github.com/settings/apps/new");
   const q = form.searchParams;
@@ -116,6 +117,7 @@ export function appForm(org: string, events: string[], webhook?: string): string
   q.set("public", "false");
   q.set("issues", "write");
   q.set("pull_requests", "write");
+  q.set("discussions", "read");
   q.set("webhook_active", webhook ? "true" : "false");
   if (webhook) q.set("webhook_url", webhook);
   for (const e of events) q.append("events[]", e);

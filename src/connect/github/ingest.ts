@@ -19,9 +19,11 @@
  */
 
 import { DEFAULT_EVENTS } from "./config.ts";
-import type { Appender, Draft, MessageEvent, Part } from "../../connector.ts";
+import type { Appender, Draft, Json, MessageEvent, Part } from "../../connector.ts";
 import { findRoot, orgFlag } from "../../connector.ts";
 import { entry } from "../../entry.ts";
+import { roomPart } from "../../room.ts";
+import type { Payload, RoomChange, RoomMember } from "../../types.ts";
 
 export interface GithubWebhookDeps {
   /** → the EventLog (the connection's only write). Bind liquen's `log.publish`. */
@@ -66,14 +68,14 @@ export function createGithubWebhook(deps: GithubWebhookDeps): WebhookHandler {
       return text(400, "invalid json");
     }
 
-    // 3. map → a liquen `message`, stamped with `envelope.external_id` (null = a loopback or an
+    // 3. map → liquen `message`s, each stamped with `envelope.external_id` (none = an
     //    uninteresting action). Dedupe is the STORE's job: `publish` upserts on external_id,
     //    so a retried delivery, an edit, or our own dispatched comment echoing back all MERGE
     //    into the existing row — no new event, no wake (§4, §9).
-    const msg = mapEvent(event, payload, { connection, now, delivery });
-    if (!msg) return text(202, "ignored");
+    const msgs = mapEvent(event, payload, { connection, now, delivery });
+    if (!msgs.length) return text(202, "ignored");
     try {
-      await deps.publish(msg);
+      for (const msg of msgs) await deps.publish(msg);
     } catch {
       return text(500, "publish failed");
     }
@@ -89,51 +91,56 @@ interface MapCtx {
   delivery: string;
 }
 
-/** Turn a delivery into a `message` addressed to the PR/issue thread, or null to ignore.
- *  No author-based self-skip: our own actions echoing back reconcile STRUCTURALLY — the
- *  external_id upsert merges them into the row dispatch backfilled (and `setDelivery`
+/** Turn a delivery into `message`s addressed to the issue, PR or discussion, or none to
+ *  ignore. No author-based self-skip: our own actions echoing back reconcile STRUCTURALLY —
+ *  the external_id upsert merges them into the row dispatch backfilled (and `setDelivery`
  *  absorbs the echo if it wins the race), so no new event, no wake (§4). Out-of-band
  *  actions by the bot account (posted outside our dispatch) flow in as ordinary messages —
  *  the agent seeing what its own account did elsewhere is correct, not a loop. */
-function mapEvent(event: string, p: GhPayload, ctx: MapCtx): Draft<MessageEvent> | null {
+function mapEvent(event: string, p: GhPayload, ctx: MapCtx): Draft<MessageEvent>[] {
   const login = p.sender?.login;
   const repo = p.repository?.full_name;
-  if (!repo) return null;
+  if (!repo) return [];
 
-  const built = describe(event, p);
-  if (!built || built.number === undefined) return null;
-  const { number, part, title, url } = built;
-
-  return {
-    ts: ctx.now(),
-    type: "message",
-    envelope: {
-      service: "github",
-      connection_address: ctx.connection,
-      conversation: { address: `${repo}#${number}`, ...(title ? { name: title } : {}) },
-      sender: login ? { address: login, name: login } : undefined,
-      // the upsert/merge key (§3, §4): the platform ARTIFACT id where one exists (a comment,
-      // a review — retries and edits merge into the same row, and our own dispatched comment
-      // loops back onto the row dispatch backfilled); the DELIVERY guid for lifecycle events
-      // (opened/reopened are not artifacts — the guid still retry-dedupes, and each action is
-      // a distinct delivery so it correctly stays a distinct row).
-      external_id: built.externalId !== undefined
-        ? `gh:${built.externalId}`
-        : `ghd:${ctx.delivery}`,
-    },
-    parts: [part],
-    extra: {
-      // the dispatch side reads extra.github to know WHERE and HOW to reply (§4)
-      github: {
-        event,
-        action: p.action,
-        delivery: ctx.delivery,
-        repo,
-        number,
-        ...(url ? { url } : {}),
+  return describe(event, p, repo).flatMap((built, i) => {
+    const { number, part, title, url, payload } = built;
+    if (number === undefined) return [];
+    return [{
+      ts: ctx.now(),
+      type: "message" as const,
+      ...(payload ? { payload } : {}),
+      envelope: {
+        service: "github",
+        connection_address: ctx.connection,
+        conversation: { address: `${repo}#${number}`, ...(title ? { name: title } : {}) },
+        sender: login ? { address: login, name: login } : undefined,
+        // the upsert/merge key (§3, §4): the platform ARTIFACT id where one exists (a
+        // comment, a review — retries and edits merge into the same row, and our own
+        // dispatched comment loops back onto the row dispatch backfilled); the conversation's
+        // own address for its opening, which a later body edit names; the DELIVERY guid for
+        // everything else, a room line or an edit (each action is a distinct delivery, so it
+        // stays a distinct row). One delivery saying two things — a title and a body edited
+        // at once — keys the second on the guid and its place.
+        external_id: built.externalId !== undefined
+          ? `gh:${built.externalId}`
+          : i === 0
+          ? `ghd:${ctx.delivery}`
+          : `ghd:${ctx.delivery}:${i}`,
       },
-    },
-  };
+      parts: [part],
+      extra: {
+        // the dispatch side reads extra.github to know WHERE and HOW to reply (§4)
+        github: {
+          event,
+          action: p.action,
+          delivery: ctx.delivery,
+          repo,
+          number,
+          ...(url ? { url } : {}),
+        },
+      },
+    }];
+  });
 }
 
 interface Built {
@@ -141,38 +148,51 @@ interface Built {
   part: Part;
   title?: string;
   url?: string;
-  externalId?: number; // the platform artifact id (comment/review), when the event maps to one
+  /** The platform artifact id (comment, review), or the conversation's address for its
+   *  opening, when the message is one; absent, the delivery keys it. */
+  externalId?: number | string;
+  /** An edit's or a room line's reference: the message it acts on or is said of. */
+  payload?: Payload;
 }
 
-/** Per-event action filter + the PART the delivery becomes. Only the actions worth waking on.
+/** Per-event action filter + what the delivery becomes.
  *
  *  The split every connector makes (§5): what a machine keys on is `data`, what a human wrote
  *  is `text` — never the same words in both. A comment is pure prose, so it stays a text part
  *  and renders as a plain `<msg>`; the rest carry a scrap of structure their prose can't say —
- *  a review's verdict, the file a code comment hangs on, whether a PR was opened or reopened —
- *  and render as their kind: `<review data="{state:'approved'}">LGTM</review>`.
+ *  a review's verdict, the file a code comment hangs on, an opening's state — and render as
+ *  their kind: `<review data="{state:'approved'}">LGTM</review>`.
+ *
+ *  Everything said ABOUT the conversation rather than in it — closed, merged, relabeled,
+ *  retitled, linked to another issue — is a room line (`roomLine`): the change alone, from
+ *  whoever made it, which informs and never wakes (§3). An edited body is the opening's
+ *  edit, since the body is the opening's words.
  *
  *  What the ENVELOPE already carries is never repeated here: the repo and number are the
  *  conversation's address (`ana/widgets#42`), the PR/issue title is its name, and the url and
  *  wire action ride `extra.github` for dispatch. */
-function describe(event: string, p: GhPayload): Built | null {
+function describe(event: string, p: GhPayload, repo: string): Built[] {
+  const action = p.action ?? "";
   switch (event) {
     case "issue_comment": // fires for PR comments too (a PR is an issue)
-      if (p.action !== "created") return null;
-      return {
+      if (action === "pinned" || action === "unpinned") {
+        return [roomLine(p.issue, { pinned: action === "pinned" }, action, p.comment?.id)];
+      }
+      if (action !== "created") return [];
+      return [{
         number: p.issue?.number,
         title: p.issue?.title,
         part: { type: "text", kind: "text", text: p.comment?.body ?? "" },
         url: p.comment?.html_url,
         externalId: p.comment?.id,
-      };
+      }];
     case "pull_request_review_comment": {
-      if (p.action !== "created") return null;
+      if (action !== "created") return [];
       // where it hangs is structure; the remark itself is prose
       const anchor: Record<string, string | number> = {};
       if (p.comment?.path) anchor.path = p.comment.path;
       if (p.comment?.line !== undefined) anchor.line = p.comment.line;
-      return {
+      return [{
         number: p.pull_request?.number,
         part: {
           type: "data",
@@ -182,11 +202,14 @@ function describe(event: string, p: GhPayload): Built | null {
         },
         url: p.comment?.html_url,
         externalId: p.comment?.id,
-      };
+      }];
     }
     case "pull_request_review":
-      if (p.action !== "submitted") return null;
-      return {
+      if (action === "dismissed") {
+        return [roomLine(p.pull_request, { review: { dismissed: true } }, action, p.review?.id)];
+      }
+      if (action !== "submitted") return [];
+      return [{
         number: p.pull_request?.number,
         // the verdict is the point — an approval with no words is a whole event
         part: {
@@ -197,36 +220,225 @@ function describe(event: string, p: GhPayload): Built | null {
         },
         url: p.review?.html_url,
         externalId: p.review?.id,
-      };
-    case "pull_request":
-      if (!["opened", "reopened", "ready_for_review"].includes(p.action ?? "")) return null;
-      return {
-        number: p.pull_request?.number ?? p.number,
-        title: p.pull_request?.title,
-        part: {
-          type: "data",
-          kind: "pr",
-          data: { state: p.action! }, // opened ≠ reopened ≠ ready_for_review
-          ...(p.pull_request?.body ? { text: p.pull_request.body } : {}),
-        },
-        url: p.pull_request?.html_url,
-      };
+      }];
+    case "pull_request_review_thread":
+      // a thread is named by its first remark, the review comment that opened it
+      if (action !== "resolved" && action !== "unresolved") return [];
+      return [
+        roomLine(
+          p.pull_request,
+          { resolved: action === "resolved" },
+          action,
+          p.thread?.comments?.[0]?.id,
+        ),
+      ];
+    case "pull_request": {
+      const pr = p.pull_request && { ...p.pull_request, number: p.pull_request.number ?? p.number };
+      return conversation("pr", pr, p, repo);
+    }
     case "issues":
-      if (!["opened", "reopened"].includes(p.action ?? "")) return null;
-      return {
-        number: p.issue?.number,
-        title: p.issue?.title,
-        part: {
-          type: "data",
-          kind: "issue",
-          data: { state: p.action! },
-          ...(p.issue?.body ? { text: p.issue.body } : {}),
-        },
-        url: p.issue?.html_url,
-      };
+      return conversation("issue", p.issue, p, repo);
+    case "discussion":
+      return conversation("discussion", p.discussion, p, repo);
+    case "sub_issues":
+    case "issue_dependencies":
+    case "issue_relates_to":
+      return [tie(event, p)];
     default:
-      return null;
+      return [];
   }
+}
+
+/** An issue's, a pull request's or a discussion's own delivery. Its opening carries the
+ *  body, words, so it is a message, keyed on the conversation's address; an edited body is
+ *  that message's edit (§3); anything else is a room line. */
+function conversation(
+  kind: "issue" | "pr" | "discussion",
+  on: GhThread | undefined,
+  p: GhPayload,
+  repo: string,
+): Built[] {
+  const action = p.action ?? "";
+  if (action === "opened" || action === "created") return [opening(kind, on, repo)];
+  if (action === "edited") {
+    // `changes` holds each edited field's old value; a retitle is the room's, a new body
+    // the opening's, and any other field (a pull request's base) says itself by name
+    const { title, body, ...other } = p.changes ?? {};
+    const lines = title || Object.keys(other).length
+      ? [
+        roomLine(on, {
+          name: title ? on?.title : undefined,
+          was: title?.from,
+          changed: Object.keys(other),
+        }, action),
+      ]
+      : [];
+    if (!body) return lines;
+    const { externalId, ...said } = opening(kind, on, repo);
+    return [...lines, {
+      ...said,
+      payload: { action: "edit", ref_external_id: `gh:${externalId}` },
+    }];
+  }
+  // answered names the answer; unanswered, the comment that was one
+  return [roomLine(on, changeOf(action, p, on), action, (p.answer ?? p.old_answer)?.id)];
+}
+
+/** The opening: an issue or a pull request opened, a discussion created. The state says it
+ *  is the opening; a discussion's category is structure its body cannot say. */
+function opening(
+  kind: "issue" | "pr" | "discussion",
+  on: GhThread | undefined,
+  repo: string,
+): Built {
+  return {
+    number: on?.number,
+    title: on?.title,
+    part: {
+      type: "data",
+      kind,
+      data: { state: "opened", ...(on?.category?.name ? { category: on.category.name } : {}) },
+      ...(on?.body ? { text: on.body } : {}),
+    },
+    url: on?.html_url,
+    externalId: `${repo}#${on?.number}`,
+  };
+}
+
+/** What an action on an issue, a pull request or a discussion says, as the room's change.
+ *  The three share most of their actions, so one table reads them all. */
+function changeOf(action: string, p: GhPayload, on: GhThread | undefined): RoomChange {
+  switch (action) {
+    case "closed":
+      // a pull request merges by closing; an issue or a discussion closes with a reason
+      // (completed, not_planned, duplicate, resolved, outdated)
+      if (p.pull_request?.merged) return { state: "merged" };
+      return {
+        state: "closed",
+        fields: on?.state_reason ? { state_reason: on.state_reason } : undefined,
+      };
+    case "reopened":
+    case "locked":
+    case "unlocked":
+    case "deleted":
+      return { state: action };
+    case "converted_to_draft":
+      return { state: "draft" };
+    case "ready_for_review":
+      return { state: "ready" };
+    case "enqueued":
+      return { state: "queued" };
+    case "dequeued":
+      return { state: "dequeued" };
+    case "pinned":
+    case "unpinned":
+      return { pinned: action === "pinned" };
+    case "labeled":
+      return { labels: { added: p.label?.name ? [p.label.name] : [] } };
+    case "unlabeled":
+      return { labels: { removed: p.label?.name ? [p.label.name] : [] } };
+    case "assigned":
+      return { assigned: members(p.assignee) };
+    case "unassigned":
+      return { unassigned: members(p.assignee) };
+    case "milestoned":
+      return { milestone: p.milestone?.title };
+    case "demilestoned":
+      return { milestone: "" };
+    case "typed":
+      return { type: p.type?.name };
+    case "untyped":
+      return { type: "" };
+    case "field_added":
+    case "field_removed":
+      // the field's value as GitHub words it; `""` once cleared
+      return p.issue_field?.name
+        ? {
+          fields: {
+            [p.issue_field.name]: action === "field_added" ? p.issue_field_value?.value ?? "" : "",
+          },
+        }
+        : {};
+    case "review_requested":
+    case "review_request_removed": {
+      const who = [
+        ...members(p.requested_reviewer),
+        ...(p.requested_team?.slug
+          ? [{ address: p.requested_team.slug, name: p.requested_team.name }]
+          : []),
+      ];
+      return { review: action === "review_requested" ? { requested: who } : { removed: who } };
+    }
+    case "auto_merge_enabled":
+    case "auto_merge_disabled":
+      return { settings: { auto_merge: action === "auto_merge_enabled" } };
+    case "synchronize":
+      // the push names the head it moved to, not how many commits came with it:
+      // `commits` is the pull request's count after it
+      return { pushed: { commits: p.pull_request?.commits ?? 0, head: p.after?.slice(0, 7) } };
+    case "transferred": {
+      const to = p.changes?.new_issue ?? p.changes?.new_discussion;
+      return to ? { moved: { to: addressOf(to, p.changes?.new_repository) } } : {};
+    }
+    case "category_changed":
+      return { category: on?.category?.name };
+    case "answered":
+    case "unanswered":
+      return { answered: action === "answered" };
+    default:
+      return {};
+  }
+}
+
+/** A tie between two issues: a sub-issue and its parent, a dependency, a relation. Each
+ *  delivery is for one side — the parent gaining a sub-issue, the sub-issue gaining a
+ *  parent, the blocked issue and the blocking one — so the line stands in that side's
+ *  issue and names the other, as GitHub says it. */
+function tie(event: string, p: GhPayload): Built {
+  const action = p.action ?? "";
+  const [on, other, otherRepo, as]: [GhThread?, GhThread?, GhRepo?, string?] =
+    event === "sub_issues"
+      ? action.startsWith("sub_issue")
+        ? [p.parent_issue, p.sub_issue, p.sub_issue_repo, "sub"]
+        : [p.sub_issue, p.parent_issue, p.parent_issue_repo, "parent"]
+      : event === "issue_dependencies"
+      ? action.startsWith("blocked_by")
+        ? [p.blocked_issue, p.blocking_issue, p.blocking_issue_repo, "blocked_by"]
+        : [p.blocking_issue, p.blocked_issue, p.blocked_issue_repo, "blocks"]
+      : [p.issue, p.related_issue, undefined, "related"];
+  // a relation across repositories reaches each side without the other's details
+  const links = other ? [{ address: addressOf(other, otherRepo), name: other.title, as }] : [];
+  return roomLine(on, action.endsWith("_added") ? { linked: links } : { unlinked: links }, action);
+}
+
+/** A room line (§3): the change alone, in the conversation it happened to. `ref` is the
+ *  message it is said of — a dismissed review, a pinned comment, a resolved thread's first
+ *  remark, an answer. A change this cannot name, or one the payload leaves empty, still
+ *  says itself in GitHub's word: never silent. */
+function roomLine(
+  on: GhThread | undefined,
+  change: RoomChange,
+  action: string,
+  ref?: number,
+): Built {
+  const part = roomPart(change);
+  return {
+    number: on?.number,
+    title: on?.title,
+    url: on?.html_url,
+    part: Object.keys(part.data).length ? part : roomPart({ changed: [action] }),
+    ...(ref !== undefined ? { payload: { ref_external_id: `gh:${ref}` } } : {}),
+  };
+}
+
+function members(u: GhUser | null | undefined): RoomMember[] {
+  return u?.login ? [{ address: u.login, name: u.login }] : [];
+}
+
+/** Another issue's address, `owner/repo#N`: its repository as the payload names it, else
+ *  as its API url does (`…/repos/owner/repo`). */
+function addressOf(issue: GhThread, repo?: GhRepo): string {
+  return `${repo?.full_name ?? issue.repository_url?.split("/repos/")[1]}#${issue.number}`;
 }
 
 /* ── HMAC verification (Web-standard, constant-time) ──────────────────── */
@@ -261,15 +473,61 @@ interface GhUser {
   login?: string;
   type?: string;
 }
+interface GhRepo {
+  full_name?: string;
+}
+/** An issue, a pull request or a discussion: the conversation. */
+interface GhThread {
+  number?: number;
+  title?: string;
+  body?: string | null;
+  html_url?: string;
+  repository_url?: string;
+  state_reason?: string | null;
+  merged?: boolean;
+  commits?: number;
+  category?: { name?: string };
+}
 interface GhPayload {
   action?: string;
   number?: number;
-  repository?: { full_name?: string };
+  repository?: GhRepo;
   sender?: GhUser;
-  issue?: { number?: number; title?: string; body?: string; html_url?: string };
-  pull_request?: { number?: number; title?: string; body?: string; html_url?: string };
+  issue?: GhThread;
+  pull_request?: GhThread;
+  discussion?: GhThread;
   comment?: { id?: number; body?: string; path?: string; line?: number; html_url?: string };
   review?: { id?: number; body?: string; state?: string; html_url?: string };
+  /** An edit's old values, field by field; a transfer's new home. */
+  changes?: {
+    title?: { from?: string };
+    body?: { from?: string | null };
+    new_issue?: GhThread;
+    new_discussion?: GhThread;
+    new_repository?: GhRepo;
+    [field: string]: unknown;
+  };
+  label?: { name?: string };
+  assignee?: GhUser | null;
+  milestone?: { title?: string };
+  type?: { name?: string } | null;
+  issue_field?: { name?: string };
+  issue_field_value?: { value?: Json };
+  requested_reviewer?: GhUser | null;
+  requested_team?: { name?: string; slug?: string };
+  after?: string;
+  thread?: { comments?: { id?: number }[] };
+  answer?: { id?: number };
+  old_answer?: { id?: number };
+  parent_issue?: GhThread;
+  parent_issue_repo?: GhRepo;
+  sub_issue?: GhThread;
+  sub_issue_repo?: GhRepo;
+  blocked_issue?: GhThread;
+  blocked_issue_repo?: GhRepo;
+  blocking_issue?: GhThread;
+  blocking_issue_repo?: GhRepo;
+  related_issue?: GhThread;
 }
 
 function text(status: number, message: string): Response {

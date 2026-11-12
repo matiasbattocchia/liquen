@@ -15,6 +15,11 @@ export const DEFAULT_EVENTS = [
   "pull_request",
   "pull_request_review",
   "pull_request_review_comment",
+  "pull_request_review_thread",
+  "discussion",
+  "sub_issues",
+  "issue_dependencies",
+  "issue_relates_to",
 ];
 
 export interface GithubConfig {
