@@ -1423,6 +1423,34 @@ Deno.test("teams surfaces: a group chat named as an agent with no account is its
 
 /* ── the keeper ──────────────────────────────────────────────────────────────────── */
 
+Deno.test("teams keeper: a path Graph refuses costs no other — the subscription made before it is recorded, and the refusal is said", async () => {
+  await withVault(async (creds) => {
+    let n = 0;
+    const errors: unknown[] = [];
+    const keeper = createTeamsKeeper({
+      creds,
+      broker: createGrantBroker({ creds }),
+      notificationUrl: URL_,
+      fetchApi: graph({
+        "/me/joinedTeams": { value: [] },
+        "POST /subscriptions": (c: Call) => {
+          const body = c.body as { resource: string };
+          if (body.resource === chatsResource(OID)) {
+            return new Response("changeType not supported", { status: 400 });
+          }
+          return Response.json({ id: `sub-${++n}`, expirationDateTime: "2026-09-26T11:50:00Z" });
+        },
+      }),
+      now: () => NOW,
+      onError: (_k, err) => errors.push(err),
+    });
+    await keeper.tick();
+    assertEquals(Object.keys(subsOf(await creds.get(KEY))), [CHAT_RES]);
+    assertEquals(errors.length, 1);
+    assert(String(errors[0]).includes("400"));
+  });
+});
+
 Deno.test("teams keeper: a first sweep subscribes the member's chats and every channel of their teams, recording id, expiry and secret on the grant", async () => {
   await withVault(async (creds) => {
     const calls: Call[] = [];

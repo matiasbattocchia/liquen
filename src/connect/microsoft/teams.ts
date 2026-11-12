@@ -1449,39 +1449,48 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
     const subs = subsOf(await deps.creds.get(grant.key));
     let touched = 0;
     let changed = false;
+    // a path Graph refuses does not cost the others: each is tried, what was made is
+    // recorded, and the first refusal is said after. Unrecorded, a subscription made
+    // before the refusal would be asked again, answered "exists" and never renewed
+    let refused: unknown;
     for (const path of paths) {
-      let sub: SubRecord | undefined = subs[path];
-      const t = Date.parse(now());
-      // made for another address: Graph would keep delivering there, so it goes, and the
-      // path is one with no subscription from here on
-      if (sub && sub.url !== deps.notificationUrl) {
-        await remove(graph, sub);
-        delete subs[path];
-        sub = undefined;
-        changed = true;
-      }
-      if (sub && Date.parse(sub.expires) - t > RENEW_AHEAD_MS) continue;
-      if (sub && Date.parse(sub.expires) > t) {
-        subs[path] = await renew(graph, sub, now);
-        touched++;
-        changed = true;
-        continue;
-      }
-      const made = await create(graph, path, deps.notificationUrl, now);
-      if (made) {
-        subs[path] = made;
-        touched++;
-        changed = true;
-      } else {
-        // held by another grant: nothing of ours to record, and not asked again this hour
-        foreign.add(path);
-        if (sub) {
+      try {
+        let sub: SubRecord | undefined = subs[path];
+        const t = Date.parse(now());
+        // made for another address: Graph would keep delivering there, so it goes, and the
+        // path is one with no subscription from here on
+        if (sub && sub.url !== deps.notificationUrl) {
+          await remove(graph, sub);
           delete subs[path];
+          sub = undefined;
           changed = true;
         }
+        if (sub && Date.parse(sub.expires) - t > RENEW_AHEAD_MS) continue;
+        if (sub && Date.parse(sub.expires) > t) {
+          subs[path] = await renew(graph, sub, now);
+          touched++;
+          changed = true;
+          continue;
+        }
+        const made = await create(graph, path, deps.notificationUrl, now);
+        if (made) {
+          subs[path] = made;
+          touched++;
+          changed = true;
+        } else {
+          // held by another grant: nothing of ours to record, and not asked again this hour
+          foreign.add(path);
+          if (sub) {
+            delete subs[path];
+            changed = true;
+          }
+        }
+      } catch (err) {
+        refused ??= err;
       }
     }
     if (changed) await writeSubs(deps.creds, grant.key, subs);
+    if (refused !== undefined) throw refused;
     return touched;
   };
 
