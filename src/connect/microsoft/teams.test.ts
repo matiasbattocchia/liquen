@@ -1,10 +1,12 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   bodyOf,
+  chatsResource,
   createTeamsCatchUp,
   createTeamsDispatch,
   createTeamsKeeper,
   createTeamsWebhook,
+  durationSeconds,
   GRAPH,
   idOf,
   isTeamsAddress,
@@ -34,7 +36,15 @@ import {
 } from "../../store/log.ts";
 import type { ConnectionRow, Connections, MembershipRow } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
-import type { Draft, Event, EventId, FilePart, MessageEvent } from "../../types.ts";
+import type {
+  Draft,
+  Event,
+  EventId,
+  FilePart,
+  MessageEvent,
+  RoomChange,
+  RoomMember,
+} from "../../types.ts";
 import type { SaveFile } from "../mail.ts";
 import { fileStorage } from "../../store/storage.ts";
 import { newId } from "../../store/id.ts";
@@ -347,7 +357,7 @@ Deno.test("teams webhook: the handshake echoes the token plain; a notice is acke
   });
 });
 
-Deno.test("teams webhook: a member added, a member gone and a rename are the room's own lines; another system event is none", async () => {
+Deno.test("teams webhook: a member added, a member gone, a rename and a call are the room's own lines", async () => {
   await withVault(async (creds) => {
     const { publish, rows } = captor();
     const system = (id: string, eventDetail: Record<string, unknown>) => ({
@@ -401,8 +411,8 @@ Deno.test("teams webhook: a member added, a member gone and a rename are the roo
         resource: `chats('${CHAT}')/messages('${id}')`,
       }));
     }
-    assertEquals(rows.length, 3);
-    const [added, gone, renamed] = rows;
+    assertEquals(rows.length, 4);
+    const [added, gone, renamed, call] = rows;
     assertEquals(added.envelope, {
       service: "microsoft",
       connection_address: "ana@contoso.com",
@@ -414,7 +424,7 @@ Deno.test("teams webhook: a member added, a member gone and a rename are the roo
     assertEquals(added.parts, [{
       type: "data",
       kind: "room",
-      data: { joined: [{ address: "u-bo", name: "Bo" }] },
+      data: { joined: [{ address: "u-bo", name: "Bo" }], reason: "added" },
     }]);
     assertEquals(gone.envelope.sender, { address: "u-bo", name: "Bo" }); // nobody did it to them
     assertEquals(gone.parts[0], {
@@ -425,6 +435,374 @@ Deno.test("teams webhook: a member added, a member gone and a rename are the roo
     assertEquals(renamed.agent, { id: "ana" }); // the member renamed it
     assertEquals(renamed.envelope.conversation.name, "ops-q4");
     assertEquals(renamed.parts[0], { type: "data", kind: "room", data: { name: "ops-q4" } });
+    assertEquals(call.envelope.sender, { address: "u-robin", name: "Robin Kline" });
+    assertEquals(call.parts[0], { type: "data", kind: "room", data: { call: { state: "ended" } } });
+  });
+});
+
+const ROBIN = { id: "u-robin", displayName: "Robin Kline" };
+const BO = { id: "u-bo", displayName: "Bo" };
+const robin = { address: "u-robin", name: "Robin Kline" };
+const bo = { address: "u-bo", name: "Bo" };
+const LAUNCH = "19:1a2b3c4d5e6f@thread.tacv2";
+
+/** A system message in the channel, its detail the given type with the given fields. */
+const systemIn = (id: string, type: string, fields: Record<string, unknown>) => ({
+  id,
+  messageType: "systemEventMessage",
+  createdDateTime: "2026-09-23T11:00:00.000Z",
+  channelIdentity: { teamId: TEAM, channelId: CHANNEL },
+  from: null,
+  body: { contentType: "html", content: "<systemEventMessage/>" },
+  eventDetail: { "@odata.type": `#microsoft.graph.${type}EventMessageDetail`, ...fields },
+});
+
+/** Every detail type v1.0 defines: its fields as Graph sends them, the `room` data the line
+ *  carries, and its sender — Robin, the initiator, unless the case says otherwise. */
+const DETAIL_CASES: [string, Record<string, unknown>, RoomChange, RoomMember?][] = [
+  ["membersAdded", { members: [BO] }, { joined: [bo], reason: "added" }],
+  ["membersJoined", { members: [BO], initiator: { user: BO } }, { joined: [bo] }, bo],
+  ["membersDeleted", { members: [BO] }, { left: [bo], reason: "removed" }],
+  // taken out by themselves: they left
+  ["membersDeleted", { members: [BO], initiator: { user: BO } }, { left: [bo] }, bo],
+  ["membersLeft", { members: [BO], initiator: { user: BO } }, { left: [bo] }, bo],
+  ["chatRenamed", { chatId: CHAT, chatDisplayName: "ops-q4" }, { name: "ops-q4" }],
+  ["channelRenamed", { channelId: CHANNEL, channelDisplayName: "Launch" }, { name: "Launch" }],
+  ["channelAdded", { channelId: LAUNCH, channelDisplayName: "Launch" }, {
+    channels: { added: [{ address: `${TEAM}/${LAUNCH}`, name: "Launch" }] },
+  }],
+  ["channelDescriptionUpdated", { channelId: CHANNEL, channelDescription: "Launch planning" }, {
+    description: "Launch planning",
+  }],
+  ["channelSetAsFavoriteByDefault", { channelId: CHANNEL }, { settings: { favorite: true } }],
+  ["channelUnsetAsFavoriteByDefault", { channelId: CHANNEL }, { settings: { favorite: false } }],
+  ["conversationMemberRoleUpdated", {
+    conversationMemberUser: BO,
+    conversationMemberRoles: ["owner"],
+  }, { promoted: [bo] }],
+  ["conversationMemberRoleUpdated", { conversationMemberUser: BO, conversationMemberRoles: [] }, {
+    demoted: [bo],
+  }],
+  ["messagePinned", { eventDateTime: NOW }, { pinned: true }],
+  ["messageUnpinned", { eventDateTime: NOW }, { pinned: false }],
+  ["meetingPolicyUpdated", { meetingChatEnabled: false, meetingChatId: CHAT }, {
+    settings: { meeting_chat: false },
+  }],
+  ["callStarted", { callEventType: "meeting", callId: "c1" }, {
+    call: { state: "started", kind: "meeting" },
+  }],
+  ["callStarted", { callEventType: "screenShare", callId: "c1" }, {
+    call: { state: "started", kind: "screen" },
+  }],
+  ["callEnded", {
+    callEventType: "meeting",
+    callId: "c1",
+    callDuration: "PT21M",
+    callParticipants: [{ participant: { user: ROBIN } }, { participant: { user: BO } }],
+  }, { call: { state: "ended", kind: "meeting", seconds: 1260, with: [robin, bo] } }],
+  ["callRecording", {
+    callId: "c1",
+    callRecordingStatus: "success",
+    callRecordingUrl: "https://contoso-my.sharepoint.com/stream.aspx?id=r1",
+  }, { call: { recording: "https://contoso-my.sharepoint.com/stream.aspx?id=r1" } }],
+  // Graph names no initiator for a transcript: the line names no sender
+  [
+    "callTranscript",
+    {
+      callId: "c1",
+      callTranscriptICalUid: "uid",
+      meetingOrganizer: { user: ROBIN },
+      initiator: null,
+    },
+    { call: { transcript: true } },
+    undefined,
+  ],
+  ["tabUpdated", { tabId: "t1" }, { tab: "updated" }],
+  ["teamsAppInstalled", { teamsAppId: "a1", teamsAppDisplayName: "Polly" }, {
+    app: { added: "Polly" },
+  }],
+  ["teamsAppRemoved", { teamsAppId: "a1", teamsAppDisplayName: "Polly" }, {
+    app: { removed: "Polly" },
+  }],
+  ["teamsAppUpgraded", { teamsAppId: "a1", teamsAppDisplayName: "Polly" }, {
+    app: { upgraded: "Polly" },
+  }],
+  ["teamCreated", { teamId: TEAM, teamDisplayName: "Launch", teamDescription: "All of it" }, {
+    team: { state: "created", name: "Launch", description: "All of it" },
+  }],
+  ["teamRenamed", { teamId: TEAM, teamDisplayName: "Launch 2026" }, {
+    team: { name: "Launch 2026" },
+  }],
+  ["teamDescriptionUpdated", { teamId: TEAM, teamDescription: "Everything about the launch" }, {
+    team: { description: "Everything about the launch" },
+  }],
+  ["teamArchived", { teamId: TEAM }, { team: { state: "archived" } }],
+  ["teamUnarchived", { teamId: TEAM }, { team: { state: "unarchived" } }],
+  ["teamJoiningEnabled", { teamId: TEAM }, { team: { joining: true } }],
+  ["teamJoiningDisabled", { teamId: TEAM }, { team: { joining: false } }],
+  // a type the table has no word for says its own name; so does one whose fields came empty
+  ["channelSharingUpdated", { sharedChannelId: CHANNEL }, { changed: ["channelSharingUpdated"] }],
+  ["chatRenamed", { chatDisplayName: null }, { changed: ["chatRenamed"] }],
+];
+
+Deno.test("teams webhook: every system event detail is the room's line in its own words — each type read by its own fields, an unknown one said by name", async () => {
+  await withVault(async (creds) => {
+    const { publish, rows } = captor();
+    const routes: Record<string, unknown> = {
+      [`/teams/${TEAM}`]: { displayName: "Sales" },
+      [`/teams/${TEAM}/channels/${CHANNEL}`]: { displayName: "General" },
+    };
+    DETAIL_CASES.forEach(([type, fields], i) => {
+      routes[`/teams/${TEAM}/channels/${CHANNEL}/messages/${i + 1}`] = systemIn(
+        String(i + 1),
+        type,
+        { initiator: { user: ROBIN }, ...fields },
+      );
+    });
+    const handler = createTeamsWebhook({
+      publish,
+      creds,
+      broker: createGrantBroker({ creds }),
+      save,
+      fetchApi: graph(routes),
+      now: () => NOW,
+    });
+    await creds.put({ key: KEY, value: {}, extra: { [TEAMS_SUB]: sub(CHAN_RES, "sub-c") } });
+    for (const [i, [type, , data, ...said]] of DETAIL_CASES.entries()) {
+      rows.length = 0;
+      await handler(notice({
+        subscriptionId: "sub-c",
+        clientState: "s-sub-c",
+        changeType: "created",
+        resource: `teams('${TEAM}')/channels('${CHANNEL}')/messages('${i + 1}')`,
+      }));
+      assertEquals(rows.length, 1, type);
+      const [row] = rows;
+      assertEquals(row.parts, [{ type: "data", kind: "room", data }], type);
+      assertEquals(row.envelope.sender, said.length ? said[0] : robin, type);
+      assertEquals(row.envelope.external_id, `teams:${TEAM}/${CHANNEL}:${i + 1}`, type);
+      assertEquals(row.ts, "2026-09-23T11:00:00.000Z", type);
+      assertEquals(row.payload, undefined, type); // a pin names no message
+    }
+  });
+});
+
+Deno.test("teams webhook: a channel added or deleted is no rename of the channel it is told in; a deleted one is said deleted in itself too; a team renamed renames every channel of it", async () => {
+  await withVault(async (creds) => {
+    const { publish, rows } = captor();
+    const calls: Call[] = [];
+    const OTHER = "19:0f0f0f0f0f0f@thread.tacv2";
+    let team = "Sales";
+    const names = teamsNames();
+    const fetchApi = graph({
+      [`/teams/${TEAM}`]: () => Response.json({ displayName: team }),
+      [`/teams/${TEAM}/channels/${CHANNEL}`]: { displayName: "General" },
+      [`/teams/${TEAM}/channels/${OTHER}`]: { displayName: "Other" },
+      [`/teams/${TEAM}/channels/${CHANNEL}/messages/1`]: systemIn("1", "channelAdded", {
+        channelId: LAUNCH,
+        channelDisplayName: "Launch",
+        initiator: { user: ROBIN },
+      }),
+      [`/teams/${TEAM}/channels/${CHANNEL}/messages/2`]: systemIn("2", "channelDeleted", {
+        channelId: LAUNCH,
+        channelDisplayName: "Launch",
+        initiator: { user: ROBIN },
+      }),
+      [`/teams/${TEAM}/channels/${CHANNEL}/messages/3`]: systemIn("3", "teamRenamed", {
+        teamDisplayName: "Launch 2026",
+        initiator: { user: ROBIN },
+      }),
+    }, calls);
+    const handler = createTeamsWebhook({
+      publish,
+      creds,
+      broker: createGrantBroker({ creds }),
+      save,
+      fetchApi,
+      names,
+      now: () => NOW,
+    });
+    await creds.put({ key: KEY, value: {}, extra: { [TEAMS_SUB]: sub(CHAN_RES, "sub-c") } });
+    const send = (id: string) =>
+      handler(notice({
+        subscriptionId: "sub-c",
+        clientState: "s-sub-c",
+        changeType: "created",
+        resource: `teams('${TEAM}')/channels('${CHANNEL}')/messages('${id}')`,
+      }));
+    const general = {
+      address: `${TEAM}/${CHANNEL}`,
+      kind: "channel" as const,
+      name: "Sales / General",
+    };
+    const launch = { address: `${TEAM}/${LAUNCH}`, name: "Launch" };
+
+    await send("1");
+    assertEquals(rows.length, 1);
+    assertEquals(rows[0].envelope.conversation, general); // still General, not "Launch"
+    assertEquals(rows[0].parts[0], {
+      type: "data",
+      kind: "room",
+      data: { channels: { added: [launch] } },
+    });
+
+    await send("2");
+    assertEquals(rows.length, 3);
+    assertEquals(rows[1].envelope.conversation, general);
+    assertEquals(rows[1].parts[0], {
+      type: "data",
+      kind: "room",
+      data: { channels: { removed: [launch] } },
+    });
+    assertEquals(rows[2].envelope, {
+      service: "microsoft",
+      connection_address: "ana@contoso.com",
+      conversation: { address: `${TEAM}/${LAUNCH}` },
+      external_id: `teams:${TEAM}/${LAUNCH}:2`,
+      sender: robin,
+    });
+    assertEquals(rows[2].ts, "2026-09-23T11:00:00.000Z");
+    assertEquals(rows[2].parts[0], { type: "data", kind: "room", data: { state: "deleted" } });
+
+    // another channel of the team, named before the rename: asked again after it
+    const tokened = graph({
+      [`/teams/${TEAM}`]: () => Response.json({ displayName: team }),
+      [`/teams/${TEAM}/channels/${OTHER}`]: { displayName: "Other" },
+    });
+    const ask = (url: string, init?: RequestInit) => tokened(url, init);
+    const other = { kind: "channel" as const, team: TEAM, channel: OTHER };
+    assertEquals((await names.of(ask, other)).name, "Sales / Other");
+    team = "Launch 2026";
+    await send("3");
+    assertEquals(rows[3].parts[0], {
+      type: "data",
+      kind: "room",
+      data: { team: { name: "Launch 2026" } },
+    });
+    assertEquals(rows[3].envelope.conversation.name, "Launch 2026 / General");
+    assertEquals((await names.of(ask, other)).name, "Launch 2026 / Other");
+  });
+});
+
+Deno.test("durationSeconds: an ISO 8601 duration in whole seconds; a malformed one is none", () => {
+  assertEquals(durationSeconds("PT21M"), 1260);
+  assertEquals(durationSeconds("PT1H2M3.6S"), 3724);
+  assertEquals(durationSeconds("P1DT1S"), 86401);
+  assertEquals(durationSeconds("21 minutes"), undefined);
+  assertEquals(durationSeconds(null), undefined);
+});
+
+Deno.test("teams webhook: the chats themselves — a chat made is its created line with everyone in it; the account's read and hidden are its own view, each said once; a chat deleted is said deleted", async () => {
+  await withVault(async (creds) => {
+    const { publish, rows } = captor();
+    const VIEW_RES = chatsResource(OID);
+    let viewpoint: Record<string, unknown> = {
+      isHidden: false,
+      lastMessageReadDateTime: "2026-09-23T11:30:00.000Z",
+    };
+    const fetchApi = graph({
+      [`/chats/${CHAT}`]: () =>
+        Response.json({
+          id: CHAT,
+          chatType: "group",
+          topic: "ops",
+          createdDateTime: "2026-09-23T10:00:00.000Z",
+          members: [{ userId: OID, displayName: "Ana" }, { userId: "u-robin", ...ROBIN }],
+          viewpoint,
+        }),
+    });
+    // the log as published: the newest line a query's filter keeps
+    const read = (q?: ReadQuery) =>
+      Promise.resolve(
+        rows.map((r, i) => ({ ...r, id: `id${i + 1}` }) as unknown as Event)
+          .filter((e) => e.envelope.conversation.address === q?.conversation)
+          .filter((e) => !q?.filter || q.filter(e))
+          .slice(-(q?.limit ?? rows.length)),
+      );
+    const handler = createTeamsWebhook({
+      publish,
+      read,
+      creds,
+      broker: createGrantBroker({ creds }),
+      save,
+      fetchApi,
+      now: () => NOW,
+    });
+    await creds.put({ key: KEY, value: {}, extra: { [TEAMS_SUB]: sub(VIEW_RES, "sub-v") } });
+    const send = (changeType: string) =>
+      handler(notice({
+        subscriptionId: "sub-v",
+        clientState: "s-sub-v",
+        changeType,
+        resource: `chats('${CHAT}')`,
+      }));
+    const at = { service: "microsoft" as const, connection_address: "ana@contoso.com" };
+    const ops = { address: CHAT, kind: "group" as const, name: "ops" };
+
+    await send("created");
+    assertEquals(rows.length, 1);
+    assertEquals(rows[0].envelope, {
+      ...at,
+      conversation: ops,
+      external_id: `teams:${CHAT}:created`,
+    });
+    assertEquals(rows[0].ts, "2026-09-23T10:00:00.000Z");
+    assertEquals(rows[0].agent, undefined);
+    assertEquals(rows[0].parts, [{
+      type: "data",
+      kind: "room",
+      data: { state: "created", joined: [{ address: OID, name: "Ana" }, robin] },
+    }]);
+
+    // read, and shown as it always was: the read alone
+    await send("updated");
+    assertEquals(rows.length, 2);
+    const readAt = Date.parse("2026-09-23T11:30:00.000Z");
+    assertEquals(rows[1].envelope, {
+      ...at,
+      conversation: ops,
+      external_id: `teams:${CHAT}:read:${readAt}`,
+    });
+    assertEquals(rows[1].ts, "2026-09-23T11:30:00.000Z");
+    assertEquals(rows[1].parts[0], { type: "data", kind: "room", data: { view: { read: true } } });
+
+    // hidden: the same read keyed the same (the log merges it), and the hide said
+    viewpoint = { ...viewpoint, isHidden: true };
+    await send("updated");
+    assertEquals(rows.length, 4);
+    assertEquals(rows[2].envelope.external_id, `teams:${CHAT}:read:${readAt}`);
+    assertEquals(rows[3].envelope.external_id, `teams:${CHAT}:hidden:0`);
+    assertEquals(rows[3].envelope.sender, undefined);
+    assertEquals(rows[3].ts, NOW);
+    assertEquals(rows[3].parts[0], {
+      type: "data",
+      kind: "room",
+      data: { view: { hidden: true } },
+    });
+
+    // told again: nothing new is hidden
+    await send("updated");
+    assertEquals(rows.length, 5);
+    assertEquals(rows[4].parts[0], { type: "data", kind: "room", data: { view: { read: true } } });
+
+    // shown again, and read further: both said, the showing keyed by the hide it follows
+    viewpoint = { isHidden: false, lastMessageReadDateTime: "2026-09-23T11:45:00.000Z" };
+    await send("updated");
+    assertEquals(rows.length, 7);
+    assertEquals(
+      rows[5].envelope.external_id,
+      `teams:${CHAT}:read:${Date.parse("2026-09-23T11:45:00.000Z")}`,
+    );
+    assertEquals(rows[6].envelope.external_id, `teams:${CHAT}:hidden:id4`);
+    assertEquals(rows[6].parts[0], {
+      type: "data",
+      kind: "room",
+      data: { view: { hidden: false } },
+    });
+
+    await send("deleted");
+    assertEquals(rows[7].envelope.external_id, `teams:${CHAT}:deleted`);
+    assertEquals(rows[7].parts[0], { type: "data", kind: "room", data: { state: "deleted" } });
   });
 });
 
@@ -631,14 +1009,19 @@ Deno.test("teams webhook: an edit is its own event, a delete a marked row and a 
     );
     assertEquals(bad.status, 202);
     assertEquals(rows.length, 5);
-    // a system event (someone joined) is not a message
+    // a system event is the room's line, never words, and one with no detail still says so
     served = {
       ...base,
       messageType: "systemEventMessage",
       body: { contentType: "html", content: "<systemEventMessage/>" },
     };
     await send("created");
-    assertEquals(rows.length, 5);
+    assertEquals(rows.length, 6);
+    assertEquals(rows[5].parts, [{
+      type: "data",
+      kind: "room",
+      data: { changed: ["systemEventMessage"] },
+    }]);
   });
 });
 
@@ -1068,7 +1451,7 @@ Deno.test("teams keeper: a first sweep subscribes the member's chats and every c
     const posts = calls.filter((c) => c.init?.method === "POST").map((c) =>
       c.body as Record<string, unknown>
     );
-    assertEquals(posts.length, 3);
+    assertEquals(posts.length, 4);
     assertEquals(posts[0].resource, CHAT_RES);
     assertEquals(posts[0].changeType, "created,updated,deleted");
     assertEquals(posts[0].notificationUrl, URL_);
@@ -1078,16 +1461,22 @@ Deno.test("teams keeper: a first sweep subscribes the member's chats and every c
       new Date(Date.parse(NOW) + LIFETIME_MS).toISOString(),
     );
     assertEquals(typeof posts[0].clientState, "string");
-    assertEquals(posts[1].resource, CHAN_RES);
+    // the chats themselves, with the member's own view of each
+    const VIEW_RES = chatsResource(OID);
+    assertEquals(VIEW_RES, `/users/${OID}/chats?notifyOnUserSpecificProperties=true`);
+    assertEquals(posts[1].resource, VIEW_RES);
+    assertEquals(posts[1].changeType, "created,updated,deleted");
+    assertEquals(posts[2].resource, CHAN_RES);
     const subs = subsOf(await creds.get(KEY));
-    assertEquals(Object.keys(subs).sort(), [CHAN_RES, CHAT_RES].sort());
+    assertEquals(Object.keys(subs).sort(), [CHAN_RES, CHAT_RES, VIEW_RES].sort());
     assertEquals(subs[CHAT_RES], {
       id: "sub-1",
       expires: "2026-09-26T11:50:00Z",
       secret: posts[0].clientState as string,
       url: URL_,
     });
-    assertEquals(subs[CHAN_RES].id, "sub-2");
+    assertEquals(subs[VIEW_RES].id, "sub-2");
+    assertEquals(subs[CHAN_RES].id, "sub-3");
 
     // a second sweep: everything is fresh, the channel listing is remembered, nothing is asked
     calls.length = 0;

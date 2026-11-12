@@ -67,7 +67,7 @@ export function roomWords(part: RoomPart): string {
     ...(description !== undefined ? [`description ${said(description)}`] : []),
     ...(state ? [state] : []),
     ...(pinned !== undefined ? [pinned ? "pinned" : "unpinned"] : []),
-    ...(call ? [`call ${call.state}`] : []),
+    ...(call ? [`call ${call.state ?? JSON.stringify(call)}`] : []),
     ...Object.entries(rest).map(([k, v]) => `${k} ${JSON.stringify(v)}`),
     ...(view ? [`(own view) ${JSON.stringify(view)}`] : []),
   ];

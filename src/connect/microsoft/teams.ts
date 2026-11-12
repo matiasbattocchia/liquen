@@ -8,11 +8,12 @@
  * that minted it, acks within the wire's three seconds and reads the message back behind
  * the ack — a notice carries the resource's path and nothing else. The subscriptions that
  * feed it live for three days and are KEPT by the shared sweep (`connect/poll.ts`): every
- * minute, every grant, one subscription over all the member's chats
- * (`/users/<oid>/chats/getAllMessages`) and one per channel of every team the member is
- * in — created when absent, renewed inside its last day, recorded on the grant
- * (`extra.teams_sub`, keyed by the resource path, with the id, the expiry, the secret the
- * notices must echo and the address it was made for). A channel subscription is one per
+ * minute, every grant, one subscription over all the member's chat messages
+ * (`/users/<oid>/chats/getAllMessages`), one over the chats themselves (`chatsResource`)
+ * and one per channel of every team the member is in — created when absent, renewed
+ * inside its last day, recorded on the grant (`extra.teams_sub`, keyed by the resource
+ * path, with the id, the expiry, the secret the notices must echo and the address it was
+ * made for). A channel subscription is one per
  * channel for the whole app: the first grant to reach it holds it and the others meet a
  * 409, which is not a failure. The lifecycle notices ride the same endpoint: a
  * reauthorization renews, a removal drops the record so the next sweep recreates, a miss
@@ -37,7 +38,10 @@
  * by the edit's time), a delete marks the row and adds a delete event, a reaction is an
  * `add` keyed by who and what, so a notice repeated lands once. The sender is the Teams
  * user id; a sender whose id is a grant's `oid` is that member (`agent.id`). Rows anchor to
- * the grant whose subscription delivered them.
+ * the grant whose subscription delivered them. A system message is the room's own line,
+ * read by its detail's type (`DETAILS`). A notice on the chats themselves reads the chat
+ * back: a new one is its `created` line, and the member's own view of it — hidden or
+ * shown, read up to when — a `view` line on that member's account alone.
  *
  * Graph holds a notice it could not deliver for a few hours and a subscription for three
  * days, and past either the gap is only in the messages themselves. So the ingest READS
@@ -82,7 +86,10 @@ import type {
   MessageEvent,
   Part,
   ReactionPart,
+  RoomChange,
+  RoomLink,
   RoomMember,
+  RoomPart,
 } from "../../types.ts";
 import { roomPart } from "../../room.ts";
 import { findRoot, orgFlag } from "../../config.ts";
@@ -103,6 +110,13 @@ export const CHANNEL_SCOPES = both(["ChannelMessage.Read.All"]);
 
 /** What the sweep keeps on every grant. */
 export const RESOURCES = ["chats", "channels"];
+
+/** The member's chats themselves, the user-specific properties on: a chat made with them
+ *  in it, and their own view of each (`viewpoint` — hidden, read up to when). */
+export function chatsResource(oid: string): string {
+  return `/users/${oid}/chats?notifyOnUserSpecificProperties=true`;
+}
+
 /** A chatMessage subscription lives 4,320 minutes at most; ten minutes under it. */
 export const LIFETIME_MS = 4310 * 60_000;
 /** Renew inside the last day: a laptop closed for a night still holds its subscriptions. */
@@ -204,15 +218,39 @@ export interface ChatMessage {
     content?: string | null;
   }[];
   mentions?: { id?: number; mentionText?: string; mentioned?: { user?: TeamsUser | null } }[];
-  /** A `systemEventMessage`'s what-happened: its `@odata.type` names the event. */
-  eventDetail?: {
-    "@odata.type"?: string;
-    members?: TeamsUser[] | null;
-    initiator?: { user?: TeamsUser | null } | null;
-    chatDisplayName?: string | null;
-    channelDisplayName?: string | null;
-  } | null;
+  eventDetail?: EventDetail | null;
   reactions?: { reactionType?: string; user?: { user?: TeamsUser | null } }[];
+  [k: string]: unknown;
+}
+
+/** Who did a thing, as Graph's `identitySet` says it: a person, or an app acting. */
+interface Identity {
+  user?: TeamsUser | null;
+  application?: TeamsUser | null;
+}
+
+/** A `systemEventMessage`'s what-happened: its `@odata.type` names the event, and each type
+ *  carries its own fields — the slice of them the room line reads. */
+interface EventDetail {
+  "@odata.type"?: string;
+  initiator?: Identity | null;
+  members?: TeamsUser[] | null;
+  chatDisplayName?: string | null;
+  channelId?: string | null;
+  channelDisplayName?: string | null;
+  channelDescription?: string | null;
+  teamDisplayName?: string | null;
+  teamDescription?: string | null;
+  conversationMemberUser?: TeamsUser | null;
+  conversationMemberRoles?: string[] | null;
+  meetingChatEnabled?: boolean | null;
+  callEventType?: string | null;
+  /** ISO 8601, `PT21M`. */
+  callDuration?: string | null;
+  callParticipants?: { participant?: Identity | null }[] | null;
+  callRecordingUrl?: string | null;
+  callRecordingStatus?: string | null;
+  teamsAppDisplayName?: string | null;
   [k: string]: unknown;
 }
 
@@ -346,6 +384,8 @@ export interface TeamsNames {
   of(graph: Graph, place: Place, self?: string): Promise<PlaceInfo>;
   /** A place renamed, or its members moved: the next `of` asks Graph again. */
   forget(place: Place): void;
+  /** A team renamed: every channel of it wears the new `Team / Channel`. */
+  forgetTeam(team: string): void;
 }
 
 /** A place's kind and name (§3: the service's display facts), asked of Graph once per
@@ -408,6 +448,9 @@ export function teamsNames(stamp?: (address: string, kind: Kind) => Promise<void
     forget(place) {
       cache.delete(addressOf(place));
     },
+    forgetTeam(team) {
+      for (const key of cache.keys()) if (key.startsWith(`${team}/`)) cache.delete(key);
+    },
   };
 }
 
@@ -433,6 +476,9 @@ export interface TeamsWebhookDeps {
   now?: () => string;
   /** The name directory — shared with the catch-up, so a place is asked of Graph once. */
   names?: TeamsNames;
+  /** The log, read: whether the account's view of a chat was last said hidden, which a
+   *  chat notice's `viewpoint` is told against. Absent ⇒ a chat is shown until said. */
+  read?: Reader["read"];
 }
 
 export type WebhookHandler = (req: Request) => Promise<Response>;
@@ -448,7 +494,8 @@ function namesOf(deps: Pick<TeamsWebhookDeps, "store" | "names">): TeamsNames {
 export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
   const now = deps.now ?? (() => new Date().toISOString());
   const fetchApi = deps.fetchApi ?? fetch;
-  const mapMessage = teamsMapper({ names: namesOf(deps), save: deps.save, store: deps.store, now });
+  const names = namesOf(deps);
+  const mapMessage = teamsMapper({ names, save: deps.save, store: deps.store, now });
 
   return async (req) => {
     if (req.method !== "POST") return text(405, "method not allowed");
@@ -509,6 +556,14 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
       return;
     }
     if (!n.resource) return;
+    if (resource === chatsResource(String(grant.extra?.oid))) {
+      const chat = /chats\('([^']+)'\)/.exec(n.resource)?.[1];
+      if (!chat) return;
+      const token = await tokenOf(deps.broker, grant.key, grant.agentId);
+      const rows = await chatLines(chat, grant, grants, graphFor(fetchApi, token), n.changeType);
+      if (rows.length) await deps.publish(rows);
+      return;
+    }
     const at = parseResource(n.resource);
     if (!at) return;
     const token = await tokenOf(deps.broker, grant.key, grant.agentId);
@@ -524,6 +579,97 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
     const msg = await res.json() as ChatMessage;
     const rows = await mapMessage(msg, at, grant, grants, graph, n.changeType);
     if (rows.length) await deps.publish(rows);
+  }
+
+  /** A notice on a chat itself, read back, as the chat's lines (§3). Made: its `created`
+   *  line with everyone in it — Graph names no maker, so the line names no sender.
+   *  Deleted: its `deleted` line. Updated: the member's own view of it as its `viewpoint`
+   *  stands — read up to a time, keyed by that time, so the same read told by every later
+   *  notice lands once; and hidden or shown when that differs from the view last said,
+   *  keyed by the line it follows, so two notices racing on one change land once. A view
+   *  line is the account's alone, and nobody among the room spoke it. */
+  async function chatLines(
+    chat: string,
+    grant: CredentialRow,
+    grants: CredentialRow[],
+    graph: Graph,
+    changeType: string | undefined,
+  ): Promise<Draft<MessageEvent>[]> {
+    const upn = grant.key.slice(GRANT_PREFIX.length);
+    const place: Place = { kind: "chat", chat };
+    const line = (
+      external_id: string,
+      ts: string,
+      data: RoomChange,
+      info?: PlaceInfo,
+    ): Draft<MessageEvent> => ({
+      ts,
+      type: "message",
+      envelope: {
+        service: SERVICE,
+        connection_address: upn,
+        conversation: {
+          address: chat,
+          ...(info?.kind ? { kind: info.kind } : {}),
+          ...(info?.name ? { name: info.name } : {}),
+        },
+        external_id,
+      },
+      parts: [roomPart(data)],
+    });
+    if (changeType === "deleted") {
+      return [line(`teams:${chat}:deleted`, now(), { state: "deleted" })];
+    }
+    const res = await graph(`${GRAPH}/chats/${enc(chat)}`);
+    if (res.status === 404) {
+      await res.body?.cancel();
+      return [];
+    }
+    if (!res.ok) throw new Error(`teams chat ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const got = await res.json() as {
+      createdDateTime?: string;
+      viewpoint?: { isHidden?: boolean; lastMessageReadDateTime?: string | null } | null;
+    };
+    const oid = grant.extra?.oid as string | undefined;
+    if (changeType === "created") {
+      names.forget(place);
+      const info = await names.of(graph, place, oid);
+      const surfaces = surfaceStore(deps.store);
+      if (surfaces) await chatSurfaces(surfaces, chat, info, undefined, grants);
+      const joined = (info.members ?? []).map((m) => ({
+        address: m.id,
+        ...(m.name ? { name: m.name } : {}),
+      }));
+      const ts = got.createdDateTime ?? now();
+      return [line(`teams:${chat}:created`, ts, { state: "created", joined }, info)];
+    }
+    const view = got.viewpoint ?? {};
+    const info = await names.of(graph, place, oid);
+    const rows: Draft<MessageEvent>[] = [];
+    const read = view.lastMessageReadDateTime;
+    if (read) {
+      rows.push(
+        line(`teams:${chat}:read:${Date.parse(read)}`, read, { view: { read: true } }, info),
+      );
+    }
+    if (typeof view.isHidden === "boolean") {
+      const [last] = await deps.read?.({
+        service: SERVICE,
+        connection: upn,
+        conversation: chat,
+        types: ["message"],
+        limit: 1,
+        filter: (e) => hiddenOf(e) !== undefined,
+      }) ?? [];
+      if (view.isHidden !== (last ? hiddenOf(last) : false)) {
+        rows.push(
+          line(`teams:${chat}:hidden:${last?.id ?? 0}`, now(), {
+            view: { hidden: view.isHidden },
+          }, info),
+        );
+      }
+    }
+    return rows;
   }
 
   /** A lifecycle notice: a reauthorization is a renewal, a removal drops the record so
@@ -572,9 +718,8 @@ export function teamsMapper(deps: MapperDeps): (
   const { names, now } = deps;
   return async (msg, at, grant, grants, graph, changeType) => {
     if (!msg.id) return [];
-    if (msg.messageType !== undefined && msg.messageType !== "message" && !roomChangeOf(msg)) {
-      return [];
-    }
+    const type = msg.messageType ?? "message";
+    if (type !== "message" && type !== "systemEventMessage") return [];
     const upn = grant.key.slice(GRANT_PREFIX.length);
     const address = addressOf(at.place);
     const ref = teamsRef(address, msg.id);
@@ -610,10 +755,11 @@ export function teamsMapper(deps: MapperDeps): (
     const oid = grant.extra?.oid as string | undefined;
     const surfaces = surfaceStore(deps.store);
 
-    // a room's change is the room's own line (§3): who made it, who moved, or the name
-    const change = roomChangeOf(msg);
+    // a room's change is the room's own line (§3): who made it, and what moved
+    const change = roomChangeOf(msg, at.place);
     if (change) {
       names.forget(at.place); // its name or its members moved
+      if (change.team?.name && at.place.kind === "channel") names.forgetTeam(at.place.team);
       const info = await names.of(graph, at.place, oid);
       const { by, ...moved } = change;
       const sender = by ?? change.joined?.[0] ?? change.left?.[0];
@@ -622,13 +768,26 @@ export function teamsMapper(deps: MapperDeps): (
         await leftRooms(surfaces, address, change.left ?? [], grants);
         await chatSurfaces(surfaces, address, info, undefined, grants);
       }
-      return [{
+      const id = msg.id;
+      const line = (where: string, data: RoomChange, kind?: Kind, name?: string) => ({
         ts: msg.createdDateTime ?? ts,
-        type: "message",
+        type: "message" as const,
         ...(owner ? { agent: { id: owner } } : {}),
-        envelope: { ...envelope(ref, info.kind, info.name), ...(sender ? { sender } : {}) },
-        parts: [roomPart(moved)],
-      }];
+        envelope: {
+          service: SERVICE,
+          connection_address: upn,
+          conversation: { address: where, ...(kind ? { kind } : {}), ...(name ? { name } : {}) },
+          external_id: teamsRef(where, id),
+          ...(sender ? { sender } : {}),
+        },
+        parts: [roomPart(data)],
+      });
+      // a channel deleted is said in the primary channel, and in the channel itself
+      const deleted = (moved.channels?.removed ?? []).filter((c) => c.address !== address);
+      return [
+        line(address, moved, info.kind, info.name),
+        ...deleted.map((c) => line(c.address, { state: "deleted" })),
+      ];
     }
 
     const info = await names.of(graph, at.place, oid);
@@ -747,33 +906,129 @@ export function teamsMapper(deps: MapperDeps): (
   };
 }
 
-/** Graph's system events that change a room, by `@odata.type`: people in, people out. */
-const ROOM_EVENTS: Record<string, "joined" | "left"> = {
-  "#microsoft.graph.membersAddedEventMessageDetail": "joined",
-  "#microsoft.graph.membersJoinedEventMessageDetail": "joined",
-  "#microsoft.graph.membersDeletedEventMessageDetail": "left",
-  "#microsoft.graph.membersLeftEventMessageDetail": "left",
+const person = (u: TeamsUser | null | undefined): RoomMember[] =>
+  u?.id ? [{ address: u.id, ...(u.displayName ? { name: u.displayName } : {}) }] : [];
+const people = (us: (TeamsUser | null | undefined)[] | null | undefined): RoomMember[] =>
+  (us ?? []).flatMap(person);
+const actor = (i: Identity | null | undefined) => person(i?.user ?? i?.application)[0];
+
+/** A channel the detail names, as a room address: a sibling of the channel the line
+ *  stands in, under its team. */
+function channelLink(d: EventDetail, place: Place): RoomLink[] {
+  if (!d.channelId) return [];
+  const address = place.kind === "channel"
+    ? addressOf({ kind: "channel", team: place.team, channel: d.channelId })
+    : d.channelId;
+  return [{ address, ...(d.channelDisplayName ? { name: d.channelDisplayName } : {}) }];
+}
+
+/** Graph's `callEventType` as the room's call kind; a plain call may be audio or video,
+ *  and Graph does not say which. */
+const CALL_KINDS: Record<string, "meeting" | "screen"> = {
+  meeting: "meeting",
+  screenShare: "screen",
 };
 
-/** A `systemEventMessage` that changes the room — people added or joined, deleted or
- *  left, the chat or the channel renamed — as the `room` part says it, with who made it
- *  (Graph's `initiator`). Any other system event is none. */
+/** An ISO 8601 duration (`PT1H2M3.5S`) in whole seconds. */
+export function durationSeconds(iso: string | null | undefined): number | undefined {
+  const m = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?)?$/.exec(iso ?? "");
+  if (!m) return undefined;
+  const [d, h, min, s] = m.slice(1).map((x) => Number(x ?? 0));
+  return Math.round(d * 86400 + h * 3600 + min * 60 + s);
+}
+
+/** Every `eventMessageDetail` v1.0 defines, by its `@odata.type` less `#microsoft.graph.`
+ *  and `EventMessageDetail`, as the `room` part says it (§3). `place` is where the line
+ *  stands: the team-wide ones are posted in the team's primary channel. */
+const DETAILS: Record<string, (d: EventDetail, place: Place) => RoomChange> = {
+  membersAdded: (d) => ({ joined: people(d.members), reason: "added" }),
+  membersJoined: (d) => ({ joined: people(d.members) }),
+  membersDeleted: (d) => ({ left: people(d.members), reason: "removed" }),
+  membersLeft: (d) => ({ left: people(d.members) }),
+  chatRenamed: (d) => ({ name: d.chatDisplayName ?? undefined }),
+  channelRenamed: (d) => ({ name: d.channelDisplayName ?? undefined }),
+  channelAdded: (d, place) => ({ channels: { added: channelLink(d, place) } }),
+  channelDeleted: (d, place) => ({ channels: { removed: channelLink(d, place) } }),
+  channelDescriptionUpdated: (d) => ({ description: d.channelDescription ?? "" }),
+  channelSetAsFavoriteByDefault: () => ({ settings: { favorite: true } }),
+  channelUnsetAsFavoriteByDefault: () => ({ settings: { favorite: false } }),
+  // the roles the member holds now: an owner among them is made one, none is one no more
+  conversationMemberRoleUpdated: (d) =>
+    d.conversationMemberRoles?.includes("owner")
+      ? { promoted: person(d.conversationMemberUser) }
+      : { demoted: person(d.conversationMemberUser) },
+  // the detail names no message, so the line points at none
+  messagePinned: () => ({ pinned: true }),
+  messageUnpinned: () => ({ pinned: false }),
+  meetingPolicyUpdated: (d) =>
+    typeof d.meetingChatEnabled === "boolean"
+      ? { settings: { meeting_chat: d.meetingChatEnabled } }
+      : {},
+  callStarted: (d) => ({
+    call: { state: "started", kind: CALL_KINDS[d.callEventType ?? ""] },
+  }),
+  callEnded: (d) => ({
+    call: {
+      state: "ended",
+      kind: CALL_KINDS[d.callEventType ?? ""],
+      seconds: durationSeconds(d.callDuration),
+      with: (d.callParticipants ?? []).flatMap((p) => person(p.participant?.user)),
+    },
+  }),
+  // the link once the recording is ready; until then Graph's word for where it stands
+  callRecording: (d) => ({
+    call: { recording: d.callRecordingUrl ?? d.callRecordingStatus ?? undefined },
+  }),
+  callTranscript: () => ({ call: { transcript: true } }),
+  tabUpdated: () => ({ tab: "updated" }),
+  teamsAppInstalled: (d) => ({ app: { added: d.teamsAppDisplayName ?? undefined } }),
+  teamsAppRemoved: (d) => ({ app: { removed: d.teamsAppDisplayName ?? undefined } }),
+  teamsAppUpgraded: (d) => ({ app: { upgraded: d.teamsAppDisplayName ?? undefined } }),
+  teamCreated: (d) => ({
+    team: {
+      state: "created",
+      name: d.teamDisplayName ?? undefined,
+      description: d.teamDescription ?? undefined,
+    },
+  }),
+  teamRenamed: (d) => ({ team: { name: d.teamDisplayName ?? undefined } }),
+  teamDescriptionUpdated: (d) => ({ team: { description: d.teamDescription ?? "" } }),
+  teamArchived: () => ({ team: { state: "archived" } }),
+  teamUnarchived: () => ({ team: { state: "unarchived" } }),
+  teamJoiningEnabled: () => ({ team: { joining: true } }),
+  teamJoiningDisabled: () => ({ team: { joining: false } }),
+};
+
+/** A `systemEventMessage` as the room's own line, with who made it (Graph's `initiator`,
+ *  `by`). Every system event is one: a type the table has no word for — or one whose
+ *  fields came empty — says its own name in `changed`, so no change of the room passes
+ *  unsaid. Someone added or taken out by themselves moved on their own, and the line
+ *  carries no `reason`. */
 function roomChangeOf(
   msg: ChatMessage,
-): { joined?: RoomMember[]; left?: RoomMember[]; name?: string; by?: RoomMember } | null {
-  if (msg.messageType !== "systemEventMessage" || !msg.eventDetail) return null;
-  const d = msg.eventDetail;
-  const person = (u: TeamsUser): RoomMember[] =>
-    u.id ? [{ address: u.id, ...(u.displayName ? { name: u.displayName } : {}) }] : [];
-  const initiator = d.initiator?.user;
-  const by = initiator ? person(initiator)[0] : undefined;
-  const side = ROOM_EVENTS[d["@odata.type"] ?? ""];
-  if (side) {
-    const moved = (d.members ?? []).flatMap(person);
-    return moved.length ? { [side]: moved, ...(by ? { by } : {}) } : null;
-  }
-  const name = d.chatDisplayName ?? d.channelDisplayName;
-  return name ? { name, ...(by ? { by } : {}) } : null;
+  place: Place,
+): (RoomChange & { by?: RoomMember }) | null {
+  if (msg.messageType !== "systemEventMessage") return null;
+  const d = msg.eventDetail ?? {};
+  const type = (d["@odata.type"] ?? "").replace(/^#microsoft\.graph\./, "")
+    .replace(/EventMessageDetail$/, "") || "systemEventMessage";
+  const by = actor(d.initiator);
+  const said = DETAILS[type]?.(d, place);
+  const change: RoomChange = said && Object.keys(roomPart(said).data).length
+    ? said
+    : { changed: [type] };
+  const moved = [...change.joined ?? [], ...change.left ?? []];
+  if (!by || moved.some((m) => m.address === by.address)) delete change.reason;
+  return { ...change, ...(by ? { by } : {}) };
+}
+
+/** Whether a line says the account's view of its room hidden, or shown; none, undefined. */
+function hiddenOf(e: Event): boolean | undefined {
+  if (e.type !== "message") return undefined;
+  const room = e.parts.find((p) => p.type === "data" && p.kind === "room") as
+    | RoomPart
+    | undefined;
+  return room?.data.view?.hidden;
 }
 
 /** The grant whose account (`extra.oid`) a Teams user id is. */
@@ -1168,9 +1423,9 @@ interface Channel {
   name?: string;
 }
 
-/** The sweep over `microsoft:` grants: `chats` keeps the one subscription over the
- *  member's chats, `channels` one per channel of every team they are in. Returns how many
- *  subscriptions it created or renewed. */
+/** The sweep over `microsoft:` grants: `chats` keeps the subscription over the messages of
+ *  the member's chats and the one over the chats themselves, `channels` one per channel of
+ *  every team they are in. Returns how many subscriptions it created or renewed. */
 export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void> } {
   const now = deps.now ?? (() => new Date().toISOString());
   const fetchApi = deps.fetchApi ?? fetch;
@@ -1186,7 +1441,7 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
     const token = await tokenOf(deps.broker, grant.key, grant.agentId);
     const graph = graphFor(fetchApi, token);
     const all = resource === "chats"
-      ? [`/users/${oid}/chats/getAllMessages`]
+      ? [`/users/${oid}/chats/getAllMessages`, chatsResource(oid)]
       : await channelPaths(graph, grant);
     const foreign = listed.get(grant.key)?.foreign ?? new Set<string>();
     const paths = all.filter((p) => !foreign.has(p));
@@ -1821,6 +2076,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const inflight = new Set<Promise<void>>();
   const handler = createTeamsWebhook({
     publish: log.publish,
+    read: (q) => log.read(q),
     creds,
     broker,
     store: log,
