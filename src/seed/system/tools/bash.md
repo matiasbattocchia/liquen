@@ -9,7 +9,7 @@ its end, and the middle is left out (override with max_lines/max_bytes when you 
 need more or less); the gap says which lines went and the aread that reads them, and the full
 output is saved to a file the footer names.
 
-The turn waits for a command up to wait seconds (default {{wait}}). One still running then is
+The turn waits for a command up to wait seconds. One still running then is
 not killed: the call answers with what it printed so far, the command runs on, and you are
 told when it ends, with its exit status and the lines it printed since. So set wait to what
 you want to see before going on: 0 to start a server and go on at once, a few seconds to see
@@ -67,7 +67,7 @@ on stderr, so a search that hides stderr (2>/dev/null) and finds nothing proves 
 with command -v rg first, or search with grep -rn and find, which are always there.
 
 - command: bash command to execute
-- wait: seconds the turn waits before answering with what it printed so far; the command runs on, and its end is told (optional; default {{wait}})
+- wait: seconds the turn waits before answering with what it printed so far; the command runs on, and its end is told
 - wake: a regular expression; the lines printed after the answer that match it are told as they come (optional)
-- max_lines: output truncation: the lines kept, from its start and its end (optional; default {{max_lines}})
-- max_bytes: output truncation: byte cap (optional; default {{max_bytes}})
+- max_lines: output truncation: the lines kept, from its start and its end
+- max_bytes: output truncation: byte cap

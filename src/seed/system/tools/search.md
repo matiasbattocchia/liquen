@@ -5,10 +5,12 @@ kind: tool
 Search the message log: every conversation your agent can read, whichever session you are,
 including everything older than your window. Every filter narrows, and none is required: `in`
 with `after`/`before` and no `text` reads a stretch of a conversation as it happened. The
-most recent matches come back ({{search_limit}} unless you set `limit`), newest last, in the
+most recent matches come back, `limit` of them or as many as a page holds, newest last, in the
 same form as your window: `<conn>` and `<conv>` around `<msg>` lines with the same ids, author
 marks, attachment markers (with their `path`) and clock — every stamp with its year. When
 older matches were cut, a closing line names the moment to pass as `before` for the next page.
+A search across every conversation tells where something was said; read each of those
+conversations with a call of its own, `in` it, rather than paging the wide one.
 A `<conv address>` is what `in` and `send(to:)` both take back. `from` also asks your
 accounts' address books: whoever is saved under that name stands first, as `<contact>` lines
 under the account's `<conn>`, with the `address` to write to — so someone you have saved and
@@ -50,10 +52,10 @@ calls a script made are there too. With `id`, the page is that one line or call,
   one word or a fragment you are sure of beats a whole sentence. Words you are guessing at go
   in one call together, and when they all miss, read the conversation itself: `in` with
   `after`/`before`
-- limit: how many of the most recent matches to return (optional; default {{search_limit}})
-- around: lines of the conversation to show either side of each match (0–{{around_max}};
-  optional, default 0). With it, each match wears `match` after its stamp, and a `…` line
-  stands where lines between two stretches are not shown
+- limit: how many of the most recent matches to return
+- around: lines of the conversation to show either side of each match. With it, each match
+  wears `match` after its stamp, and a `…` line stands where lines between two stretches
+  are not shown
 - calls: true to search your own calls instead of messages; `text` then matches the call or
   its answer, `before`/`after`/`limit` work as for lines, `in`/`from`/`connection` do not apply
 - id: one line or call by its `id`, whole; with `around`, a line's neighbours too

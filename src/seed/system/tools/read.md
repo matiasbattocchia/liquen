@@ -8,6 +8,6 @@ the footer naming the line to continue from.
 
 - handle: the doc's handle as the index prints it: scope/name — system, shared or agent
   (your own), then the doc's name
-- offset: first line to show (optional; default 1)
-- limit: lines to show (optional)
-- max_bytes: byte cap (optional; default {{max_bytes}})
+- offset: first line to show
+- limit: lines to show
+- max_bytes: byte cap
