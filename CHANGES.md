@@ -1,7 +1,7 @@
 # Next batch: the org's configuration lives in the store
 
 Decided 12 Nov 2026. Driven by turtle-agents' requirements for agents made at runtime;
-1 to 3 below are settled, 4 to 8 are still to discuss.
+1 to 4 below are settled, 5 to 8 are still to discuss.
 
 1. Runtime roster: the roster lives in the org's registry on the volume, so agents added
    at runtime survive restarts and rolls.
@@ -24,11 +24,14 @@ Decided 12 Nov 2026. Driven by turtle-agents' requirements for agents made at ru
 ## 1. Two tables hold what the file declares: `agents` and `config`
 
 `agents` is the roster, the org's `/etc/passwd`: who exists and who steers whom —
-`agent_id`, the mind session, `name`, `email`, `phone`, and the backlog floor (5), a fact
-of the agent rather than a setting. Who steers whom is its own table, `steers(agent_id,
-principal, rank)` (7). Most are the columns SQL joins: the roster views (`principals`,
-`aliases`) and the ingest classifier read them, and policy and routing stand on those
-views. It carries no settings.
+`agent_id`, the mind session, `name`, `email`, `phone`, `principals`, and the backlog
+floor (5), a fact of the agent rather than a setting. `principals` stays a JSON column
+(`jsonb` on Postgres), since its absence says something a list cannot: absent, who steers
+is derived from ownership (§4); `[]`, nobody does. Most are the columns SQL joins: the
+roster views (`principals`, `aliases`) and the ingest classifier read them, and policy and
+routing stand on those views. It carries no settings: `model`, `effort` and `provider`
+leave it for `config`, `runs` becomes `config`'s `mind`, and the resolved `settings`
+column goes.
 
 `config` is `(scope, key, value)`, the value JSON, a row per leaf: `model`, `rules` (one
 array, one value), `listen`. The scopes are the file's sections: `shared`, `shared.agents`,
@@ -46,7 +49,7 @@ store is.
 A `connections.<service>` scope is the connector's knobs, and its presence is what spawns
 the connector: `connectorConfig` reads the store. The `connections` table is per account
 and runtime already (owner, vault key, `extra` with its `mirrors`), and stays as it is; a
-room routed to an agent (8) is a `mirrors.rooms` entry there.
+room routed to an agent (requirement 8) is a `mirrors.rooms` entry there.
 
 ## 2. The file is `config.yaml`, and it is input only
 
@@ -122,13 +125,13 @@ transaction, and its folder and Unix user after it commits. An agent the file de
 refuses: `agents.<name> is declared in config.yaml; remove it there first`; taken out of
 the file, it is an undeclared agent, still running, until the command removes it.
 
-The store's references to an agent are foreign keys, the same on both engines (SQLite's
-`PRAGMA foreign_keys = ON` on every connection `openLog` opens):
+The store's references to an agent are foreign keys and one trigger, the same on both
+engines (SQLite's `PRAGMA foreign_keys = ON` on every connection `openLog` opens):
 
-- `steers.agent_id` and `steers.principal` reference `agents` `ON DELETE RESTRICT`: an
-  agent another agent names as its principal is refused removal, and the refusal names
-  who. The `principals` view reads `steers` for the declared part and keeps the derived
-  part (§4's ownership rules) as it is;
+- a trigger on deleting from `agents`, one per engine, raises when another row's
+  `principals` names the agent: it is refused removal, and the refusal names who. A key
+  cannot point into a JSON array, so the trigger is the `RESTRICT`; that a principal
+  named exists is the store function's check (8);
 - `memberships`, `connections`, `credentials`, `rules` and `locks` reference `agents`
   `ON DELETE CASCADE`: what the agent owns goes with its row, its keys and its grants
   included;
@@ -153,6 +156,36 @@ adds the keys deletes them first, on both engines.
 **Idle.** An undeclared agent with no turn for 30 days (`IDLE_DAYS`, its last `usage`
 row) is named at boot, one line for all of them. `liquen agent` with no name lists every
 agent: declared or not, running or paused, its last turn.
+
+## 8. A caller writes the rows and pokes main's socket
+
+The connector and the command take the same steps, so they are one path:
+
+1. **One store function** (`upsertAgent`, and `removeAgent` for 7) checks and writes: the
+   name a folder and a Unix user can be, the provider able to run the model at its effort,
+   no key the file declares (4), every principal named a member. Then `agents` and the
+   `config` scope `agents.<name>` in one transaction, the backlog floor when the row is
+   new. The agent's docs are seeded beside it, write-if-absent, so its instructions can be
+   written before it runs.
+2. **The poke**: `POST {agent: "<name>"}` on `data/run/main.sock`, which main serves the
+   way the supervisor serves `liquen.sock`. main reconciles that one agent from its row,
+   up, down or a tune (6), and answers with which, or with the sentence it refused on (a
+   `useradd` that failed). The socket is root's, 0600, in a container: an agent's own
+   user cannot connect to it.
+3. **main down**: the poke finds no socket, and the caller says the change runs at the
+   next start; the rows are written, and boot reconciles every row.
+
+Up makes the agent's Unix user when main runs as root, the container's case, and boot is
+up for each row: a container's `/etc/passwd` is made anew at every start, so the users
+are made from the rows every boot, and the entrypoints' user loop goes. Off root (a
+laptop, bare or in bubbles) there is no user to make. Removal asks main over the same
+socket to bring the agent down first, then deletes, the folder and the user included.
+
+A tool an agent calls to make an agent runs inside main: it calls the store function and
+the reconcile directly, through the permission table like any call.
+
+Open: whether boot also takes the entrypoints' permission sweep (the modes and ACLs of
+`log/`, `shared/` and `system/`) when it runs as root.
 
 ## Docs
 

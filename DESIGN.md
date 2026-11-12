@@ -4004,6 +4004,13 @@ no sent message without its call; worth it once scripts see real use).
   renewed lease, so one identity never runs two minds. An employer that wants its agent on
   its own servers gets two minds and a narrow, gated channel between them. Log-qualified
   ids serve both roads.
+- **Requests to the harness as rows of the log.** A process asks main to act (bring an
+  agent up, take a reload) by appending a harness event that names what changed, and main,
+  which tails the log, acts and writes the outcome onto that row, as a dispatcher writes a
+  send's delivery. A send is already this round trip between processes. What it buys over
+  a socket: delivery across hosts where the log is Postgres, a request kept while main is
+  down, and every roster change in the record with its outcome. Today these requests go
+  over main's socket.
 - Rejected & why (for future selves): **A2A** as gateway protocol (peer-protocol ceremony
   vs driver shape — open-bsp already ships A2A types); **MCP channels** for ingestion
   (local-subprocess topology, can't publish to a log).
