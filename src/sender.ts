@@ -10,6 +10,9 @@
  *   sender_saved   the name is the ACCOUNT's word for them, out of its address book (a
  *                  WhatsApp contact), not the sender's own (a pushname): the line's
  *                  `contact` against `external`
+ *   sender_about   what the sender wrote about themselves on the service (a Telegram
+ *                  profile's about text), for somebody the account's book does not hold:
+ *                  the line's `about`
  *
  * A mirror copy carries them over from the line it copies, and a CC from the mind row it
  * crosses, with `sender_name`, the name its tag says — what a dispatcher that knows the
@@ -21,6 +24,7 @@ import type { Event } from "./types.ts";
 export const SENDER_EMAIL = "sender_email";
 export const SENDER_SAVED = "sender_saved";
 export const SENDER_NAME = "sender_name";
+export const SENDER_ABOUT = "sender_about";
 
 /** An address that is an email already — a mailbox's, the portal's — needs no `sender_email`. */
 export function isEmail(address: string): boolean {
@@ -43,7 +47,7 @@ export function senderSaved(e: Event): boolean {
 /** The `sender_*` facts a row carries, to copy onto a row made from it. */
 export function senderFacts(e: Event): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const key of [SENDER_EMAIL, SENDER_SAVED]) {
+  for (const key of [SENDER_EMAIL, SENDER_SAVED, SENDER_ABOUT]) {
     if (e.extra?.[key] !== undefined) out[key] = e.extra[key];
   }
   return out;

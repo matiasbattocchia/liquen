@@ -16,6 +16,7 @@ import {
   PDF_PAGE_TOKENS,
   prefixDelta,
   prefixDue,
+  profileEl,
   render,
   renderHits,
   renderSystem,
@@ -3238,6 +3239,37 @@ Deno.test("a principal wears their email: the wire's, or the address where it is
     '<principal id="e2" name="Matias" email="matias@turtle.xyz" at="7 Aug 10:00">',
   );
   assertStringIncludes(text, '<principal id="e3" name="Ana" at="7 Aug 10:00">hola</principal>');
+});
+
+Deno.test("a stranger's line wears what they wrote about themselves, on the line that carries it", () => {
+  const t = "2026-08-07T10:00:00Z";
+  const first = waMsg("e1", t, "hola, soy Sol", false);
+  first.extra = { sender_about: 'Arquitecta. "Obras" en Mendoza.' };
+  const next = waMsg("e2", t, "tenés un minuto?", false);
+  const { messages } = render({
+    events: [first, next],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t,
+  });
+  const text = (messages[0].content as Anthropic.ContentBlockParam[])
+    .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text).join("\n");
+  assertStringIncludes(
+    text,
+    '<msg id="e1" external="Mariana" address="549" ' +
+      'about="Arquitecta. &quot;Obras&quot; en Mendoza." at="7 Aug 10:00">hola, soy Sol</msg>',
+  );
+  assertStringIncludes(
+    text,
+    '<msg id="e2" external="Mariana" address="549" at="7 Aug 10:00">tenés un minuto?</msg>',
+  );
+  assertEquals(
+    profileEl({ service: "telegram", address: "700100" }, [
+      { address: "@solruiz", exists: true, name: "Sol Ruiz", about: "Arquitecta." },
+    ]).includes('<profile address="@solruiz" exists="true" name="Sol Ruiz" about="Arquitecta."/>'),
+    true,
+  );
 });
 
 Deno.test("what a wire says of a sender survives the log: a saved name wears `contact`, an email is said", async () => {

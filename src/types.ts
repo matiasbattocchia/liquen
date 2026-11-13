@@ -343,6 +343,7 @@ export type Service =
   | "local"
   | "slack"
   | "whatsapp"
+  | "telegram"
   | "instagram"
   | "email"
   | "teams"
@@ -644,7 +645,7 @@ export interface SendPreview {
   contacts?: string[];
   /** A first contact's account as its wire shows it (`ContactPort.profile`): the wire's
    *  name, whether an account answers there and the name it goes by, when the wire says. */
-  profile?: { service: string; exists: boolean; name?: string };
+  profile?: { service: string; exists: boolean; name?: string; about?: string };
 }
 
 export interface PermissionVerdict {
@@ -988,12 +989,14 @@ export type ContactHit = {
  *  book is a harness line. */
 export type Contacts = { hits: ContactHit[]; unreached?: string[] };
 /** An address nobody here knows, as one account's wire answered who it is: `exists` and
- *  the `name` its `profile` leg gave, or neither when the wire could not be asked. */
+ *  the `name` its `profile` leg gave, with what the person wrote `about` themselves when
+ *  the wire shows it, or none of them when the wire could not be asked. */
 export type Profiled = {
   connection: string; // the account that asked
   address: string;
   exists?: boolean;
   name?: string;
+  about?: string;
 };
 
 /** `bash(cmd)` — the sandbox's one primitive; everything exec-y is bash + a skill (§9). */

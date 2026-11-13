@@ -136,7 +136,9 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
   // a first contact goes by the name its wire shows, like any conversation that has one
   const name = p.conversation.name ?? p.profile?.name;
   const who = !name ? address : addressReads(kind) ? `${name} (${address})` : name;
-  const rows = [`**${labels.conversation}**: ${who}`];
+  // and by what they wrote about themselves there, the line under their name
+  const about = p.profile?.about ? `\n_${p.profile.about}_` : "";
+  const rows = [`**${labels.conversation}**: ${who}${about}`];
   if (p.last) {
     const things = (p.last.carries ?? []).map((c) => `[${labels.carried[carriedWord(c)]}]`);
     const line = [...things, p.last.text].filter((s) => s !== "").join(" ");

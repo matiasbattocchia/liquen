@@ -944,7 +944,7 @@ export interface ContactPort {
   profile?: (req: {
     connection: string;
     address: string;
-  }) => Promise<{ exists: boolean; name?: string }>;
+  }) => Promise<{ exists: boolean; name?: string; about?: string }>;
 }
 
 /** Who a rooms leg acts as (§4): the account the act rides — the connection a send there
@@ -2888,12 +2888,14 @@ async function recordOf(
   return rows.at(-1);
 }
 
-/** What an address is by its look alone: a phone number, a mailbox, or neither. */
-type Shape = "phone" | "mail";
+/** What an address is by its look alone: a phone number, a mailbox, a public handle
+ *  (`@name`), or none of them. */
+type Shape = "phone" | "mail" | "handle";
 
 function shapeOf(address: string): Shape | undefined {
   if (/^[+\d][\d\s().-]*$/.test(address)) return "phone";
   if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) return "mail";
+  if (/^@[A-Za-z][A-Za-z0-9_]{3,31}$/.test(address)) return "handle";
   return undefined;
 }
 
@@ -2904,12 +2906,17 @@ function spelled(address: string): string {
   return shapeOf(address) === "phone" && digits(address) !== "" ? digits(address) : address;
 }
 
-const SHAPE_WORD: Record<Shape, string> = { phone: "phone number", mail: "mail address" };
+const SHAPE_WORD: Record<Shape, string> = {
+  phone: "phone number",
+  mail: "mail address",
+  handle: "handle",
+};
 
 /** The shapes each shipped wire takes on a first contact. A service missing here, an
  *  org's own connector, may take any. */
 const FIRST_CONTACT: Record<string, Shape[]> = {
   whatsapp: ["phone"],
+  telegram: ["handle"],
   google: ["mail"],
   microsoft: ["mail"],
   email: ["mail"],

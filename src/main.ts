@@ -77,6 +77,7 @@ import { openCloudflareSandbox, openLocalSandbox, type SessionUpdate } from "./s
 import { whatsappContact } from "./connect/whatsapp/contact.ts";
 import { whatsappRooms } from "./connect/whatsapp/rooms.ts";
 import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
+import { portCall, telegramContact, telegramRooms } from "./connect/telegram/port.ts";
 import { machine } from "./awake.ts";
 import { slackRooms } from "./connect/slack/rooms.ts";
 import { slackTokenFor } from "./connect/slack/dispatch.ts";
@@ -368,7 +369,12 @@ export async function start(
   const bridge = catalog?.connections?.whatsapp?.bridgeUrl;
   const bridgeUrl = typeof bridge === "string" ? bridge : DEFAULT_BRIDGE_URL;
   const bridgeToken = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
-  const contact: XiPorts["contact"] = { whatsapp: whatsappContact(bridgeUrl, bridgeToken) };
+  // telegram's ports ask the connector's process, which alone holds each account's session
+  const telegram = portCall(dir);
+  const contact: XiPorts["contact"] = {
+    whatsapp: whatsappContact(bridgeUrl, bridgeToken),
+    telegram: telegramContact(telegram),
+  };
   // the rooms (§9): one port per service whose API opens and changes conversations, over
   // the vault the dispatcher posts with — so a room is opened by the grant that speaks in
   // it; whatsapp's rides the bridge, whose session is the grant
@@ -376,6 +382,7 @@ export async function start(
     slack: slackRooms({ tokenFor: slackTokenFor(creds) }),
     microsoft: teamsRooms({ broker: createGrantBroker({ creds }), creds }),
     whatsapp: whatsappRooms(bridgeUrl, bridgeToken),
+    telegram: telegramRooms(telegram),
   };
 
   let stopped = false;

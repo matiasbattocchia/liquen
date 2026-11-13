@@ -23,8 +23,9 @@ each whole under its `[handle]`: what you keep of the people there. That page is
 reading `send` asks for, so a send into that conversation goes the first time.
 An `in` or `from` that is a number (or other address) with no messages here and nobody saved
 at it is asked of the accounts whose service can tell: a `<profile>` line under the account's
-`<conn>` says whether that address is an account there (`exists`) and the `name` it shows, if
-any. That is how to learn who a number reaches before writing to it.
+`<conn>` says whether that address is an account there (`exists`), the `name` it shows, if
+any, and what the person wrote `about` themselves. That is how to learn who a number or a
+handle (`@name`) reaches before writing to it.
 
 Every line and call says where you hold it, after its stamp: `seen="window"` is in front of
 you now, `seen="checkpoint"` is behind your checkpoint, which is all you have of it, and

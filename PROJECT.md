@@ -6825,6 +6825,49 @@ Where it differs from `CHANGES.md` as written:
 - A named session's attachment that tuned its model keeps the tune only until the agent
   is next reconciled, which puts the store's settings back.
 
+### Telegram: an account's own session, over MTProto (2026-11-13) — LANDED, not yet run live
+
+`src/connect/telegram/` connects a Telegram ACCOUNT, a person's or the org's, through
+mtcute (`jsr:@mtcute/deno`), the MTProto SDK that ships for Deno. The map of it is
+CONNECTORS §10; what the building showed:
+
+- **One session, one holder.** A second client on a session costs the account the session
+  (`AUTH_KEY_DUPLICATED`), which sonar's sensor learned first. So the connector's process
+  alone holds each account's connection, and main's ports ask it across
+  `data/run/telegram.port.sock`. The dot keeps the path out of the edge's grammar, and
+  the file opens for its owner alone.
+- **The SDK stops at one file.** `client.ts` fills the plain shapes of `wire.ts`; the
+  ingest, the dispatcher and the ports read those alone, so their tests hand them a wire
+  made of literals and no test opens a connection.
+- **The credential and the cache are kept apart.** The vault holds the session string;
+  mtcute's SQLite file under `data/telegram/` holds the peers and the update cursors. A
+  sign-in starts a new cache.
+- **The cursor moves whether or not the handler did.** A publish that fails is tried again
+  until it lands, and a replayed update merges on its `external_id`.
+- **A delete in a direct chat or a basic group names an id and no chat.** Those ids are
+  the account's whole inbox's, so the `external_id` there carries no chat, and the ingest
+  remembers the chat of the last 8192 ids for the delete's line.
+- **A stranger's about text** is the one fact the connector asks Telegram for unprompted:
+  one read at a time, three seconds apart, a week remembered, a flood wait obeyed. It
+  rides `sender_about` on their first line in a direct chat or a private group, and
+  `<profile about>` on a search or a first contact.
+- **First contact is by handle.** `@name` is a shape `send` knows; the wire resolves it
+  and the row moves to the person's id, where their answer arrives.
+
+Open:
+
+- Nothing here has met a live account: the sign-in (QR, code, two-step password), the
+  replay after downtime, a channel's gap, uploads and each port leg are tested against
+  the wire's shapes, not against Telegram.
+- Reactions are sent and not read: Telegram says them as whole snapshots, and a line per
+  add or remove needs the diff against what the log holds.
+- A forum's topics are lines of the supergroup, not conversations of their own; a reply's
+  topic is dropped.
+- An org account adopts no steering room.
+- The about text's memory is the process's: a restart reads a stranger again.
+- A sign-in made while the connection runs is taken up by restarting its process, every
+  account's session with it.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
