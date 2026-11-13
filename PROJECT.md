@@ -6764,6 +6764,67 @@ was a 40-match search over voice notes for a monthly-fees record, and its defaul
   function's parameters (a live call on `gemini-4-argon`, 200), so both transports send the
   schema as it is.
 
+### The org's configuration lives in the store (2026-11-13) — LANDED
+
+The batch of `CHANGES.md`, driven by turtle-agents' eight requirements for agents made at
+runtime. The architecture is DESIGN §9 ("the catalog") and §4 (the steering room); this is
+what landed, and where it differs from the plan.
+
+- **Two tables hold what the file declared** (`store/agents.ts`, both engines): `agents`
+  is who exists and who steers, with the backlog floor a column written once; `config` is
+  `(scope, key, value)`, a row per leaf; `runs` is read back resolved from `mind`.
+  `putAgents` upserts and never deletes, `dropAgent` is the one removal. SQLite's schema is
+  v18, Postgres's v9: the old rows keep their identity and the floor their settings held,
+  the settings themselves are set again by the file at the first boot, and the version
+  moves to the manifest (`user_version` and `schema_version` are read once, then left).
+- **`config.yaml`, input only** (`config.ts`, `org.ts`): `applyFile` at boot and reload,
+  rule by rule as DESIGN states it; `readConfig` is the store's state with the file's
+  `deployment`. The JSONC member editors moved to `jsonc.ts`, which `liquen update` still
+  uses on `deno.jsonc`.
+- **One write path** (`roster.ts`): `upsertAgent`, `removeAgent`, `poke`,
+  `declareConnection`, `ensureRoute`; `liquen agent` is its command line, `liquen config`
+  (`catalog.ts`) prints the store.
+- **main per agent** (`main.ts`): `ground` · `run` · `down` · `retune` · `reconcile`,
+  served on `data/run/main.sock`; the sandbox and the doors add and remove one agent
+  (`Sandbox.add`/`remove`, `Doors.open`/`shut`). The supervisor's `reads` no longer holds
+  the roster or `shared.agents`, so neither restarts main.
+- **Linux for the agents is boot's** (`users.ts`): the group, the users, the owners, the
+  ACL, `system/` sealed. Run as root in a container against the scaffold's image shape:
+  users made at boot and by a poke, `main.sock` root's alone, `userdel` on removal.
+- **System docs by a manifest** (`store/seed.ts`): `bringSystemDocs` for boot and
+  `liquen update`, with `--restore` · `--replace` · `--beside` · `--keep`. The folder rule
+  and the symlinked system folders are gone; `bringToolDocs` and the fetch of a previous
+  release's templates with them.
+- **An agent's own credential wins** (`frontedFor`), and **`principals: "*"`** is read by
+  the mirror alone.
+
+Where it differs from `CHANGES.md` as written:
+
+- `locks` takes no foreign key: a lease is named for a room and carries no agent column,
+  so `dropAgent` deletes the agent's turn leases in its transaction.
+- A connection declared with no knob of its own stands in `config` by one row under the
+  empty key.
+- `liquen config` prints a key the store does not hold as a comment with its default,
+  beside the lines it holds.
+- `ensureRoute` takes the org's root and the caller's open store before the route, and
+  answers whether the agent was made.
+- `MainConfig` lost `catalog`, `model`, `effort` and `maxTokens`: main takes the org's
+  `root`, and a test names its model in the file.
+
+**Open**
+
+- An org's own `agent` and `reload` tasks run without `--env-file=.env`; the scaffold's
+  now carry it, since both open the store. On Postgres an org that keeps its own task
+  needs the flag for `PGPASSWORD`, and `liquen update` only names the difference.
+- A command run before the org's first boot reads the catalog's defaults for what the
+  file declares (`edge.port`): the file is applied by a boot or a reload, not by a door.
+- An org made by `liquen init` on one release and first booted on another adopts the docs
+  that differ as its own choice, since `init` writes no manifest.
+- `Sandbox.remove` on the Cloudflare gateway forgets the agent's sandbox and does not
+  destroy the container: it ends by its own sleep.
+- A named session's attachment that tuned its model keeps the tune only until the agent
+  is next reconciled, which puts the store's settings back.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

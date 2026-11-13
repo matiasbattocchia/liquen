@@ -3,6 +3,7 @@ import { createGoogleWebhook } from "./calendar.ts";
 import { createPoller } from "../poll.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
+import { members, membersAt } from "../../testing.ts";
 import { type Appender, type Log, openLog, type Reader } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
 import type { CalendarPart, Draft, Event, MessageEvent } from "../../types.ts";
@@ -38,6 +39,7 @@ async function withVault(
   fn: (creds: Awaited<ReturnType<typeof openCredentials>>) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
+  await membersAt(dir, "ana", "bo");
   const creds = await openCredentials(dir);
   try {
     await creds.put({ key: "google:app:cid", value: { client_id: "cid", client_secret: "sec" } });
@@ -88,6 +90,7 @@ function syncOf(creds: Awaited<ReturnType<typeof openCredentials>>): Promise<
 async function withRow(fn: (log: Log) => Promise<void>): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
+  await members(log, "ana", "bo");
   try {
     await log.upsertConnections([{ service: "google", address: "ana@example.com" }]);
     await fn(log);

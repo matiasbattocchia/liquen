@@ -91,9 +91,19 @@ Deno.test("reads: each process restarts on its own part of the file and nothing 
     changed(catalog({ connections: { slack: {}, whatsapp: { bridgeUrl: "http://b:1" } } })),
     ["main", "whatsapp"],
   );
-  // the roster is main's alone
+  // the roster and every agent's settings restart nobody: main reconciles each agent
+  // from its row while it runs
   const agents = { ana: { mind: true } } as unknown as OrgConfig["agents"];
-  assertEquals(changed(catalog({ connections: base.connections, agents })), ["main"]);
+  assertEquals(changed(catalog({ connections: base.connections, agents })), []);
+  const shared = { ...base.shared, agents: { ...base.shared.agents, model: "claude-y" } };
+  assertEquals(changed(catalog({ connections: base.connections, shared })), []);
+  // the org's clock is read once, by every liquen process
+  const clock = { ...base.shared, timezone: "Asia/Tokyo" };
+  assertEquals(changed(catalog({ connections: base.connections, shared: clock })), [
+    "main",
+    "slack",
+    "whatsapp",
+  ]);
   // the edge: every connection reads it, main does not
   const edge = { ...base.edge, publicUrl: "https://acme.example.com" };
   assertEquals(changed(catalog({ connections: base.connections, edge })), [

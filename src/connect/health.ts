@@ -28,7 +28,8 @@
 
 import type { ConnectionRow, Connections, ConnectionState } from "../store/connections.ts";
 import { HEARD_EVERY_MS } from "../store/connections.ts";
-import { findRoot, orgFlag, readConfig } from "../config.ts";
+import { findRoot, orgFlag } from "../config.ts";
+import { readConfig } from "../org.ts";
 import { ingestAddress, localBase, reached } from "../edge.ts";
 
 type Rows = Pick<Connections, "connections" | "upsertConnections">;

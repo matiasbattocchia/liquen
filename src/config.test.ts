@@ -1,17 +1,40 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   checkAmong,
-  connectorConfig,
   type ConnectorSpec,
-  declareAgent,
-  declareConnection,
   findRoot,
   materialize,
+  type OrgConfig,
   orgFlag,
-  readConfig,
+  orgOf,
+  readFile,
   starterConfig,
-  undeclareConnection,
 } from "./config.ts";
+import { applyFile, connectorConfig as knobs } from "./org.ts";
+import { openStore } from "./store/mod.ts";
+
+/** The org a first boot runs on: the file applied to a store with nothing in it, read
+ *  back. */
+async function readConfig(root: string): Promise<OrgConfig> {
+  // a database no test reaches: `deployment` is the file's own section, read without one
+  const declared = await readFile(root);
+  if (declared.deployment.database !== "sqlite") {
+    return orgOf(declared.deployment, declared.leaves, []);
+  }
+  await Deno.remove(`${root}/data`, { recursive: true }).catch(() => {});
+  const log = await (await openStore(root)).log();
+  try {
+    return await applyFile(root, log);
+  } finally {
+    await log.close();
+  }
+}
+
+/** A connector's knobs on that org. */
+async function connectorConfig<T extends object>(root: string, spec: ConnectorSpec): Promise<T> {
+  await readConfig(root);
+  return await knobs<T>(root, spec);
+}
 
 const SPEC: ConnectorSpec = {
   name: "acme",
@@ -40,7 +63,7 @@ Deno.test("a connection's name is its route on the edge — one the edge cannot 
   await withDir(async (root) => {
     for (const bad of ["acme_crm", "Acme", "9acme"]) {
       await Deno.writeTextFile(
-        `${root}/config.jsonc`,
+        `${root}/config.yaml`,
         JSON.stringify({ connections: { [bad]: {} } }),
       );
       await assertRejects(
@@ -49,7 +72,7 @@ Deno.test("a connection's name is its route on the edge — one the edge cannot 
         `connections.${bad} — a connection's name`,
       );
     }
-    await Deno.writeTextFile(`${root}/config.jsonc`, '{"connections":{"acme-crm":{}}}');
+    await Deno.writeTextFile(`${root}/config.yaml`, '{"connections":{"acme-crm":{}}}');
     assertEquals((await readConfig(root)).connections, { "acme-crm": {} });
   });
 });
@@ -59,14 +82,14 @@ Deno.test("the reader only reads: an absent file is the defaults, and stays abse
     const cfg = await readConfig(root);
     assertEquals(cfg.shared.agents.tools, ["search", "cancel", "bash"]);
     assertEquals(cfg.agents, {});
-    await assertRejects(() => Deno.stat(`${root}/config.jsonc`), Deno.errors.NotFound);
+    await assertRejects(() => Deno.stat(`${root}/config.yaml`), Deno.errors.NotFound);
   });
 });
 
 Deno.test("a sparse file: a set key wins, a left-out key defaults", async () => {
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({
         shared: {
           timezone: "Europe/Madrid",
@@ -87,19 +110,19 @@ Deno.test("a sparse file: a set key wins, a left-out key defaults", async () => 
 
 Deno.test("an unknown section or key is a boot error — a typo must not run silently", async () => {
   await withDir(async (root) => {
-    await Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ sytem: {} }));
+    await Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ sytem: {} }));
     await assertRejects(() => readConfig(root), Error, 'unknown section "sytem"');
   });
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ shared: { agents: { modle: "x" } } }),
     );
     await assertRejects(() => readConfig(root), Error, 'unknown key "shared.agents.modle"');
   });
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ shared: { backlogHours: 24, model: "x" } }),
     );
     await assertRejects(() => readConfig(root), Error, 'unknown key "shared.model"');
@@ -109,7 +132,7 @@ Deno.test("an unknown section or key is a boot error — a typo must not run sil
 Deno.test("the roster: agents.<name> — sparse overrides, identity handles, checked names", async () => {
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({
         agents: {
           ana: { effort: "low", identity: { name: "Ana", phone: "+549...", email: null } },
@@ -126,7 +149,7 @@ Deno.test("the roster: agents.<name> — sparse overrides, identity handles, che
   });
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ agents: { ana: { timezone: "UTC" } } }),
     );
     // the clock is the org's — no per-agent seat
@@ -134,13 +157,13 @@ Deno.test("the roster: agents.<name> — sparse overrides, identity handles, che
   });
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ agents: { ana: { identity: { fax: "1" } } } }),
     );
     await assertRejects(() => readConfig(root), Error, 'unknown key "agents.ana.identity.fax"');
   });
   await withDir(async (root) => {
-    await Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ agents: { "Ana!": {} } }));
+    await Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ agents: { "Ana!": {} } }));
     await assertRejects(() => readConfig(root), Error, "a folder and a unix user");
   });
 });
@@ -148,21 +171,21 @@ Deno.test("the roster: agents.<name> — sparse overrides, identity handles, che
 Deno.test("org-level validation: timezone, backlogHours, an agent override's effort", async () => {
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ shared: { timezone: "Mars/Olympus" } }),
     );
     await assertRejects(() => readConfig(root), Error, 'unknown timezone "Mars/Olympus"');
   });
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ agents: { ana: { effort: "supreme" } } }),
     );
     await assertRejects(() => readConfig(root), Error, 'unknown effort "supreme"');
   });
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ shared: { agents: { tools: "send" } } }),
     );
     await assertRejects(() => readConfig(root), Error, "tools must be an array of tool names");
@@ -172,12 +195,12 @@ Deno.test("org-level validation: timezone, backlogHours, an agent override's eff
 Deno.test("a connector reads its subsection over its defaults; nothing is written", async () => {
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ connections: { acme: { port: 1234 } } }),
     );
     const cfg = await connectorConfig<{ port: number; things: string[] }>(root, SPEC);
     assertEquals(cfg, { port: 1234, things: ["a"] });
-    const raw = await Deno.readTextFile(`${root}/config.jsonc`);
+    const raw = await Deno.readTextFile(`${root}/config.yaml`);
     assertEquals(raw, JSON.stringify({ connections: { acme: { port: 1234 } } }));
   });
 });
@@ -196,7 +219,7 @@ Deno.test("checkAmong: distinct names from its choices, none at all included", (
 Deno.test("a connector's unknown key and failed check are boot errors", async () => {
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ connections: { acme: { prot: 1234 } } }),
     );
     await assertRejects(
@@ -207,7 +230,7 @@ Deno.test("a connector's unknown key and failed check are boot errors", async ()
   });
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ connections: { acme: { things: [] } } }),
     );
     await assertRejects(
@@ -218,17 +241,17 @@ Deno.test("a connector's unknown key and failed check are boot errors", async ()
   });
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ connections: { acme: 5 } }),
     );
-    await assertRejects(() => readConfig(root), Error, "connections.acme must be an object");
+    await assertRejects(() => readConfig(root), Error, "connections.acme must be a mapping");
   });
 });
 
 Deno.test("a subsection no connector claims passes through opaque", async () => {
   await withDir(async (root) => {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ connections: { custom: { anything: true } } }),
     );
     assertEquals((await readConfig(root)).connections.custom, { anything: true });
@@ -261,113 +284,55 @@ Deno.test("materialize: the whole catalog, commented, and it reads back verbatim
     const cfg = starterConfig();
     cfg.agents.ana = { identity: { name: "Ana", email: null, phone: null } };
     cfg.connections.acme = { port: 4321, things: ["x"] };
-    const raw = materialize(cfg, [SPEC]);
+    const raw = materialize(cfg, { specs: [SPEC] });
     for (
       const comment of [
-        "// the model an agent runs on",
-        "// the org's clock (IANA)",
-        "// acme — a test connector",
-        "// the port",
+        "# the model an agent runs on",
+        "# the org's clock (IANA)",
+        "# acme — a test connector",
+        "# the port",
       ]
     ) assert(raw.includes(comment), `${comment} present`);
-    await Deno.writeTextFile(`${root}/config.jsonc`, raw);
+    await Deno.writeTextFile(`${root}/config.yaml`, raw);
     const back = await readConfig(root);
     assertEquals(back, cfg);
   });
 });
 
-Deno.test("declareConnection: the grant's own line, every other byte as it was", async () => {
-  await withDir(async (root) => {
-    const raw = materialize(starterConfig(), [SPEC]);
-    await Deno.writeTextFile(`${root}/config.jsonc`, raw);
-
-    assertEquals(await declareConnection(root, "slack"), true);
-    assertEquals((await readConfig(root)).connections, { slack: {} });
-    const after = await Deno.readTextFile(`${root}/config.jsonc`);
-    assert(after.includes("// the model an agent runs on"), "the comments survive");
-    assertEquals(after.replace('\n    "slack": {}', ""), raw); // one line, nothing else
-
-    // a second service joins the same block with what its door decided, and declaring
-    // twice is not a second line — nor a rewrite of what the operator has since edited
-    assertEquals(await declareConnection(root, "acme", { port: 1234 }), true);
-    assertEquals(await declareConnection(root, "slack"), false);
-    assertEquals(await declareConnection(root, "acme", { port: 5678 }), false);
-    assertEquals((await readConfig(root)).connections, { slack: {}, acme: { port: 1234 } });
+Deno.test("materialize: the store's state — a key held is a line, a key inherited a comment with its default", () => {
+  const cfg = starterConfig();
+  cfg.shared.agents.model = "claude-x";
+  cfg.agents.ana = {
+    identity: { name: "Ana", email: null, phone: "5491155550001" },
+    principals: "*",
+  };
+  const raw = materialize(cfg, {
+    docs: false,
+    set: (scope, key) => scope === "shared.agents" && key === "model",
   });
+  assert(raw.includes("\n    model: claude-x\n"), "the key the store holds is a line");
+  assert(raw.includes("\n    # effort: null\n"), "the key it does not hold is a comment");
+  assert(raw.includes("\n    #   - {tool: send, action: ask}\n"), "a list too, item by item");
+  assert(raw.includes("\n    principals: '*'\n"));
+  assert(!raw.includes("the model an agent runs on"), "no docs");
 });
 
-Deno.test("undeclareConnection: the member's own lines go, and the file reads as before it", async () => {
+Deno.test("a phone is taken quoted or bare: YAML reads +549… as a number, and its digits are the handle", async () => {
   await withDir(async (root) => {
-    const raw = materialize(starterConfig(), [SPEC]);
-    await Deno.writeTextFile(`${root}/config.jsonc`, raw);
-    await declareConnection(root, "slack");
-    const one = await Deno.readTextFile(`${root}/config.jsonc`);
-    await declareConnection(root, "acme", { port: 1234 });
-    await declareConnection(root, "google", { nested: { a: 1 } });
-
-    // the middle member: its line and its comma
-    assertEquals(await undeclareConnection(root, "acme"), true);
-    assertEquals((await readConfig(root)).connections, { slack: {}, google: { nested: { a: 1 } } });
-    // the last member: the one before it gives up its comma
-    assertEquals(await undeclareConnection(root, "google"), true);
-    assertEquals(await Deno.readTextFile(`${root}/config.jsonc`), one);
-    // the only member: the block is as init wrote it, comments and all
-    assertEquals(await undeclareConnection(root, "slack"), true);
-    assertEquals(await Deno.readTextFile(`${root}/config.jsonc`), raw);
-    assertEquals(await undeclareConnection(root, "slack"), false);
-  });
-});
-
-Deno.test("declareAgent: the roster entry with every handle in view, every other byte as it was", async () => {
-  await withDir(async (root) => {
-    const raw = materialize(starterConfig(), [SPEC]);
-    await Deno.writeTextFile(`${root}/config.jsonc`, raw);
-
-    await declareAgent(root, "ana", { name: "Ana Pérez", phone: "+34600" });
-    assertEquals((await readConfig(root)).agents, {
-      ana: { identity: { name: "Ana Pérez", email: null, phone: "+34600" }, mind: true },
-    });
-    const after = await Deno.readTextFile(`${root}/config.jsonc`);
-    assert(after.includes("// the model an agent runs on"), "the comments survive");
-    // the entry is the only change, under the roster's comment: strip its lines and the
-    // file is what init wrote
-    const entry = [
-      '\n    "ana": {',
-      '      "identity": {',
-      '        "name": "Ana Pérez",',
-      '        "email": null,',
-      '        "phone": "+34600"',
-      "      },",
-      '      "mind": true',
-      "    }",
-    ].join("\n");
-    assert(
-      after.indexOf("// <name>: any shared.agents key re-declared") < after.indexOf('"ana"'),
+    await Deno.writeTextFile(
+      `${root}/config.yaml`,
+      'agents:\n  ana:\n    identity:\n      phone: +5491155550109\n  bo:\n    identity:\n      phone: "+54 9 11 5555-0109"\n  cy:\n',
     );
-    assertEquals(after.replace(entry, ""), raw);
-
-    // a second agent follows the first; the same name twice is refused, the file untouched
-    await declareAgent(root, "bo", {});
-    assertEquals(Object.keys((await readConfig(root)).agents), ["ana", "bo"]);
-    const twice = await Deno.readTextFile(`${root}/config.jsonc`);
-    await assertRejects(() => declareAgent(root, "ana", {}), Error, "already in the roster");
-    assertEquals(await Deno.readTextFile(`${root}/config.jsonc`), twice);
-
-    // the roster's grammar, refused before anything is written
-    for (const bad of ["Ana", "no way", "-ana", "ana.b", "a".repeat(32), ""]) {
-      await assertRejects(
-        () => declareAgent(root, bad, {}),
-        Error,
-        "a name is a folder and a unix user",
-      );
-    }
-    assertEquals(await Deno.readTextFile(`${root}/config.jsonc`), twice);
+    const { agents } = await readConfig(root);
+    assertEquals(agents.ana.identity?.phone, "5491155550109");
+    assertEquals(agents.bo.identity?.phone, "+54 9 11 5555-0109");
+    assertEquals(agents.cy, { identity: { name: null, email: null, phone: null } });
   });
 });
 
-Deno.test("findRoot: the nearest config.jsonc up from cwd names the org", async () => {
+Deno.test("findRoot: the nearest config.yaml up from cwd names the org", async () => {
   await withDir(async (root) => {
-    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    await Deno.writeTextFile(`${root}/config.yaml`, "{}");
     await Deno.mkdir(`${root}/data/agents/ana`, { recursive: true });
     assertEquals(findRoot({ from: `${root}/data/agents/ana` }), await Deno.realPath(root));
     assertThrows(() => findRoot({ from: "/usr/lib" }), Error, "not inside a liquen org");
@@ -376,7 +341,7 @@ Deno.test("findRoot: the nearest config.jsonc up from cwd names the org", async 
 
 Deno.test("findRoot: --dir names the org wherever liquen runs, and must be one itself", async () => {
   await withDir(async (root) => {
-    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    await Deno.writeTextFile(`${root}/config.yaml`, "{}");
     assertEquals(findRoot({ dir: root, from: "/usr/lib" }), await Deno.realPath(root));
     assertThrows(() => findRoot({ dir: `${root}/nowhere` }), Error, "is not a liquen project");
   });
@@ -390,7 +355,7 @@ Deno.test("orgFlag: strips --dir in both spellings and leaves the rest in order"
 
 Deno.test("the reader tells an absent file from an unreadable one — only absence is the defaults", async () => {
   await withDir(async (root) => {
-    await Deno.mkdir(`${root}/config.jsonc`); // a directory where the file should be
+    await Deno.mkdir(`${root}/config.yaml`); // a directory where the file should be
     await assertRejects(() => readConfig(root));
   });
 });
@@ -408,7 +373,7 @@ Deno.test("an agent's model, maxTokens and provider are type-checked", async () 
   ) {
     await withDir(async (root) => {
       await Deno.writeTextFile(
-        `${root}/config.jsonc`,
+        `${root}/config.yaml`,
         JSON.stringify({ agents: { ana: bad } }),
       );
       await assertRejects(() => readConfig(root), Error, "ana", JSON.stringify(bad));
@@ -418,7 +383,7 @@ Deno.test("an agent's model, maxTokens and provider are type-checked", async () 
 
 Deno.test("export: environment variable names, never a secret's or one the harness sets", async () => {
   await withDir(async (root) => {
-    const write = (cfg: unknown) => Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify(cfg));
+    const write = (cfg: unknown) => Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify(cfg));
     await write({ agents: { ana: {} } });
     assertEquals((await readConfig(root)).shared.agents.export, []);
     await write({
@@ -448,7 +413,7 @@ Deno.test("export: environment variable names, never a secret's or one the harne
 Deno.test("the roster's principals and mind: names must be in the roster, mind a boolean", async () => {
   await withDir(async (root) => {
     const write = (agents: unknown) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ agents }));
+      Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ agents }));
     await write({ matias: {}, ventas: { principals: ["matias"] }, sol: { mind: false } });
     const cfg = await readConfig(root);
     assertEquals(cfg.agents.ventas.principals, ["matias"]);
@@ -462,44 +427,15 @@ Deno.test("the roster's principals and mind: names must be in the roster, mind a
   });
 });
 
-Deno.test("declareAgent: --principal and --no-mind land as the entry's own keys", async () => {
-  await withDir(async (root) => {
-    await Deno.writeTextFile(`${root}/config.jsonc`, materialize(starterConfig(), [SPEC]));
-    await declareAgent(root, "matias", {});
-    await declareAgent(root, "sol", { name: "Sol" }, { mind: false });
-    await declareAgent(root, "ventas", { phone: "549117770000" }, {
-      principals: ["matias", "sol"],
-    });
-    const { agents } = await readConfig(root);
-    assertEquals(agents.sol, { identity: { name: "Sol", email: null, phone: null }, mind: false });
-    await declareAgent(root, "ana", { name: "Ana" });
-    // the switch is in view on every entry — true written, never left to be looked up
-    assertEquals((await readConfig(root)).agents.ana.mind, true);
-    assertEquals(agents.ventas, {
-      identity: { name: null, email: null, phone: "549117770000" },
-      principals: ["matias", "sol"],
-      mind: true,
-    });
-    // a principal has to be in the roster already — the door refuses before writing
-    const before = await Deno.readTextFile(`${root}/config.jsonc`);
-    await assertRejects(
-      () => declareAgent(root, "bot", {}, { principals: ["ghost"] }),
-      Error,
-      '"ghost" is not in the roster',
-    );
-    assertEquals(await Deno.readTextFile(`${root}/config.jsonc`), before);
-  });
-});
-
 Deno.test("shared.agents.mind: the org's default, an entry's override, and a boolean or nothing", async () => {
   const root = await Deno.makeTempDir();
   try {
-    await Deno.writeTextFile(`${root}/config.jsonc`, materialize(starterConfig()));
+    await Deno.writeTextFile(`${root}/config.yaml`, materialize(starterConfig()));
     assertEquals((await readConfig(root)).shared.agents.mind, true); // materialized, on by default
 
     // the whole org paused, one agent kept awake by its own entry
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({
         shared: { agents: { mind: false } },
         agents: { ana: {}, sol: { mind: true } },
@@ -511,7 +447,7 @@ Deno.test("shared.agents.mind: the org's default, an entry's override, and a boo
     assertEquals(cfg.agents.sol.mind, true);
 
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ shared: { agents: { mind: "no" } } }),
     );
     await assertRejects(() => readConfig(root), Error, "mind must be true or false");
@@ -522,11 +458,11 @@ Deno.test("shared.agents.mind: the org's default, an entry's override, and a boo
 
 Deno.test("shared.agents.presence: waiting by default, an entry's override, and one of three", async () => {
   await withDir(async (root) => {
-    await Deno.writeTextFile(`${root}/config.jsonc`, materialize(starterConfig()));
+    await Deno.writeTextFile(`${root}/config.yaml`, materialize(starterConfig()));
     assertEquals((await readConfig(root)).shared.agents.presence, "waiting");
 
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({
         shared: { agents: { presence: "off" } },
         agents: { ana: { presence: "tools" } },
@@ -537,7 +473,7 @@ Deno.test("shared.agents.presence: waiting by default, an entry's override, and 
     assertEquals(cfg.agents.ana.presence, "tools");
 
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ agents: { ana: { presence: "all" } } }),
     );
     await assertRejects(() => readConfig(root), Error, 'unknown presence "all"');
@@ -547,7 +483,7 @@ Deno.test("shared.agents.presence: waiting by default, an entry's override, and 
 Deno.test('deployment.database: "sqlite" or a Postgres URL without its password — the secret rides PGPASSWORD', async () => {
   await withDir(async (root) => {
     const write = (database: unknown) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ deployment: { database } }));
+      Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ deployment: { database } }));
     await write("postgres://liquen@db.internal:5432/liquen?schema=acme");
     assertEquals(
       (await readConfig(root)).deployment.database,
@@ -569,7 +505,7 @@ Deno.test('deployment.database: "sqlite" or a Postgres URL without its password 
 Deno.test("deployment.docs: filesystem, or database — the docs table of the store, either engine", async () => {
   await withDir(async (root) => {
     const write = (deployment: unknown) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ deployment }));
+      Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ deployment }));
     await write({});
     assertEquals((await readConfig(root)).deployment.docs, "filesystem");
     await write({ docs: "database", database: "postgres://liquen@db.internal:5432/liquen" });
@@ -584,8 +520,8 @@ Deno.test("deployment.docs: filesystem, or database — the docs table of the st
 Deno.test("deployment.storage: filesystem, or a bucket's https URL with no credential in it", async () => {
   await withDir(async (root) => {
     const write = (storage: unknown) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ deployment: { storage } }));
-    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+      Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ deployment: { storage } }));
+    await Deno.writeTextFile(`${root}/config.yaml`, "{}");
     assertEquals((await readConfig(root)).deployment.storage, "filesystem");
     await write("https://acct.r2.cloudflarestorage.com/org");
     assertEquals(
@@ -607,12 +543,12 @@ Deno.test("deployment.sandbox: null, or a gateway's https URL when the docs are 
   await withDir(async (root) => {
     const write = (sandbox: unknown, docs = "database") =>
       Deno.writeTextFile(
-        `${root}/config.jsonc`,
+        `${root}/config.yaml`,
         JSON.stringify({
           deployment: { sandbox, docs, database: "postgres://liquen@db.internal:5432/liquen" },
         }),
       );
-    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    await Deno.writeTextFile(`${root}/config.yaml`, "{}");
     assertEquals((await readConfig(root)).deployment.sandbox, null);
     await write("https://liquen-sandbox.acme.workers.dev");
     assertEquals(
@@ -634,10 +570,10 @@ Deno.test("deployment.sandboxSleepMinutes: whole minutes, 10 unless said", async
   await withDir(async (root) => {
     const write = (sandboxSleepMinutes: unknown) =>
       Deno.writeTextFile(
-        `${root}/config.jsonc`,
+        `${root}/config.yaml`,
         JSON.stringify({ deployment: { sandboxSleepMinutes } }),
       );
-    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    await Deno.writeTextFile(`${root}/config.yaml`, "{}");
     assertEquals((await readConfig(root)).deployment.sandboxSleepMinutes, 10);
     await write(60);
     assertEquals((await readConfig(root)).deployment.sandboxSleepMinutes, 60);
@@ -651,7 +587,7 @@ Deno.test("deployment.sandboxSleepMinutes: whole minutes, 10 unless said", async
 Deno.test("keepRecent: below compactAt, or a checkpoint has nothing to cover", async () => {
   await withDir(async (root) => {
     const write = (body: Record<string, unknown>) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify(body));
+      Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify(body));
     const org = (agents: Record<string, unknown>) => ({ shared: { agents } });
     await write(org({ compactAt: 150_000 }));
     assertEquals((await readConfig(root)).shared.agents.keepRecent, 20_000);
@@ -675,8 +611,8 @@ Deno.test("keepRecent: below compactAt, or a checkpoint has nothing to cover", a
 Deno.test("deployment.mounts: the bubble's view of the machine, checked at boot", async () => {
   await withDir(async (root) => {
     const write = (section: string, body: unknown) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ [section]: body }));
-    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+      Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ [section]: body }));
+    await Deno.writeTextFile(`${root}/config.yaml`, "{}");
     assertEquals((await readConfig(root)).deployment.mounts, []);
     const mounts = ["~/.local/share/mise", "/opt/x", "~/code/repo:rw"];
     await write("deployment", { mounts });
@@ -696,7 +632,7 @@ Deno.test("deployment.mounts: the bubble's view of the machine, checked at boot"
 Deno.test("deployment: where the parts live is its own section, and the machinery's is not", async () => {
   await withDir(async (root) => {
     const write = (body: unknown) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify(body));
+      Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify(body));
     for (const key of ["database", "docs", "sandbox", "mounts", "sandboxSleepMinutes"]) {
       await write({ system: { [key]: null } });
       await assertRejects(() => readConfig(root), Error, `unknown key "system.${key}"`);
@@ -716,8 +652,8 @@ Deno.test("deployment: where the parts live is its own section, and the machiner
 Deno.test("system.prices: the org's own rows, none unless said, checked at boot", async () => {
   await withDir(async (root) => {
     const write = (prices: unknown) =>
-      Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ system: { prices } }));
-    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+      Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ system: { prices } }));
+    await Deno.writeTextFile(`${root}/config.yaml`, "{}");
     assertEquals((await readConfig(root)).system.prices, []);
     const row = { model: "m", valid_since: "2026-01-01", input: 1, output: 2, cache_read: 0.1 };
     await write([row]);

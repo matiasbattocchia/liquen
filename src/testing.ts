@@ -11,6 +11,31 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Emit } from "./types.ts";
 import { type Emission, type ModelTransport, mu, type StepCall } from "./mu.ts";
 import { SILENCE } from "./render.ts";
+import type { Registry } from "./store/agents.ts";
+import { openLog } from "./store/log.ts";
+
+/** These agents as rows of the roster, where they are not yet: a row that names an agent —
+ *  a connection, a membership, a key, a verdict — needs the agent to exist. */
+export async function members(
+  log: Pick<Registry, "agents" | "putAgents">,
+  ...ids: string[]
+): Promise<void> {
+  const have = new Set((await log.agents()).map((a) => a.agentId));
+  await log.putAgents(
+    ids.filter((id) => !have.has(id)).map((agentId) => ({ agentId, mind: `mind@${agentId}` })),
+  );
+}
+
+/** The same, on the store under a data root, through a handle of this call's own: for a
+ *  test that opens only the vault. */
+export async function membersAt(dir: string, ...ids: string[]): Promise<void> {
+  const log = await openLog(`${dir}/log`);
+  try {
+    await members(log, ...ids);
+  } finally {
+    await log.close();
+  }
+}
 
 /** An `Emission[]` as the model would actually have sent it: real content blocks. */
 export function canned(

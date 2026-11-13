@@ -4,22 +4,20 @@
  *
  * The standing rules:
  *
- *   · ONE file, `config.jsonc`, at the PROJECT ROOT — above `data/`, git-tracked, deployed
+ *   · ONE file, `config.yaml`, at the PROJECT ROOT — above `data/`, git-tracked, deployed
  *     with the image. The file is the project marker: `findRoot` walks up from cwd the way
  *     git finds `.git`, and everything else (`data/`, the connectors, the processors) is
  *     addressed from the root it lands on.
- *   · The file is a DECLARATION, and only the setup doors write it: `liquen init` materializes
- *     it, `liquen agent` declares a roster entry (`declareAgent`), `liquen connect` declares the
- *     connection a grant just earned (`declareConnection`). All three are human-time acts
- *     with a human watching, and each leaves a diff for git, which is the file's only
- *     history. The RUNNING system never writes it: boot compiles it —
- *     the `agents` section becomes registry rows and home folders, `connections`
- *     subsections configure the connector processes, the rest funnels down the chain
- *     (main → xi → nu → mu) — and what a turn learns (grants, discovered handles,
- *     verdicts) lives in log.db tables, never here.
- *   · `liquen init` materializes the whole catalog with these comments, so every knob is in
- *     view. A key left out takes the default defined HERE (the file may be sparse); an
- *     unknown key or section is a boot error — a typo must not run silently.
+ *   · The org's configuration lives in the STORE (`store/agents.ts`): the roster in
+ *     `agents`, every knob a leaf of `config`. The file is INPUT ONLY: `liquen init` lays
+ *     its commented template once, and from then on humans and repos write it. Boot and
+ *     `liquen reload` apply it to the store (`org.ts`): a key it declares overwrites the
+ *     store's, a key it leaves out keeps the store's value, an agent it does not name is
+ *     left alone. So every key has one owner — the file when it declares it, a command
+ *     otherwise — and a command that would change a key the file declares refuses.
+ *     `deployment` is the one section the store cannot hold: it names where the store is.
+ *   · A key nothing sets takes the default defined HERE; an unknown key or section in
+ *     the file is a boot error — a typo must not run silently.
  *   · Placement is by audience. `system`: machinery tuning — every deployment works on the
  *     defaults. `deployment`: where the org's parts live — the log and the vault, the docs,
  *     the agents' shells — where shells off this machine need the docs in the database.
@@ -34,14 +32,18 @@
  *     (tests); they are the named constants defined here, the single source.
  *   · env is for secrets only (tokens the services hold; `ANTHROPIC_API_KEY` belongs to
  *     the SDK's own credential chain, not to us; `GEMINI_API_KEY` is the Google edge's; a key
- *     in the vault — `liquen connect ai` — answers before either). The org lives where its config.jsonc
+ *     in the vault — `liquen connect ai` — answers before either). The org lives where its config.yaml
  *     lives — cwd selects it, no variable does. Session choices (which agent a REPL faces)
  *     are CLI arguments — per-invocation by nature, no seat in the file.
  */
 
-import { parse } from "@std/jsonc";
-import type { Effort, PolicyAction, PresenceLevel, Rule } from "./types.ts";
+import { parse, stringify } from "@std/yaml";
+import type { Effort, Json, PolicyAction, PresenceLevel, Rule } from "./types.ts";
 import { checkPrices, type Price } from "./prices.ts";
+import { type AgentRow, agentScope, type ConfigRow } from "./store/agents.ts";
+
+/** The file the org declares itself in, and the marker of its root. */
+export const CONFIG_FILE = "config.yaml";
 
 /* ── the defaults: the single source ─────────────────────────────────────── */
 
@@ -171,15 +173,15 @@ export interface AgentDefaults {
  *  the name it goes by and the handles of the account it acts as (§4). Whose that account
  *  is — a member's, or the org's — is the connection row's fact, never declared here.
  *  `principals` says who steers, as roster usernames, when the derivation of §4 (the owner;
- *  every member when the account is the org's) is not wanted — `[]` for nobody. `mind`
+ *  every member when the account is the org's) is not wanted — `[]` for nobody, `"*"` for
+ *  anyone writing in its steering room. `mind`
  *  false runs no session for the entry: a person alone (identity and handles, never a workspace, just a
  *  door), or an agent PAUSED — its folder stays, its rows keep landing, and the backlog
  *  hands them over when it comes back. Everything else about the agent is discovered
- *  (connect flows) or derived (the home folder). Null is "not declared", the shape
- *  `liquen agent` writes for a handle it was not given. */
+ *  (connect flows) or derived (the home folder). A null handle is one the agent has not. */
 export interface AgentEntry extends Partial<AgentDefaults> {
   identity?: Identity;
-  principals?: string[];
+  principals?: string[] | "*";
 }
 export interface Identity {
   name?: string | null;
@@ -187,11 +189,13 @@ export interface Identity {
   phone?: string | null;
 }
 export const IDENTITY_KEYS = ["name", "email", "phone"] as const;
-const IDENTITY_DOC = "<name>: any shared.agents key re-declared, plus identity — the name the " +
-  "agent goes by and the handles of the account it acts as (null ⇒ not declared); " +
-  "principals — who steers it, roster names ([] ⇒ nobody; absent ⇒ its owner, or every " +
-  "member when the account is the org's); mind: false — no session runs: a member with no " +
-  "agent of their own, or an agent paused";
+const IDENTITY_DOC = "<name>: any shared.agents key set for this agent, plus identity — the " +
+  "name the agent goes by and the handles of the account it acts as (null ⇒ it has none); " +
+  'principals — who steers it, roster names ([] ⇒ nobody; "*" ⇒ anyone writing in its ' +
+  "steering room; absent ⇒ its owner, or every member when the account is the org's); " +
+  "mind: false — no session runs: a member with no agent of their own, or an agent paused. " +
+  "An agent made by `liquen agent` or a connector and not named here runs on what the " +
+  "store holds";
 
 export interface OrgConfig {
   system: {
@@ -227,9 +231,9 @@ export interface OrgConfig {
     /** The tunnel's argv, supervised by `liquen start`; null ⇒ the operator runs one. */
     tunnel: string[] | null;
   };
-  /** The roster: every key under `agents` IS an agent — boot compiles the entries into
-   *  registry rows and creates the missing home folders (§9). The name is the agent's id,
-   *  its folder under `data/agents/`, and its Linux user in the container. */
+  /** The roster: every key under `agents` IS an agent, a row of the store (§9). The name
+   *  is the agent's id, its folder under `data/agents/`, and its Linux user in the
+   *  container. */
   agents: Record<string, AgentEntry>;
   /** The connectors' subsections, one per connector, OPAQUE here: each connector's own
    *  `config.ts` declares and validates its subsection (`connectorConfig`). */
@@ -562,29 +566,29 @@ export function orgFlag(argv: string[] = Deno.args): { dir?: string; args: strin
 }
 
 /** The org is WHERE YOU RUN liquen: walk up from `from` (default cwd) to the nearest
- *  `config.jsonc` — the project marker, the way git finds `.git`. Everything is addressed
- *  from the root it names: the catalog at `<root>/config.jsonc`, the substrate at
+ *  `config.yaml` — the project marker, the way git finds `.git`. Everything is addressed
+ *  from the root it names: the catalog at `<root>/config.yaml`, the substrate at
  *  `<root>/data`. An explicit `dir` (the `--dir` flag) IS the org: it must hold the
  *  marker itself, and nothing is walked. */
 export function findRoot({ dir, from = Deno.cwd() }: { dir?: string; from?: string } = {}): string {
   if (dir) {
     try {
-      Deno.statSync(`${dir}/config.jsonc`);
+      Deno.statSync(`${dir}/${CONFIG_FILE}`);
     } catch {
-      throw new Error(`--dir ${dir} is not a liquen project: no config.jsonc there`);
+      throw new Error(`--dir ${dir} is not a liquen project: no ${CONFIG_FILE} there`);
     }
     return Deno.realPathSync(dir);
   }
   let here = Deno.realPathSync(from);
   for (;;) {
     try {
-      Deno.statSync(`${here}/config.jsonc`);
+      Deno.statSync(`${here}/${CONFIG_FILE}`);
       return here;
     } catch { /* keep climbing */ }
     const parent = here.replace(/\/[^/]+$/, "") || "/";
     if (parent === here) {
       throw new Error(
-        `not inside a liquen org: no config.jsonc from ${from} up — ` +
+        `not inside a liquen org: no ${CONFIG_FILE} from ${from} up — ` +
           "`deno run -A jsr:@liquen/liquen/init <path>` makes one",
       );
     }
@@ -592,102 +596,131 @@ export function findRoot({ dir, from = Deno.cwd() }: { dir?: string; from?: stri
   }
 }
 
-/* ── the readers (main only) ─────────────────────────────────────────────── */
+/* ── the file: what it declares ──────────────────────────────────────────── */
 
-/** Read `<root>/config.jsonc` — and only read: the file is git's, never the system's to
- *  write. Absent file ⇒ the defaults (tests); a key left out takes its default;
- *  an unknown key or section is a boot error. `connections` subsections are the
- *  connectors' and pass through opaque (each connector validates its own). */
-export async function readConfig(root: string): Promise<OrgConfig> {
-  const path = `${root}/config.jsonc`;
-  let raw: string;
+/** What `config.yaml` declares, as boot and reload apply it (§9): sparse, so a key the
+ *  file leaves out is no word about it. */
+export interface Declared {
+  /** `deployment`, whole, over its defaults: where the store is, so the file's alone. */
+  deployment: OrgConfig["deployment"];
+  /** Every leaf the file sets, by scope. A connection it declares stands by a leaf under
+   *  the empty key, whatever knobs it sets. */
+  leaves: ConfigRow[];
+  /** The roster entries it declares: the identity keys and the principals each states. */
+  agents: Record<string, { identity: Identity; principals?: string[] | "*" }>;
+}
+
+/** The keys an agent's own scope may set. */
+export const AGENT_KEYS: readonly string[] = AGENT.map((e) => e.key);
+
+/** The scopes whose keys the catalog knows, and the entries that are them. */
+const SCOPES: Record<string, Entry[]> = {
+  system: SYSTEM,
+  shared: SHARED,
+  "shared.agents": AGENT,
+  processors: PROCESSORS,
+  edge: EDGE,
+};
+
+/** The scope a connection's knobs live in, and the key its declaration stands by. */
+export const connectionScope = (service: string): string => `connections.${service}`;
+export const DECLARED = "";
+
+/** A section's body: an object, or nothing at all (`agents:` with no entry under it). */
+function asObject(v: unknown, path: string, label: string): Record<string, unknown> {
+  if (v === undefined || v === null) return {};
+  if (typeof v !== "object" || Array.isArray(v)) {
+    throw new Error(`${path}: ${label} must be a mapping`);
+  }
+  return v as Record<string, unknown>;
+}
+
+/** The leaves of one catalog scope as the file gives them; an unknown key is an error. */
+function leavesOf(
+  given: Record<string, unknown>,
+  entries: Entry[],
+  scope: string,
+  path: string,
+  label: string,
+): ConfigRow[] {
+  return Object.entries(given).map(([key, value]) => {
+    if (!entries.some((e) => e.key === key)) {
+      throw new Error(`${path}: unknown key "${label}.${key}"`);
+    }
+    return { scope, key, value: value as Json };
+  });
+}
+
+/** Read what the file's text declares. An unknown key or section is an error: a typo
+ *  must not run silently. `connections` subsections are the connectors' and pass through
+ *  opaque (each connector checks its own). */
+export function parseDeclared(raw: string, path: string): Declared {
+  let found: Record<string, unknown>;
   try {
-    raw = await Deno.readTextFile(path);
+    found = asObject(parse(raw), path, "the file");
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return defaults();
-    throw err; // a file that exists and cannot be read is a boot error, not an empty org
+    throw new Error(`${path}: ${err instanceof Error ? err.message : err}`);
   }
-  const found = parseStrict(raw, path) as Record<string, unknown>;
   for (const section of Object.keys(found)) {
-    if (!(section in SECTION_DOCS)) {
-      throw new Error(`${path}: unknown section "${section}"`);
-    }
+    if (!(section in SECTION_DOCS)) throw new Error(`${path}: unknown section "${section}"`);
   }
-  const asObject = (v: unknown, label: string): Record<string, unknown> => {
-    if (v === undefined) return {};
-    if (typeof v !== "object" || v === null || Array.isArray(v)) {
-      throw new Error(`${path}: ${label} must be an object`);
-    }
-    return v as Record<string, unknown>;
-  };
-  const sharedGiven = asObject(found.shared, "shared");
-  const { agents: agentsGiven, ...sharedPlain } = sharedGiven;
-  const cfg = {
-    system: mergeSection(asObject(found.system, "system"), SYSTEM, path, "system"),
+  const { agents: sharedAgents, ...shared } = asObject(found.shared, path, "shared");
+  const out: Declared = {
     deployment: mergeSection(
-      asObject(found.deployment, "deployment"),
+      asObject(found.deployment, path, "deployment"),
       DEPLOYMENT,
       path,
       "deployment",
-    ),
-    shared: {
-      ...mergeSection(sharedPlain, SHARED, path, "shared"),
-      agents: mergeSection(
-        asObject(agentsGiven, "shared.agents"),
+    ) as unknown as OrgConfig["deployment"],
+    leaves: [
+      ...leavesOf(asObject(found.system, path, "system"), SYSTEM, "system", path, "system"),
+      ...leavesOf(shared, SHARED, "shared", path, "shared"),
+      ...leavesOf(
+        asObject(sharedAgents, path, "shared.agents"),
         AGENT,
+        "shared.agents",
         path,
         "shared.agents",
       ),
-    },
-    processors: mergeSection(
-      asObject(found.processors, "processors"),
-      PROCESSORS,
-      path,
-      "processors",
-    ),
-    edge: mergeSection(asObject(found.edge, "edge"), EDGE, path, "edge"),
-    agents: {} as Record<string, unknown>,
-    connections: {} as Record<string, unknown>,
+      ...leavesOf(
+        asObject(found.processors, path, "processors"),
+        PROCESSORS,
+        "processors",
+        path,
+        "processors",
+      ),
+      ...leavesOf(asObject(found.edge, path, "edge"), EDGE, "edge", path, "edge"),
+    ],
+    agents: {},
   };
-  for (const [name, body] of Object.entries(asObject(found.agents, "agents"))) {
-    if (!AGENT_NAME.test(name)) {
-      throw new Error(
-        `${path}: agents.${name} — a name is a folder and a unix user: ` +
-          `lowercase letters, digits and dashes, starting with a letter`,
-      );
-    }
-    const entry = asObject(body, `agents.${name}`);
-    const { identity, principals, mind, ...over } = entry;
-    mergeSection(over, AGENT, path, `agents.${name}`); // unknown keys error; values stay sparse
-    for (const [key, v] of Object.entries(asObject(identity, `agents.${name}.identity`))) {
+  validateDeployment(out.deployment, path);
+  for (const [name, body] of Object.entries(asObject(found.agents, path, "agents"))) {
+    if (!AGENT_NAME.test(name)) throw new Error(`${path}: ${nameRule(name)}`);
+    const { identity, principals, ...over } = asObject(body, path, `agents.${name}`);
+    const stated: Identity = {};
+    for (const [key, v] of Object.entries(asObject(identity, path, `agents.${name}.identity`))) {
       if (!(IDENTITY_KEYS as readonly string[]).includes(key)) {
         throw new Error(`${path}: unknown key "agents.${name}.identity.${key}"`);
       }
-      if (v !== null && typeof v !== "string") {
+      // YAML reads a bare +549… as a number: its digits are the whole of a phone's handle
+      const text = key === "phone" && typeof v === "number" ? String(v) : v;
+      if (text !== null && typeof text !== "string") {
         throw new Error(`${path}: agents.${name}.identity.${key} must be a string or null`);
       }
+      stated[key as (typeof IDENTITY_KEYS)[number]] = text;
     }
-    if (
-      principals !== undefined &&
-      (!Array.isArray(principals) || principals.some((p) => typeof p !== "string"))
-    ) {
-      throw new Error(`${path}: agents.${name}.principals must be a list of roster names`);
+    if (principals !== undefined && !isPrincipals(principals)) {
+      throw new Error(
+        `${path}: agents.${name}.principals must be a list of roster names, or "*"`,
+      );
     }
-    if (mind !== undefined && typeof mind !== "boolean") {
-      throw new Error(`${path}: agents.${name}.mind must be true or false`);
-    }
-    validateAgent(over as Partial<AgentDefaults>, `${path}: agents.${name}`);
-    cfg.agents[name] = entry;
+    out.agents[name] = {
+      identity: stated,
+      ...(principals !== undefined ? { principals: principals as string[] | "*" } : {}),
+    };
+    out.leaves.push(...leavesOf(over, AGENT, agentScope(name), path, `agents.${name}`));
   }
-  // a principal is a roster entry (§4): the list can only name who is in the file
-  for (const [name, entry] of Object.entries(cfg.agents as Record<string, AgentEntry>)) {
-    for (const p of entry.principals ?? []) {
-      if (!(p in cfg.agents)) {
-        throw new Error(`${path}: agents.${name}.principals names "${p}", not in the roster`);
-      }
-    }
-  }
-  for (const [name, body] of Object.entries(asObject(found.connections, "connections"))) {
+  for (const [name, body] of Object.entries(asObject(found.connections, path, "connections"))) {
     if (!SERVICE_NAME.test(name)) {
       throw new Error(
         `${path}: connections.${name} — a connection's name is its path on the edge ` +
@@ -695,38 +728,116 @@ export async function readConfig(root: string): Promise<OrgConfig> {
           `and dashes, starting with a letter`,
       );
     }
-    if (typeof body !== "object" || body === null || Array.isArray(body)) {
-      throw new Error(
-        `${path}: connections.${name} must be an object (a connector's subsection)`,
-      );
+    const scope = connectionScope(name);
+    out.leaves.push({ scope, key: DECLARED, value: true });
+    for (const [key, value] of Object.entries(asObject(body, path, `connections.${name}`))) {
+      out.leaves.push({ scope, key, value: value as Json });
     }
-    cfg.connections[name] = body;
   }
-  const out = cfg as unknown as OrgConfig;
-  validateOrg(out, path);
   return out;
 }
 
-/** A connector's reader: its subsection over its spec's defaults — unknown keys error,
- *  `check`s run at boot, and nothing is ever written back: what a connect flow discovers
- *  belongs in the tables, and a missing knob simply means its default. */
-export async function connectorConfig<T extends object>(
-  root: string,
-  spec: ConnectorSpec,
-): Promise<T> {
-  const path = `${root}/config.jsonc`;
-  const cfg = await readConfig(root);
+/** What `principals` may hold: a list of names, or `"*"`. */
+export function isPrincipals(v: unknown): v is string[] | "*" {
+  return v === "*" || (Array.isArray(v) && v.every((p) => typeof p === "string"));
+}
+
+/** The rule a member's name follows, said of `name`. */
+export function nameRule(name: string): string {
+  return `agents.${name} — a name is a folder and a unix user: lowercase letters, digits ` +
+    `and dashes, starting with a letter`;
+}
+
+/** Read `<root>/config.yaml` — and only read: no command writes it. Absent file ⇒ it
+ *  declares nothing, and the deployment is the default one. */
+export async function readFile(root: string): Promise<Declared> {
+  const path = `${root}/${CONFIG_FILE}`;
+  let raw: string;
+  try {
+    raw = await Deno.readTextFile(path);
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return parseDeclared("", path);
+    throw err; // a file that exists and cannot be read is a boot error, not an empty org
+  }
+  return parseDeclared(raw, path);
+}
+
+/** The keys the file owns, as paths: `agents.ana` for an agent it declares at all,
+ *  `agents.ana.model`, `agents.ana.identity.email`, `agents.ana.principals`,
+ *  `connections.slack`, `shared.agents.model`. A command that would change one refuses:
+ *  the file's word is put back at the next boot. */
+export function declaredPaths(d: Declared): Set<string> {
+  const out = new Set<string>();
+  for (const { scope, key } of d.leaves) out.add(key === DECLARED ? scope : `${scope}.${key}`);
+  for (const [name, a] of Object.entries(d.agents)) {
+    out.add(agentScope(name));
+    for (const key of Object.keys(a.identity)) out.add(`${agentScope(name)}.identity.${key}`);
+    if (a.principals !== undefined) out.add(`${agentScope(name)}.principals`);
+  }
+  return out;
+}
+
+/** The refusal a command meets on a key the file owns. */
+export function pinned(path: string, how = "edit it there"): Error {
+  return new Error(`${path} is declared in ${CONFIG_FILE}; ${how}`);
+}
+
+/* ── the store's state, as the org runs on it ────────────────────────────── */
+
+/** The org's configuration as it stands: the file's `deployment`, and every other section
+ *  as the store holds it over the catalog's defaults. `agents` is the roster's rows, each
+ *  with the keys its own scope sets; `connections` the scopes declared, opaque. */
+export function orgOf(
+  deployment: OrgConfig["deployment"],
+  rows: ConfigRow[],
+  roster: AgentRow[],
+): OrgConfig {
+  const cfg = defaults();
+  cfg.deployment = deployment;
+  const sections = cfg as unknown as Record<string, Record<string, unknown>>;
+  const own: Record<string, Record<string, unknown>> = {};
+  for (const { scope, key, value } of rows) {
+    if (scope === "shared.agents") {
+      (cfg.shared.agents as unknown as Record<string, Json>)[key] = value;
+    } else if (scope in SCOPES) sections[scope][key] = value;
+    else if (scope.startsWith("connections.")) {
+      const body = cfg.connections[scope.slice("connections.".length)] ??= {};
+      if (key !== DECLARED) body[key] = value;
+    } else if (scope.startsWith("agents.")) {
+      (own[scope.slice("agents.".length)] ??= {})[key] = value;
+    }
+  }
+  for (const a of roster) {
+    cfg.agents[a.agentId] = {
+      identity: { name: a.name ?? null, email: a.email ?? null, phone: a.phone ?? null },
+      ...(a.principals !== undefined ? { principals: a.principals } : {}),
+      ...own[a.agentId],
+    };
+  }
+  return cfg;
+}
+
+/** What one agent runs with: its own scope over the org's, key by key. A key present is
+ *  a value, `null` included ("every tool", "never sleeps"). */
+export function settingsOf(cfg: OrgConfig, name: string): AgentDefaults {
+  const { identity: _identity, principals: _principals, ...own } = cfg.agents[name] ?? {};
+  return { ...cfg.shared.agents, ...own };
+}
+
+/** A connector's knobs, off the org as it stands: its scope over its spec's defaults —
+ *  an unknown key errors, and each `check` runs. `label` names where the org was read. */
+export function knobsOf<T extends object>(cfg: OrgConfig, spec: ConnectorSpec, label: string): T {
   const merged = mergeSection(
     cfg.connections[spec.name] ?? {},
     spec.entries,
-    path,
+    label,
     `connections.${spec.name}`,
   );
   for (const e of spec.entries) {
     const complaint = e.check?.(merged[e.key]);
     if (complaint) {
       throw new Error(
-        `${path}: connections.${spec.name}.${e.key} ${complaint} (got ` +
+        `${label}: connections.${spec.name}.${e.key} ${complaint} (got ` +
           `${JSON.stringify(merged[e.key])})`,
       );
     }
@@ -734,77 +845,133 @@ export async function connectorConfig<T extends object>(
   return merged as unknown as T;
 }
 
-/* ── the writers (the setup doors) ───────────────────────────────────────── */
+/* ── the file, rendered ──────────────────────────────────────────────────── */
 
-/** Render the whole catalog with its comments — what `liquen init` writes, once. From then on
- *  the file is the human's and git's, edited only where a door has something to declare
- *  (`declareAgent`, `declareConnection`); boot only reads it. */
-export function materialize(cfg: OrgConfig, specs: ConnectorSpec[] = []): string {
-  const lines: string[] = [
-    "// config.jsonc — the org's declaration: every harness knob (the catalog, DESIGN §9).",
-    "// Only the setup doors write it (`liquen init` materializes it, `liquen agent` adds a roster",
-    "// entry, `liquen connect` declares the connection it just earned) — git is its history,",
-    "// boot compiles it into the registry. A key left out takes its default; an unknown",
-    "// key is a boot error.",
-    "{",
-  ];
-  const emit = (indent: string, entries: Entry[], values: Record<string, unknown>, last = "") => {
-    entries.forEach((e, j) => {
-      lines.push(`${indent}// ${e.doc}`);
-      const comma = j < entries.length - 1 ? "," : last;
-      lines.push(`${indent}"${e.key}": ${JSON.stringify(values[e.key])}${comma}`);
-    });
+/** A value as YAML on one line; a list of mappings as a block, one item a line. */
+function yamlLines(key: string, value: unknown, indent: string): string[] {
+  const flow = (v: unknown) =>
+    stringify(v, { flowLevel: 0, lineWidth: -1, condenseFlow: false }).trimEnd();
+  if (
+    Array.isArray(value) && value.length > 0 &&
+    value.every((v) => typeof v === "object" && v !== null && !Array.isArray(v))
+  ) {
+    return [`${indent}${key}:`, ...value.map((v) => `${indent}  - ${flow(v)}`)];
+  }
+  return [`${indent}${key}: ${flow(value)}`];
+}
+
+/** Render the org as `config.yaml`. With every key `set` and the docs on, the commented
+ *  template `liquen init` lays; with `set` saying which keys the store holds, the store's
+ *  state as `liquen config` prints it: a key set is a line to copy into the file, a key
+ *  inherited is a comment showing the value it resolves to. */
+export function materialize(
+  cfg: OrgConfig,
+  opts: {
+    specs?: ConnectorSpec[];
+    /** Whether the store holds the key; absent ⇒ every key is rendered as set. */
+    set?: (scope: string, key: string) => boolean;
+    /** The catalog's comment over each key and section. */
+    docs?: boolean;
+  } = {},
+): string {
+  const { specs = [], set = () => true, docs = true } = opts;
+  const lines: string[] = docs
+    ? [
+      "# config.yaml — what the org declares: every harness knob (the catalog, DESIGN §9).",
+      "# Boot and `liquen reload` apply it to the store: a key set here overwrites the store's,",
+      "# a key left out keeps the value the store has, and an agent it does not name is left",
+      "# alone. No command writes this file: `liquen agent` and `liquen connect` write the",
+      "# store, and `liquen config` prints its state to copy from. An unknown key is a boot",
+      "# error.",
+      "",
+    ]
+    : [];
+  const emit = (
+    indent: string,
+    scope: string,
+    entries: Entry[],
+    values: Record<string, unknown>,
+  ) => {
+    for (const e of entries) {
+      if (docs) lines.push(...wrap(e.doc, indent));
+      const rendered = yamlLines(e.key, values[e.key], indent);
+      lines.push(...(set(scope, e.key) ? rendered : rendered.map((l) => comment(l, indent))));
+    }
   };
-  lines.push(`  // ${SECTION_DOCS.system}`, `  "system": {`);
-  emit("    ", SYSTEM, cfg.system as unknown as Record<string, unknown>);
-  lines.push("  },");
-  lines.push(`  // ${SECTION_DOCS.deployment}`, `  "deployment": {`);
-  emit("    ", DEPLOYMENT, cfg.deployment as unknown as Record<string, unknown>);
-  lines.push("  },");
-  lines.push(`  // ${SECTION_DOCS.shared}`, `  "shared": {`);
-  emit("    ", SHARED, cfg.shared as unknown as Record<string, unknown>, ",");
-  lines.push(
-    `    // every agent's defaults — an agents.<name> entry re-declares these, key by key`,
-  );
-  lines.push(`    "agents": {`);
-  emit("      ", AGENT, cfg.shared.agents as unknown as Record<string, unknown>);
-  lines.push("    }", "  },");
-  lines.push(`  // ${SECTION_DOCS.processors}`, `  "processors": {`);
-  emit("    ", PROCESSORS, cfg.processors as unknown as Record<string, unknown>);
-  lines.push("  },");
-  lines.push(`  // ${SECTION_DOCS.edge}`, `  "edge": {`);
-  emit("    ", EDGE, cfg.edge as unknown as Record<string, unknown>);
-  lines.push("  },");
-  lines.push(`  // ${SECTION_DOCS.agents}`, `  "agents": {`, `    // ${IDENTITY_DOC}`);
-  const agents = Object.entries(cfg.agents);
-  agents.forEach(([name, entry], i) => {
-    const body = JSON.stringify(entry, null, 2).replaceAll("\n", "\n    ");
-    lines.push(`    "${name}": ${body}${i < agents.length - 1 ? "," : ""}`);
-  });
-  lines.push("  },");
-  lines.push(`  // ${SECTION_DOCS.connections}`, `  "connections": {`);
+  const section = (name: string) => {
+    if (docs) lines.push(...wrap(SECTION_DOCS[name], ""));
+    lines.push(`${name}:`);
+  };
+  const plain = cfg as unknown as Record<string, Record<string, unknown>>;
+  for (const name of ["system", "deployment", "shared", "processors", "edge"]) {
+    section(name);
+    const entries = name === "deployment" ? DEPLOYMENT : SCOPES[name];
+    emit("  ", name, entries, plain[name]);
+    if (name === "shared") {
+      if (docs) {
+        lines.push(
+          ...wrap("every agent's defaults — an agents.<name> entry sets these, key by key", "  "),
+        );
+      }
+      lines.push("  agents:");
+      emit("    ", "shared.agents", AGENT, cfg.shared.agents as unknown as Record<string, unknown>);
+    }
+    lines.push("");
+  }
+  if (docs) lines.push(...wrap(SECTION_DOCS.agents, ""), ...wrap(IDENTITY_DOC, ""));
+  lines.push(Object.keys(cfg.agents).length === 0 ? "agents: {}" : "agents:");
+  for (const [name, entry] of Object.entries(cfg.agents)) {
+    const { identity = {}, principals, ...over } = entry;
+    lines.push(`  ${name}:`, "    identity:");
+    for (const key of IDENTITY_KEYS) lines.push(...yamlLines(key, identity[key] ?? null, "      "));
+    if (principals !== undefined) lines.push(...yamlLines("principals", principals, "    "));
+    for (const e of AGENT) {
+      if (e.key in over) {
+        lines.push(...yamlLines(e.key, (over as Record<string, unknown>)[e.key], "    "));
+      }
+    }
+  }
+  lines.push("");
+  if (docs) lines.push(...wrap(SECTION_DOCS.connections, ""));
+  lines.push(Object.keys(cfg.connections).length === 0 ? "connections: {}" : "connections:");
   const known = Object.fromEntries(specs.map((s) => [s.name, s]));
-  const names = Object.keys(cfg.connections);
-  names.forEach((name, i) => {
-    const body = cfg.connections[name];
+  for (const [name, body] of Object.entries(cfg.connections)) {
     const spec = known[name];
-    if (spec) lines.push(`    // ${spec.doc}`);
-    lines.push(`    "${name}": {`);
-    const keys = spec ? spec.entries.map((e) => e.key) : Object.keys(body);
-    keys.forEach((key, j) => {
+    if (docs && spec) lines.push(...wrap(spec.doc, "  "));
+    const keys = Object.keys(body);
+    if (keys.length === 0) lines.push(`  ${name}: {}`);
+    else lines.push(`  ${name}:`);
+    for (const key of keys) {
       const doc = spec?.entries.find((e) => e.key === key)?.doc;
-      if (doc) lines.push(`      // ${doc}`);
-      lines.push(`      "${key}": ${JSON.stringify(body[key])}${j < keys.length - 1 ? "," : ""}`);
-    });
-    lines.push(`    }${i < names.length - 1 ? "," : ""}`);
-  });
-  lines.push("  }", "}", "");
+      if (docs && doc) lines.push(...wrap(doc, "    "));
+      lines.push(...yamlLines(key, body[key], "    "));
+    }
+  }
+  lines.push("");
   return lines.join("\n");
 }
 
+const WIDTH = 92;
+
+/** A line as a comment, at its own indent. */
+const comment = (line: string, indent: string) => `${indent}# ${line.slice(indent.length)}`;
+
+/** A doc as comment lines at `indent`, wrapped. */
+function wrap(doc: string, indent: string): string[] {
+  const out: string[] = [];
+  let line = "";
+  for (const word of doc.split(/\s+/)) {
+    if (line && indent.length + 2 + line.length + 1 + word.length > WIDTH) {
+      out.push(`${indent}# ${line}`);
+      line = word;
+    } else line = line ? `${line} ${word}` : word;
+  }
+  if (line) out.push(`${indent}# ${line}`);
+  return out;
+}
+
 /** The starter every project begins from: the defaults, the machine's clock and locale, an
- *  empty roster and no connections — `liquen agent` and `liquen connect` fill those in, one
- *  line each. */
+ *  empty roster and no connections — `liquen agent` and `liquen connect` fill the store. */
 export function starterConfig(): OrgConfig {
   const cfg = defaults();
   cfg.shared.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? DEFAULT_TIMEZONE;
@@ -819,274 +986,24 @@ function machineLocale(): string | null {
   return l && !/^(C|POSIX)(\..*)?$/.test(l) ? l : null;
 }
 
-/** Declare `agents.<name>` in the file — the roster entry boot compiles into a registry
- *  row, a home folder and (in the container) a unix user. The identity carries every
- *  handle in view, null where the human declared none, so the file shows what can still
- *  be said about the agent. A name already in the roster is refused: the entry is the
- *  operator's to edit, not a door's to rewrite. */
-export async function declareAgent(
-  root: string,
-  name: string,
-  identity: Identity,
-  rest: Pick<AgentEntry, "principals" | "mind"> = {},
-): Promise<void> {
-  const path = `${root}/config.jsonc`;
-  if (!AGENT_NAME.test(name)) {
-    throw new Error(
-      `agents.${name} — a name is a folder and a unix user: ` +
-        `lowercase letters, digits and dashes, starting with a letter`,
-    );
-  }
-  const before = await readConfig(root); // an unparseable file fails HERE, editing nothing
-  if (name in before.agents) {
-    throw new Error(`${path}: agents.${name} is already in the roster — edit it there`);
-  }
-  for (const p of rest.principals ?? []) {
-    if (!(p in before.agents) && p !== name) {
-      throw new Error(
-        `${path}: principal "${p}" is not in the roster — \`liquen agent ${p}\` first`,
-      );
-    }
-  }
-  const entry: AgentEntry = {
-    identity: Object.fromEntries(IDENTITY_KEYS.map((k) => [k, identity[k] ?? null])),
-    ...(rest.principals ? { principals: rest.principals } : {}),
-    // the one org-wide key every entry carries: a switch someone flips is a knob in view,
-    // never a default the file leaves to be looked up
-    mind: rest.mind ?? true,
-  };
-  const member = `"${name}": ${JSON.stringify(entry, null, 2).replaceAll("\n", "\n    ")}`;
-  await declareIn(root, "agents", member);
-}
-
-/** Declare `connections.<name>` in the file — what a grant needs before `liquen start` will
- *  spawn its process. The connect doors call this the moment a grant lands: the human has
- *  already decided by connecting, and the subsection is written empty so every knob stays
- *  the connector's default until someone edits it. Returns whether it added anything. */
-export async function declareConnection(
-  root: string,
-  name: string,
-  body: Record<string, unknown> = {},
-): Promise<boolean> {
-  const before = await readConfig(root); // an unparseable file fails HERE, editing nothing
-  if (name in before.connections) return false;
-  await declareIn(root, "connections", `"${name}": ${JSON.stringify(body)}`);
-  return true;
-}
-
-/** Take `connections.<name>` out of the file, so `liquen start` spawns nothing for it — the
- *  inverse of `declareConnection`, and as surgical: the member's own lines go, with the
- *  comma its departure leaves dangling, and every other byte stays. Knobs the operator set
- *  under it go too; the file is git-tracked, so the diff keeps them. Returns whether there
- *  was one. */
-export async function undeclareConnection(root: string, name: string): Promise<boolean> {
-  const before = await readConfig(root); // an unparseable file fails HERE, editing nothing
-  if (!(name in before.connections)) return false;
-  const path = `${root}/config.jsonc`;
-  const raw = await Deno.readTextFile(path);
-  const [open, close] = block(raw, "connections", path);
-  const inner = raw.slice(open + 1, close);
-  let key = -1;
-  for (const m of inner.matchAll(new RegExp(`"${name}"\\s*:`, "g"))) {
-    if (depthAt(inner, m.index) === 0) key = m.index;
-  }
-  const brace = inner.indexOf("{", key);
-  if (key < 0 || brace < 0) throw new Error(`${path}: connections.${name} is not an object`);
-  let end = brace;
-  for (let depth = 0; end < inner.length; end++) {
-    if (inner[end] === "{") depth++;
-    else if (inner[end] === "}" && --depth === 0) break;
-  }
-  end++;
-  const comma = /^\s*,/.exec(inner.slice(end));
-  if (comma) end += comma[0].length;
-  // the member's whole lines when it has them to itself, so no blank line is left behind
-  const lineStart = inner.lastIndexOf("\n", key - 1) + 1;
-  const start = inner.slice(lineStart, key).trim() === "" ? Math.max(lineStart - 1, 0) : key;
-  let head = inner.slice(0, start);
-  if (!comma) {
-    // it was the last member: the one before it now is, and carries no comma
-    const lines = head.split("\n");
-    const last = lines.findLastIndex((l) => l.trim() !== "" && !l.trim().startsWith("//"));
-    if (last >= 0) lines[last] = lines[last].replace(/,\s*$/, "");
-    head = lines.join("\n");
-  }
-  const edited = raw.slice(0, open + 1) + head + inner.slice(end) + raw.slice(close);
-  await Deno.writeTextFile(path, edited);
-  try {
-    await readConfig(root);
-  } catch (err) {
-    await Deno.writeTextFile(path, raw);
-    throw err;
-  }
-  return true;
-}
-
-/** Brace depth at `at` within `text`, counted from its start. */
-function depthAt(text: string, at: number): number {
-  let depth = 0;
-  for (let i = 0; i < at; i++) {
-    if (text[i] === "{") depth++;
-    else if (text[i] === "}") depth--;
-  }
-  return depth;
-}
-
-/** The offsets of the braces that open and close a top-level section's block. */
-function block(raw: string, section: string, path: string): [number, number] {
-  const at = topLevel(raw, section);
-  const open = at < 0 ? -1 : raw.indexOf("{", at);
-  if (open < 0) throw new Error(`${path}: no "${section}" section`);
-  let depth = 0, close = open;
-  for (; close < raw.length; close++) {
-    if (raw[close] === "{") depth++;
-    else if (raw[close] === "}" && --depth === 0) break;
-  }
-  if (close === raw.length) throw new Error(`${path}: "${section}" is never closed`);
-  return [open, close];
-}
-
-/** Where `"section":` opens at the file's TOP level — depth one in braces — or -1. The
- *  first match in the file is not it: `"agents":` also names the defaults every agent
- *  inherits, one level down under `shared`. */
-function topLevel(raw: string, section: string): number {
-  for (const m of raw.matchAll(new RegExp(`"${section}"\\s*:`, "g"))) {
-    if (depthAt(raw, m.index) === 1) return m.index;
-  }
-  return -1;
-}
-
-/** `raw` with one rendered member at the tail of its top-level `section`'s block, so the
- *  block reads in the order things were declared and its leading comment stays on top. A
- *  surgical text edit, not a re-render: the file is the operator's, comments and layout
- *  included, so the insertion is the member's own lines inside the existing block, a comma
- *  on the member before it when there is one, and every other byte is left as it was
- *  found. `path` only names the file in a complaint. */
-export function withMember(raw: string, section: string, member: string, path: string): string {
-  const [open, close] = block(raw, section, path);
-  // the comma goes on the last MEMBER line — never on a blank or a comment that trails it
-  const lines = raw.slice(open + 1, close).trimEnd().split("\n");
-  const last = lines.findLastIndex((l) => l.trim() !== "" && !l.trim().startsWith("//"));
-  if (last >= 0) {
-    const line = lines[last];
-    const code = line.slice(0, codeEnd(line)).trimEnd();
-    lines[last] = `${code},${line.slice(code.length)}`;
-  }
-  const body = `${lines.join("\n")}\n    ${member}\n  `;
-  return raw.slice(0, open + 1) + body + raw.slice(close);
-}
-
-/** `raw` without the member `name` of its top-level `section`: the member's own lines go,
- *  and the comma that separated it, every other byte as it was found — `withMember`'s
- *  inverse. `raw` as given when the section has no such member. */
-export function withoutMember(raw: string, section: string, name: string, path: string): string {
-  const [open, close] = block(raw, section, path);
-  const key = [...raw.slice(open, close).matchAll(new RegExp(`"${name}"\\s*:`, "g"))]
-    .map((m) => open + m.index)
-    .find((at) => depthAt(raw, at) === 2);
-  if (key === undefined) return raw;
-  let end = raw.indexOf(":", key) + 1;
-  while (/\s/.test(raw[end])) end++;
-  end = valueEnd(raw, end);
-  const lineStart = raw.lastIndexOf("\n", key) + 1;
-  const from = raw.slice(lineStart, key).trim() === "" ? lineStart : key;
-  let to = end;
-  while (raw[to] === " " || raw[to] === "\t") to++;
-  if (raw[to] === ",") {
-    to++;
-    const rest = raw.indexOf("\n", to);
-    if (rest >= 0 && raw.slice(to, rest).trim() === "") to = rest + 1;
-    return raw.slice(0, from) + raw.slice(to);
-  }
-  // the block's last member: the comma on the member before it goes instead — the last
-  // code on an earlier line, ahead of any comment that trails it
-  let cut = -1;
-  for (let end = from - 1; end > open && cut < 0;) {
-    const start = raw.lastIndexOf("\n", end - 1) + 1;
-    const line = raw.slice(start, end);
-    const code = line.slice(0, codeEnd(line)).trimEnd();
-    if (code.endsWith(",")) cut = start + code.length - 1;
-    else if (code.trim() !== "") break;
-    end = start - 1;
-  }
-  const kept = cut >= 0 ? raw.slice(0, cut) + raw.slice(cut + 1, from) : raw.slice(0, from);
-  const rest = raw.indexOf("\n", to);
-  return kept + raw.slice(rest >= 0 && raw.slice(to, rest).trim() === "" ? rest + 1 : to);
-}
-
-/** Where the JSON value starting at `at` ends: past its closing quote or bracket. */
-function valueEnd(raw: string, at: number): number {
-  if (raw[at] === '"') {
-    for (let i = at + 1; i < raw.length; i++) {
-      if (raw[i] === "\\") i++;
-      else if (raw[i] === '"') return i + 1;
-    }
-    return raw.length;
-  }
-  if (raw[at] !== "{" && raw[at] !== "[") {
-    let i = at;
-    while (i < raw.length && !/[,}\]\n]/.test(raw[i])) i++;
-    return i;
-  }
-  let depth = 0;
-  let quoted = false;
-  for (let i = at; i < raw.length; i++) {
-    const c = raw[i];
-    if (quoted) {
-      if (c === "\\") i++;
-      else if (c === '"') quoted = false;
-    } else if (c === '"') quoted = true;
-    else if (c === "{" || c === "[") depth++;
-    else if ((c === "}" || c === "]") && --depth === 0) return i + 1;
-  }
-  return raw.length;
-}
-
-/** Where a line's code ends: at a `//` that opens a comment — outside any string — or at
- *  the line's end. */
-function codeEnd(line: string): number {
-  let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    if (quoted) {
-      if (line[i] === "\\") i++;
-      else if (line[i] === '"') quoted = false;
-    } else if (line[i] === '"') quoted = true;
-    else if (line[i] === "/" && line[i + 1] === "/") return i;
-  }
-  return line.length;
-}
-
-/** `withMember` on the catalog, parsed before it lands — a write that would not read back
- *  is no write at all. */
-async function declareIn(root: string, section: string, member: string): Promise<void> {
-  const path = `${root}/config.jsonc`;
-  const raw = await Deno.readTextFile(path);
-  await Deno.writeTextFile(path, withMember(raw, section, member, path));
-  try {
-    await readConfig(root);
-  } catch (err) {
-    await Deno.writeTextFile(path, raw);
-    throw err;
-  }
-}
-
 /* ── validation ──────────────────────────────────────────────────────────── */
 
-function parseStrict(raw: string, path: string): unknown {
-  try {
-    const v = parse(raw);
-    if (typeof v !== "object" || v === null || Array.isArray(v)) {
-      throw new Error("an object was expected");
-    }
-    return v;
-  } catch (err) {
-    throw new Error(`${path}: ${err instanceof Error ? err.message : err}`);
-  }
-}
-
-function validateOrg(cfg: OrgConfig, path: string): void {
+/** Whether the org, as it would stand, is one boot can run: every check a key has, each
+ *  agent's own included, and the ones that hold between keys. `path` names where the
+ *  change came from, the file or a command, in the complaint. */
+export function validateOrg(cfg: OrgConfig, path: string): void {
   const prices = checkPrices(cfg.system.prices);
   if (prices) throw new Error(`${path}: system.prices ${prices}`);
+  for (const [name, entry] of Object.entries(cfg.agents)) {
+    const { identity: _identity, principals, ...over } = entry;
+    validateAgent(over, `${path}: agents.${name}`);
+    // a principal is a member (§4): the list can only name who is in the roster
+    for (const p of Array.isArray(principals) ? principals : []) {
+      if (!(p in cfg.agents)) {
+        throw new Error(`${path}: agents.${name}.principals names "${p}", not in the roster`);
+      }
+    }
+  }
   // the pair is checked as each agent resolves it: an entry that re-declares one of the two
   // is held to the org's other
   const org = cfg.shared.agents;
@@ -1124,7 +1041,35 @@ function validateOrg(cfg: OrgConfig, path: string): void {
         `${JSON.stringify(cfg.processors.audio)})`,
     );
   }
-  const where = cfg.deployment;
+  validateDeployment(cfg.deployment, path);
+  const publicUrl = checkPublicUrl(cfg.edge.publicUrl);
+  if (publicUrl) {
+    throw new Error(
+      `${path}: edge.publicUrl ${publicUrl} (got ${JSON.stringify(cfg.edge.publicUrl)})`,
+    );
+  }
+  if (!(Number.isInteger(cfg.edge.port) && cfg.edge.port > 0 && cfg.edge.port < 65536)) {
+    throw new Error(
+      `${path}: edge.port must be a port (1-65535) — a tunnel publishes a number it was ` +
+        `told (got ${JSON.stringify(cfg.edge.port)})`,
+    );
+  }
+  if (cfg.edge.tunnel !== null) {
+    if (checkStrings(cfg.edge.tunnel)) {
+      throw new Error(
+        `${path}: edge.tunnel must be an argv (["cloudflared", "tunnel", "run", "acme"]) ` +
+          `or null (got ${JSON.stringify(cfg.edge.tunnel)})`,
+      );
+    }
+    if (cfg.edge.publicUrl === null) {
+      throw new Error(`${path}: edge.tunnel publishes edge.publicUrl, and publicUrl is null`);
+    }
+  }
+  validateAgent(cfg.shared.agents, `${path}: shared.agents`);
+}
+
+/** The checks of `deployment`, the section read before there is a store to read. */
+function validateDeployment(where: OrgConfig["deployment"], path: string): void {
   const database = checkDatabase(where.database);
   if (database) {
     throw new Error(
@@ -1156,30 +1101,6 @@ function validateOrg(cfg: OrgConfig, path: string): void {
   }
   const mounts = checkMounts(where.mounts);
   if (mounts) throw new Error(`${path}: deployment.mounts ${mounts}`);
-  const publicUrl = checkPublicUrl(cfg.edge.publicUrl);
-  if (publicUrl) {
-    throw new Error(
-      `${path}: edge.publicUrl ${publicUrl} (got ${JSON.stringify(cfg.edge.publicUrl)})`,
-    );
-  }
-  if (!(Number.isInteger(cfg.edge.port) && cfg.edge.port > 0 && cfg.edge.port < 65536)) {
-    throw new Error(
-      `${path}: edge.port must be a port (1-65535) — a tunnel publishes a number it was ` +
-        `told (got ${JSON.stringify(cfg.edge.port)})`,
-    );
-  }
-  if (cfg.edge.tunnel !== null) {
-    if (checkStrings(cfg.edge.tunnel)) {
-      throw new Error(
-        `${path}: edge.tunnel must be an argv (["cloudflared", "tunnel", "run", "acme"]) ` +
-          `or null (got ${JSON.stringify(cfg.edge.tunnel)})`,
-      );
-    }
-    if (cfg.edge.publicUrl === null) {
-      throw new Error(`${path}: edge.tunnel publishes edge.publicUrl, and publicUrl is null`);
-    }
-  }
-  validateAgent(cfg.shared.agents, `${path}: shared.agents`);
 }
 
 /** What `edge.publicUrl` may hold: null, or an https:// base — an origin, or an origin

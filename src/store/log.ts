@@ -63,7 +63,8 @@ import {
   RELEASE_SQL,
   sqliteLeases,
 } from "./lock.ts";
-import { AGENTS_DDL, createRegistry, type Registry } from "./agents.ts";
+import { AGENTS_DDL, AGENTS_TRIGGER, createRegistry, type Registry } from "./agents.ts";
+import { CREDENTIALS_DDL } from "./credentials.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
 import { type Connections, CONNECTIONS_DDL, createConnections, UNPREFIX } from "./connections.ts";
 import { createGates, type Gates, GATES_DDL } from "./gates.ts";
@@ -451,7 +452,8 @@ export async function openLog(
   // Every child opens it at the same instant, and the first to open a WAL left by an
   // unclean stop replays it under a lock: the check waits that out like any read, and a
   // lock still held past the wait is a fault the supervisor retries, never corruption.
-  db.exec("PRAGMA busy_timeout=5000;");
+  // the keys that tie a row to its agent are enforced per connection (§9)
+  db.exec("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;");
   let health: string | undefined;
   try {
     health = (db.prepare("PRAGMA quick_check(1)").get() as { quick_check: string }).quick_check;
@@ -470,6 +472,10 @@ export async function openLog(
         `the copy checks out`,
     );
   }
+  // a store with no log yet is made by the DDL below, at the version it creates
+  const made = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events'",
+  ).get() === undefined;
   db.exec(
     `PRAGMA journal_mode=WAL;
      PRAGMA synchronous=NORMAL;
@@ -542,7 +548,10 @@ export async function openLog(
      ${CONNECTIONS_DDL}
      ${GATES_DDL}`,
   );
-  migrate(db); // schema versions below the current one are rewritten in place, exactly once
+  // schema versions below the current one are rewritten in place, exactly once
+  if (made && versionOf(db) === 0) setVersion(db, VERSION);
+  else migrate(db);
+  db.exec(AGENTS_TRIGGER);
   db.exec(ROSTER_VIEWS); // who steers whom, derived: the relations the law joins (§4, §6)
   const connections = createConnections(db); // the gate below reads its table
   const registry = createRegistry(db);
@@ -1064,7 +1073,7 @@ export async function openLog(
  * own id when the wire never named it). One pass in a transaction, gated on PRAGMA
  * user_version, so it runs exactly once per database. */
 function migrate(db: DatabaseSync) {
-  const v = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+  const v = versionOf(db);
   if (v < 1) migrateV1(db);
   if (v < 2) migrateV2(db);
   if (v < 3) migrateV3(db);
@@ -1082,6 +1091,83 @@ function migrate(db: DatabaseSync) {
   if (v < 15) migrateV15(db);
   if (v < 16) migrateV16(db);
   if (v < 17) migrateV17(db);
+  if (v < 18) migrateV18(db);
+}
+
+/** The version the DDL creates. */
+const VERSION = 18;
+
+/** The schema's version: the manifest's word, or the engine's own counter on a store made
+ *  before the manifest held it. */
+function versionOf(db: DatabaseSync): number {
+  const row = db.prepare("SELECT value FROM manifest WHERE key = 'schema'").get() as
+    | { value: string }
+    | undefined;
+  if (row) return Number(row.value);
+  return (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+}
+
+function setVersion(db: DatabaseSync, v: number) {
+  db.prepare(
+    `INSERT INTO manifest (key, value) VALUES ('schema', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(String(v));
+}
+
+const columnsOf = (db: DatabaseSync, table: string): Set<string> =>
+  new Set(
+    (db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all() as { name: string }[])
+      .map((c) => c.name),
+  );
+
+/** v18 — the roster is primary (§9). `agents` keeps who exists and who steers, and gains
+ *  the backlog floor, the last one its settings held; the settings themselves are `config`'s,
+ *  set again by the file at this boot. The tables that name an agent take a foreign key to
+ *  it: SQLite adds none in place, so each is rebuilt, less the rows whose agent is gone. */
+function migrateV18(db: DatabaseSync) {
+  // a rebuild renames tables, which the engine refuses to do under enforced keys
+  db.exec("PRAGMA foreign_keys=OFF");
+  try {
+    writing(db, () => {
+      const cols = columnsOf(db, "agents");
+      if (!cols.has("since")) db.exec("ALTER TABLE agents ADD COLUMN since TEXT");
+      if (cols.has("settings")) {
+        db.exec("UPDATE agents SET since = json_extract(settings, '$.since')");
+      }
+      for (const gone of ["settings", "provider", "model", "effort", "runs"]) {
+        if (cols.has(gone)) db.exec(`ALTER TABLE agents DROP COLUMN ${gone}`);
+      }
+      const rebuilt: [string, string, string][] = [
+        [
+          "connections",
+          CONNECTIONS_DDL,
+          "service, address, agent_id, credential_key, extra, created_at, updated_at, deleted_at",
+        ],
+        [
+          "memberships",
+          CONNECTIONS_DDL,
+          "service, connection_address, conversation_address, agent_id, session_id, created_at, deleted_at",
+        ],
+        ["rules", RULES_DDL, "agent_id, tool, connection, conversation, action, updated_at"],
+        ["credentials", CREDENTIALS_DDL, "key, value, agent_id, extra, created_at, updated_at"],
+      ];
+      for (const [table, ddl, columns] of rebuilt) {
+        const keyed = db.prepare(`SELECT 1 FROM pragma_foreign_key_list('${table}')`).get();
+        if (keyed || columnsOf(db, table).size === 0) continue;
+        db.exec(
+          `DELETE FROM ${table}
+             WHERE agent_id IS NOT NULL AND agent_id NOT IN (SELECT agent_id FROM agents);
+           ALTER TABLE ${table} RENAME TO ${table}_old;
+           ${ddl}
+           INSERT INTO ${table} (${columns}) SELECT ${columns} FROM ${table}_old ORDER BY rowid;
+           DROP TABLE ${table}_old;`,
+        );
+      }
+      setVersion(db, 18);
+    });
+  } finally {
+    db.exec("PRAGMA foreign_keys=ON");
+  }
 }
 
 /** Whether the `events` table has a column: a store the current DDL created lacks the ones

@@ -1,14 +1,15 @@
 /**
  * connect/slack/config.ts — the slack connector's catalog (the config rules, §4):
  * its DEFAULT_s live here and nowhere else, used as argument defaults; the values heal
- * into `data/config.jsonc` under `connections.slack` and are validated at boot.
+ * under `connections.slack` (`config.yaml`, or the store) and are validated at boot.
  *
  * The two scope lists are the ONE source: the app manifest `liquen connect slack app` prints
  * is filled from both (`withScopes`), and the user door asks Slack for exactly the user
  * list (`user_scope`) — so the app you create and the consent you request cannot drift.
  */
 
-import { checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { checkStrings, type ConnectorSpec } from "../../config.ts";
+import { connectorConfig } from "../../org.ts";
 
 /** What either leg reads. A token sees a room only once in it, so reading the roster,
  *  the history and the names of what it is in is the whole job — the four `:read`s are
@@ -98,7 +99,7 @@ export function missingScopes(asked: string[], granted?: string[] | string): str
   return asked.filter((s) => !has.has(s));
 }
 
-/** Read (and heal) `connections.slack` from the org's config.jsonc. */
+/** Read `connections.slack` as the org's store holds it. */
 export function slackConfig(root: string): Promise<SlackConfig> {
   return connectorConfig<SlackConfig>(root, SPEC);
 }

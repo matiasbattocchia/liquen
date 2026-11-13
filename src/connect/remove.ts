@@ -10,8 +10,9 @@
  *                keeps its identity and its readers.
  *   the secret   deleted from the vault — unless another live connection authenticates
  *                with the same one, which keeps it.
- *   the catalog  `connections.<service>` leaves config.jsonc once the service has no live
- *                connection left, so `liquen start` spawns nothing for it.
+ *   the scope    `connections.<service>` leaves the store's configuration once the service
+ *                has no live connection left, so `liquen start` spawns nothing for it. One
+ *                `config.yaml` declares stays: the file is where it is removed.
  *
  * The platform's side stays as it is: the app install, the OAuth grant, the paired device
  * are the platform's to revoke, and the last line says where.
@@ -36,7 +37,8 @@ const REVOKE_AT: Record<string, string> = {
 export interface RemoveDeps {
   store: Pick<Connections, "connections" | "deleteConnections">;
   creds: Pick<Credentials, "list" | "delete">;
-  /** Take `connections.<service>` out of config.jsonc; whether it was there. */
+  /** Take `connections.<service>` out of the store's configuration; whether it was
+   *  there. Throws, in a sentence, when the file declares it. */
   undeclare: (service: string) => Promise<boolean>;
   /** The services a door grants under (`available`). A vault key outside them is the
    *  harness's own — the media signing key — and no target. */
@@ -60,10 +62,15 @@ export async function removeConnection(target: string, deps: RemoveDeps): Promis
       said.push(`its secret ${key} is out of the vault`);
     }
     if (!live.some((r) => r !== row && r.service === row.service)) {
-      if (await deps.undeclare(row.service)) {
-        said.push(
-          `no ${row.service} connection is left — connections.${row.service} is out of config.jsonc`,
-        );
+      try {
+        if (await deps.undeclare(row.service)) {
+          said.push(
+            `no ${row.service} connection is left — connections.${row.service} is no longer declared`,
+          );
+        }
+      } catch (err) {
+        // the file's to remove: its process keeps running until it is
+        said.push(err instanceof Error ? err.message : String(err));
       }
     }
     const where = REVOKE_AT[row.service] ?? "there";

@@ -44,9 +44,14 @@ export interface SandboxAgent {
   session(sessionId: string): SandboxSession;
 }
 
-/** The exec plane's provider. `forAgent` answers for every agent the sandbox was opened
- *  for and refuses any other: a ground is prepared, never improvised. */
+/** The exec plane's provider. `forAgent` answers for every agent whose ground was added
+ *  and refuses any other: a ground is prepared, never improvised. */
 export interface Sandbox {
+  /** Prepare an agent's ground: its folder, `bin/`, its way out through the proxy on this
+   *  machine; its sandbox on the gateway. A ground already there stands. */
+  add(agentId: string): Promise<void>;
+  /** Take an agent's ground away: its shells' jobs ended, and no one else's. */
+  remove(agentId: string): Promise<void>;
   forAgent(agentId: string): SandboxAgent;
   /** Stop the proxy, and with `jobs: "end"` kill every shell's jobs (the org was stopped);
    *  else leave them running for the next harness to adopt (§9). */
@@ -70,8 +75,9 @@ export interface SessionUpdate extends ShellUpdate {
 export interface LocalSandboxOptions {
   /** The org's store: the proxy fronts the vault's credential rows. */
   store: Store;
-  /** The agents that run: each gets a ground under `<dir>/agents/<id>`. */
-  agents: string[];
+  /** Agents whose ground is prepared as the sandbox opens; any other is added as it
+   *  comes up (`add`). */
+  agents?: string[];
   /** The org's locale, issued into user space under the names every program reads (§9):
    *  the shell speaks the org's language, and a script the agent runs by hand does too.
    *  Null is the catalog's word for none. */
@@ -81,9 +87,9 @@ export interface LocalSandboxOptions {
   timezone?: string | null;
   /** The `system.bashWaitMs` knob: how long a call is waited on by default. */
   bashWaitMs?: number;
-  /** Each agent's `export` knob: the variables of this process's environment its shells
-   *  inherit, read at each call. One the environment does not hold is not issued. */
-  exports?: Record<string, string[]>;
+  /** An agent's `export` knob, asked at each call: the variables of this process's
+   *  environment its shells inherit. One the environment does not hold is not issued. */
+  exports?: (agentId: string) => string[];
   /** Where every shell tells what its calls do after their answers (late.ts), with the
    *  session whose shell it is. */
   tell?: (u: SessionUpdate) => void;
@@ -105,11 +111,11 @@ export async function openLocalSandbox(
   dir: string,
   {
     store,
-    agents,
+    agents = [],
     locale,
     timezone,
     bashWaitMs,
-    exports = {},
+    exports = () => [],
     tell,
     bubble,
     mounts = [],
@@ -121,10 +127,11 @@ export async function openLocalSandbox(
   const storage = store.storage();
   const localeEnv = orgEnv(locale, timezone);
   const grounds = new Map<string, ExecGround>();
-  for (const agentId of agents) {
+  const add = async (agentId: string) => {
+    if (grounds.has(agentId)) return;
     const exported = () =>
       Object.fromEntries(
-        (exports[agentId] ?? []).flatMap((name) => {
+        exports(agentId).flatMap((name) => {
           const v = Deno.env.get(name);
           return v === undefined ? [] : [[name, v]];
         }),
@@ -136,8 +143,11 @@ export async function openLocalSandbox(
     });
     const bubbled = bubble ? () => openBubble({ dir, agentId, mounts }) : undefined;
     grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashWaitMs, bubbled));
-  }
+  };
+  for (const agentId of agents) await add(agentId);
   const shells = new Map<string, ExecPlane>();
+  /** The shells of one agent's sessions, by their key. */
+  const shellsOf = (agentId: string) => [...shells].filter(([key]) => key.endsWith(`@${agentId}`));
   const homeOf = (agentId: string) => `${dir}/agents/${agentId}`;
   const filesOf = (agentId: string, shell: ExecPlane): Files => {
     const home = homeOf(agentId);
@@ -148,6 +158,17 @@ export async function openLocalSandbox(
     }, storage);
   };
   return {
+    add,
+    async remove(agentId) {
+      const ground = grounds.get(agentId);
+      if (!ground) return;
+      const mine = shellsOf(agentId);
+      await closeShells(mine.map(([, shell]) => shell), "end");
+      for (const [key] of mine) shells.delete(key);
+      await ground.close("end");
+      grounds.delete(agentId);
+      await proxy.forget(agentId);
+    },
     forAgent(agentId) {
       const ground = grounds.get(agentId);
       if (!ground) throw new Error(`agent ${agentId}: no ground prepared in this sandbox`);
@@ -179,8 +200,6 @@ export interface CloudflareSandboxOptions {
   token: string;
   /** Where a file the agent attaches is kept. */
   storage: Storage;
-  /** The agents that run: each gets a sandbox of its own. */
-  agents: string[];
   locale?: string | null;
   timezone?: string | null;
   bashWaitMs?: number;
@@ -221,17 +240,27 @@ const REMOTE_ENV: Record<string, string> = {
  *  object store. Closing ends or leaves every shell's jobs, and leaves the sandboxes to the
  *  gateway's sleep. */
 export function openCloudflareSandbox(
-  { url, token, storage, agents, locale, timezone, bashWaitMs, sleepMinutes, tell }:
+  { url, token, storage, locale, timezone, bashWaitMs, sleepMinutes, tell }:
     CloudflareSandboxOptions,
 ): Sandbox {
   const env = { ...REMOTE_ENV, ...orgEnv(locale, timezone) };
   const minutes = sleepMinutes ?? DEFAULT_SANDBOX_SLEEP_MINUTES;
-  const sandboxes = new Map(agents.map((id) => {
-    const gateway = gatewayFor(url, token, sandboxIdOf(id), minutes);
-    return [id, { gateway, lease: lease(gateway, minutes) }];
-  }));
+  const sandboxes = new Map<string, { gateway: Gateway; lease: ReturnType<typeof lease> }>();
   const shells = new Map<string, ExecPlane>();
   return {
+    add(agentId) {
+      if (!sandboxes.has(agentId)) {
+        const gateway = gatewayFor(url, token, sandboxIdOf(agentId), minutes);
+        sandboxes.set(agentId, { gateway, lease: lease(gateway, minutes) });
+      }
+      return Promise.resolve();
+    },
+    async remove(agentId) {
+      const mine = [...shells].filter(([key]) => key.endsWith(`@${agentId}`));
+      await closeShells(mine.map(([, shell]) => shell), "end");
+      for (const [key] of mine) shells.delete(key);
+      sandboxes.delete(agentId);
+    },
     forAgent(agentId) {
       const sandbox = sandboxes.get(agentId);
       if (!sandbox) throw new Error(`agent ${agentId}: no sandbox opened for it`);
@@ -291,12 +320,14 @@ export function openCloudflareSandbox(
  *  reaches the fronted hosts too. Which placeholders ride is the VAULT's say, not this
  *  file's: a credential row that declares `extra.env` (the connect doors write it) is
  *  fronted under that var as `sentinel-<VAR>`, and which row fronts which agent is
- *  `frontedFor` — the org's, or the agent's own, never a peer's. The proxy URL names the
+ *  `frontedFor` — the agent's own, else the org's, never a peer's. The proxy URL names the
  *  agent by a nonce of its own, so the agent and the variable pick exactly one grant, and
  *  every audit line's agent is the caller. Node's `fetch` reads the proxy settings only
  *  under `NODE_USE_ENV_PROXY`, so the shells carry it. */
 interface ProxyHandle {
   env: (agentId: string) => Promise<Record<string, string>>;
+  /** An agent's nonce, gone: nothing it left running reaches the proxy as it. */
+  forget(agentId: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -454,6 +485,12 @@ async function installProxy(dir: string, store: Store): Promise<ProxyHandle> {
       }
       said.set(agentId, keys);
       return env;
+    },
+    async forget(agentId) {
+      said.delete(agentId);
+      if (!Object.hasOwn(state.nonces, agentId)) return;
+      delete state.nonces[agentId];
+      await save();
     },
     async close() {
       await proxy.shutdown();

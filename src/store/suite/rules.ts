@@ -1,11 +1,12 @@
 import { assertEquals } from "@std/assert";
-import type { Substrate } from "./mod.ts";
+import { cast, type Substrate } from "./mod.ts";
 
 export function rulesSuite(s: Substrate): void {
   Deno.test("standing rules: upsert by scope, most specific first, newest replaces", async () => {
     const store = await s.fresh();
     const log = await store.open();
     try {
+      await cast(log);
       await log.remember({ agentId: "a1", tool: "send", action: "allow" });
       await log.remember({ agentId: "a1", tool: "send", action: "allow", connection: "T042" });
       await log.remember({

@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import type { Log } from "../log.ts";
 import type { Draft, Event, MessageEvent } from "../../types.ts";
-import { type Substrate, withStore } from "./mod.ts";
+import { cast, type Substrate, withStore } from "./mod.ts";
 
 export function logSuite(s: Substrate): void {
   function msg(id: string, conversation: string, text: string, sender?: string): MessageEvent {
@@ -576,6 +576,7 @@ export function logSuite(s: Substrate): void {
       await assertRejects(() => log.publish(slack), Error, "connection not registered");
       assertEquals((await log.read()).length, 0);
 
+      await cast(log);
       await log.upsertConnections([{ service: "slack", address: "T1:U7", agentId: "matias" }]);
       await log.publish(slack); // the grant opens the log
 
@@ -844,6 +845,7 @@ export function logSuite(s: Substrate): void {
 
   Deno.test("an agent's message bound for a wire is born queued; the mind's local traffic and the world's rows are not", async () => {
     await withLog(async (log) => {
+      await cast(log);
       await log.upsertConnections([{ service: "slack", address: "T1", agentId: "ana" }]);
       const wire = (over: Partial<MessageEvent>): Draft<MessageEvent> => ({
         ts: "2026-07-16T00:00:00Z",

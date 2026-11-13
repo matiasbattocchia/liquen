@@ -3,6 +3,7 @@ import { decodeBase64, encodeBase64 } from "@std/encoding/base64";
 import { createOutlookPoller, FOLDERS, moveOf, outlookSend, parseMessage } from "./mail.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
+import { membersAt } from "../../testing.ts";
 import type { Appender, Reader } from "../../store/log.ts";
 import type { Draft, Event, FilePart, MessageEvent, RoomPart } from "../../types.ts";
 import type { SaveFile } from "../mail.ts";
@@ -28,6 +29,7 @@ async function withVault(
   scope = "User.Read Calendars.ReadWrite Mail.Read Mail.Send",
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
+  await membersAt(dir, "ana", "bo");
   const creds = await openCredentials(dir);
   try {
     await creds.put({

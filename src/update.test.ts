@@ -1,6 +1,14 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import { parse } from "@std/jsonc";
-import { linked, PACKAGE, packageCommands, pinned, scaffoldTasks, syncTasks } from "./update.ts";
+import {
+  linked,
+  PACKAGE,
+  packageCommands,
+  parseUpdateArgs,
+  pinned,
+  scaffoldTasks,
+  syncTasks,
+} from "./update.ts";
 
 Deno.test("syncTasks: what the org lacks is added in its own lines; what it has stays its own", async () => {
   const tmp = Deno.makeTempDirSync();
@@ -126,6 +134,32 @@ Deno.test("syncTasks: a package task whose command the release no longer has goe
   } finally {
     Deno.removeSync(tmp, { recursive: true });
   }
+});
+
+Deno.test("liquen update: each choice names its docs, as they lie under data/system; bare, every doc it fits", () => {
+  assertEquals(parseUpdateArgs([]), { sync: false, chosen: {} });
+  assertEquals(parseUpdateArgs(["--keep"]), { sync: false, chosen: { keep: [] } });
+  assertEquals(
+    parseUpdateArgs([
+      "--sync",
+      "--replace",
+      "tools/bash",
+      "system/tools/send.md",
+      "--restore",
+      "--beside",
+      "skills/workflows",
+    ]),
+    {
+      sync: true,
+      chosen: {
+        replace: ["tools/bash", "tools/send"],
+        restore: [],
+        beside: ["skills/workflows"],
+      },
+    },
+  );
+  assertThrows(() => parseUpdateArgs(["tools/bash"]), Error, "unknown argument tools/bash");
+  assertThrows(() => parseUpdateArgs(["--tasks"]), Error, "unknown argument --tasks");
 });
 
 Deno.test("the release's commands are its manifest's exports, by subpath", async () => {

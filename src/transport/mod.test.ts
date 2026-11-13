@@ -15,6 +15,7 @@ import {
   warmth,
 } from "./mod.ts";
 import { openCredentials } from "../store/credentials.ts";
+import { membersAt } from "../testing.ts";
 import { retryable } from "../nu.ts";
 import type { Delta } from "../types.ts";
 
@@ -181,6 +182,7 @@ const answer = async (t: ModelTransport) => (await t(REQUEST)).id;
 
 Deno.test("transports: the vault's key, the agent's own before the org's, read at every call", async () => {
   const dir = await Deno.makeTempDir();
+  await membersAt(dir, "a", "ana");
   const creds = await openCredentials(dir);
   try {
     const { built, make } = recorder();

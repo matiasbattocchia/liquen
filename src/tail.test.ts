@@ -129,11 +129,12 @@ Deno.test({
   sanitizeOps: false,
   async fn() {
     const { start } = await import("./main.ts");
-    const { readConfig } = await import("./config.ts");
     const { scripted, canned } = await import("./testing.ts");
     const root = await Deno.makeTempDir();
-    await Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ agents: { ana: {} } }));
-    const catalog = await readConfig(root);
+    await Deno.writeTextFile(
+      `${root}/config.yaml`,
+      "shared:\n  agents:\n    model: claude-x\n    maxTokens: 1024\nagents:\n  ana: {}\n",
+    );
     const { transport } = scripted([
       canned([{ kind: "tool_use", name: "search", input: { query: "x" } }], "tool_use", {
         input_tokens: 70,
@@ -142,7 +143,7 @@ Deno.test({
       canned([{ kind: "assistant", text: "nada" }], "end_turn"),
     ]);
     const main = await start(
-      { dir: `${root}/data`, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 },
+      { dir: `${root}/data`, root, debounceMs: 0 },
       { transport },
     );
     const child = new Deno.Command(Deno.execPath(), {

@@ -16,7 +16,7 @@
  */
 
 import { openStore } from "../store/mod.ts";
-import { findRoot, orgFlag } from "../config.ts";
+import { findRoot, orgFlag, orgOf, parseDeclared, settingsOf } from "../config.ts";
 import { entry } from "../entry.ts";
 import { helpFlag } from "./help.ts";
 import type { Log } from "../store/log.ts";
@@ -120,15 +120,19 @@ export async function statusOf(log: Log, creds: Credentials): Promise<OrgStatus>
         : null,
     });
   }
+  // each agent's settings as they resolve now: its own scope over the org's
+  const org = orgOf(parseDeclared("", "").deployment, await log.config(), agents);
   return {
-    agents: agents.map((a) => ({
-      agent: a.agentId,
-      mind: a.mind,
-      ...Object.fromEntries(
-        (["provider", "model", "effort", "email", "phone"] as const)
-          .filter((k) => a[k]).map((k) => [k, a[k] as string]),
-      ),
-    })),
+    agents: agents.map((a) => {
+      const { provider, model, effort } = settingsOf(org, a.agentId);
+      const said = { provider, model, effort, email: a.email, phone: a.phone };
+      return {
+        agent: a.agentId,
+        mind: a.mind,
+        ...(a.runs === false ? { paused: "yes" } : {}),
+        ...Object.fromEntries(Object.entries(said).filter(([, v]) => v) as [string, string][]),
+      };
+    }),
     connections: (await log.connections()).map((c) => ({
       service: c.service,
       address: c.address,
@@ -172,7 +176,7 @@ if (import.meta.main) {
         console.log(JSON.stringify(s, null, 2));
         return;
       }
-      console.log("agents (the registry — folders + config.jsonc declare, table mirrors):");
+      console.log("agents (the roster, each with the settings it resolves to):");
       for (const a of s.agents) {
         const { agent, mind, ...opts } = a;
         const said = Object.entries(opts).map(([k, v]) => `${k}=${v}`).join("  ");

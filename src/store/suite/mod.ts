@@ -31,6 +31,17 @@ export interface Store {
   drop(): Promise<void>;
 }
 
+/** The agents the suites' rows name, as rows of the roster where they are not yet: a
+ *  connection, a membership, a key or a verdict needs its agent to exist. */
+export async function cast(log: Log): Promise<void> {
+  const have = new Set((await log.agents()).map((a) => a.agentId));
+  await log.putAgents(
+    ["a1", "ana", "bo", "cy", "matias", "sonar", "ventas"]
+      .filter((id) => !have.has(id))
+      .map((agentId) => ({ agentId, mind: `mind@${agentId}` })),
+  );
+}
+
 /** A store, opened once, for the length of `fn`. */
 export async function withStore(
   s: Substrate,

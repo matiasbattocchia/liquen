@@ -37,7 +37,8 @@
 
 import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
-import { findRoot, orgFlag, readConfig } from "../../config.ts";
+import { findRoot, orgFlag } from "../../config.ts";
+import { readConfig } from "../../org.ts";
 import { callbackAddress, ingestAddress, reachLine } from "../../edge.ts";
 import { declared, printNext, requireEdge } from "../declare.ts";
 import {
@@ -195,11 +196,13 @@ if (import.meta.main) {
         if (!(SERVICE in connections)) await declared(root, SPEC);
         const { seedSkill } = await import("../../store/seed.ts");
         const docs = await store.docs();
+        const log = await store.log();
         try {
-          if (await seedSkill(docs.bed, "microsoft-graph")) {
+          if (await seedSkill(docs.bed, log, "microsoft-graph")) {
             console.error(`✓ skill laid: system/skills/microsoft-graph (${docs.on})`);
           }
         } finally {
+          await log.close();
           await docs.close();
         }
         printNext([

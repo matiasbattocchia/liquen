@@ -924,7 +924,7 @@ already replied stays quiet) — observe whether they self-coordinate; patch (as
 ownership) only if double-answers show up.
 
 - **Who a wire address IS — two homes (decided 2026-08-13)**: *declared* handles are
-  registry columns (`agents.email` / `agents.phone`, mirrored from `config.jsonc`, §9) —
+  roster columns (`agents.email` / `agents.phone`, §9) —
   the classifier's lookup is a column scan against the sender address. *Discovered*
   bindings ARE connections: a user grant is its own owned connection whose address
   carries the wire user (`<team>:<user>`, written by the connect flow from `auth.test`),
@@ -991,8 +991,23 @@ it, and conversation identity (§3) says which platforms can host them:
   every agent.
 - **A steering room on an org account** — the org-wide shape, and the one an account
   several agents share can host: a room where being in it is being a principal, so
-  whoever writes there steers. It is recorded on the connection (`extra.mirrors.rooms`,
-  agent → conversation): the connector of a system the org runs writes its own, and the
+  whoever writes there steers. One exception stands by default: a roster member the
+  classifier stamped, who is not among the agent's principals, writes there as another
+  agent among us — the copy keeps who (`extra.via.agent`) and their `/y` settles nothing.
+  `principals: "*"` on the agent lifts it: everyone writing in its steering room steers,
+  a member included, recorded as the person they are. `"*"` lives in the mirror alone —
+  the `principals` view gives it no rows, so the aliases and the policy built on the view
+  are as `[]` leaves them. The room is recorded on the connection (`extra.mirrors.rooms`,
+  agent → conversation; `extra` merges by RFC 7396 at every depth on both engines, so a
+  route is one upsert that leaves every other agent's room as it was, and `null` takes it
+  out; one room per agent per connection): the connector of a system the org runs writes
+  its own, and may make the agent on the room's first line (`ensureRoute`,
+  `src/connector.ts`: the agent made if missing — its identity every handle the connector
+  knows, nobody steering it unless the connector names someone — then the route, then the
+  poke; the line it publishes next is owed to the agent from its backlog floor, whether
+  main has brought it up yet or not). The person behind such an agent has no Unix login
+  and reaches it through its room: a line there the classifier stamps as the agent itself
+  is its person's, which steers and whose `/y` settles a card. The
   Slack ingest adopts a channel named exactly as an agent that owns no account, the first
   time the bot is met in it — by id, so a rename never moves it — and lets it go when the
   bot is out of the channel. Teams does the same with a group chat by its topic, and with
@@ -1663,7 +1678,7 @@ is the bytes' own, sniffed when the wire labels them `application/octet-stream`.
 URL + token never cross the frontier (§9). Outbound uris are kept, local or public: `send` takes
 `files: string[]` — paths statted broker-side, links kept as-is (no secret in a public
 URL, the frontier rule is untouched). A path is resolved through its links and must land
-inside the agent's own ground — its folder (relative paths are from there), `org/`,
+inside the agent's own ground — its folder (relative paths are from there), `shared/`,
 `system/` — before a byte is read, or name a kept object it may read: the same boundary the agent's uid
 has, kept by the broker, since the broker reads as itself (`FileScope`, xi's `files`
 port; tool-result attachments pass the same check).
@@ -2377,8 +2392,7 @@ scope IS the agent's workspace**: a cloned repo's READMEs have no frontmatter an
 files; the agent's frontmattered notes anywhere in its home are its docs. A doc's `name` is
 its scope-relative path (`instructions`, `skills/workflows`).
 A cascade is a PLACE, so whatever stands in it counts: a symlinked file is a doc and a
-symlinked folder is walked — the seed doc a deployment links to the repo instead of copying
-reads exactly like a copied one, and only a dangling link is nothing.
+symlinked folder is walked, and only a dangling link is nothing.
 
 Registers (same substrate, different rules):
 
@@ -2487,29 +2501,22 @@ longer there matches nothing.
   readable (it is also the trust artifact), every step idempotent. `liquen init` is the
   deterministic core the skill invokes. The core is the package `@liquen/liquen`, named in the org's
   `deno.jsonc` (a checkout stands in through Deno's `links`), kept
-  **template-ready** — seeds live as real files under `src/seed/` (the system ones in the tree they install into, `system/<kind>/<name>.md`, so an org may symlink a system folder at the checkout; the rest flat, `<scope>-<name>.md`), copied write-if-absent
-  into the data root BY THE DOOR THAT DECLARES: `liquen init` lays the org's half
-  (`system/`, `org/`) with the catalog, `liquen agent` lays that agent's
-  (`agents/<name>/`) with its roster entry, and boot lays whatever is still missing — a
-  roster entry typed into `config.jsonc` by hand. Seeding never overwrites and never
-  returns to a folder that exists, which is what lets all three be the same call; the door
-  that names a thing leaves the file to edit, so the persona does not wait on a run to
-  become writable.
+  **template-ready** — seeds live as real files under `src/seed/` (the system ones in the tree they install into, `system/<kind>/<name>.md`; the rest flat, `<scope>-<name>.md`), copied
+  into the data root BY THE DOOR THAT NAMES THE THING: `liquen init` lays the org's half
+  (`system/`, `shared/`) with the catalog, `liquen agent` lays that agent's
+  (`agents/<name>/`) with its row, and boot lays whatever is still missing — an agent the
+  file declares, a system doc a release added. The door that names a thing leaves the
+  file to edit, so the persona does not wait on a run to become writable.
   **Seed vs data is template vs LIVING state**: agents co-author
   the data root at runtime (memories, later skills), so it drifts by design — git sees
   `src/seed/` (the org definition, reproducible; private repo if sensitive), volumes hold
-  `data/`. The unit of if-absent is the FOLDER: an absent doc is an answer — a deployment
-  that emptied `system/skills/` wants none, and no later boot may argue. So a new template
-  reaches new orgs and new agents, not the folders a live org already has; deleting the
-  folder is how an org asks for the set again. A scope's root always stands, so a file
-  there (`instructions.md`, `memories.md`) answers for itself: laid wherever it is absent,
-  and an org that wants none empties it, since a file with no header is no doc.
-  The tool docs are the exception, since a tool's words are its schema's and no tool goes
-  without them: `liquen update` brings them (`bringToolDocs`), laying one that is missing,
-  giving the new words to one still word for word the release the org ran before, and
-  keeping one the org edited, named. Other
-  *edits* to existing seeds reach live orgs only via an explicit migration action
-  (future, ⟺ db migration — on Postgres seeding IS an INSERT-if-absent migration). The Docker image is the *deploy* artifact of whichever mode
+  `data/`. The seeds are of two kinds, told apart by whose words they are once laid (the
+  catalog below, "Scaffolding lays the org's files"): a SCAFFOLD (`instructions.md`,
+  `memories.md`, the org's or an agent's) is the org's from that moment, laid wherever it
+  is absent — an org that wants none empties it, since a file with no header is no doc; a
+  SYSTEM DOC is the release's, brought to the org again by every boot and every
+  `liquen update` against the manifest the store keeps, so one the org left alone follows
+  the release and one it edited or deleted is its own until it says otherwise. The Docker image is the *deploy* artifact of whichever mode
   (`deno compile --include src/seed`), not the dev artifact. **Isolation is per
   folder**: all state lives under the project dir (log, locks, docs, keys) — N inits =
   N unrelated orgs, co-runnable on one machine; never write global state. **Deno-less
@@ -2893,8 +2900,8 @@ knowing what was said through it; its `model` · `effort` · `provider` are what
 thinks with for as long as the connection lives — `liquen repl --model … --effort …
 --provider …`, the CLI alike — checked as boot checks the roster, so a provider that cannot
 run the model at that effort refuses the attach, and the hang-up puts the roster's values
-back, the lifetime `cwd` has; `config.jsonc` stays what the daemon thinks with on its
-own). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
+back, the lifetime `cwd` has; the store's settings stay what the daemon thinks with on
+its own). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
 begins, `{status: "idle", after}` when `decide` answers `ignore` — the one fact an attach
 client cannot compute, since only the deciding read runs under the lease. `after` is the
 last event that read saw, so a client that wrote id M knows its line was weighed once
@@ -3148,15 +3155,16 @@ resolution of anything that reads the log, and **what the agent sees is ordered 
   `text` nor `jsonb` holds one. Rows come back as SQLite hands them (JSON as text), so
   both adapters share the row mappers (`src/store/events.ts` and each port's own), and
   the locker is one implementation over each engine's lease rows (`LeaseRows`). Both
-  adapters run the same suites (`src/store/suite/`). The schema carries its version, as
-  the SQLite file carries `user_version`: opening a store behind the code's `VERSION`
+  adapters run the same suites (`src/store/suite/`). The schema carries its version on
+  both engines, in the manifest (`schema`): opening a store behind the code's `VERSION`
   raises it in place under the setup lock, and a store ahead of it is refused as a newer
   liquen's.
-- **`store/agents.ts` (landed 2026-08-04):** the agent registry — each agent's identity,
-  its mind session (`mind`), and declared settings/handles (`provider · model · effort · email · phone`,
-  mirrored from `config.json` — the framework way below). Ingest/dispatch/main all read
-  it; machine-discovered account bindings live on the connections map (§4), keyed to the
-  same registry names. Named `agents` (not `principals`) deliberately — agent↔principal
+- **`store/agents.ts`:** the roster and the org's configuration — `agents`, each agent's
+  identity, its mind session (`mind`), who steers it and its backlog floor; `config`, every
+  setting a leaf; `manifest`, what the org has taken from releases (the catalog below).
+  The tables are primary: a put upserts and never deletes, and `dropAgent` is the one
+  removal, total. Ingest/dispatch/main all read the roster; machine-discovered account
+  bindings live on the connections map (§4), keyed to the same names, by a foreign key. Named `agents` (not `principals`) deliberately — agent↔principal
   is N:M in the limit (an agent managed by many or any principals), so the *agent* is the
   entity. `MainConfig.principals` remains the in-code seam (tests); process
   bootstrap (data dir, API key) stays env — it exists before any substrate is open.
@@ -3329,7 +3337,9 @@ true for exec (kernel handles it), false for control (only harness/human authori
      port are kept beside the CA (`data/system/proxy.json`), so a job that outlives the
      harness reaches the next one at the address it was handed. The agent and the
      variable pick the grant: `frontedFor` fronts at most one row per variable for an
-     agent, so two grants on one host (the org's mailbox and a member's, a bot token and a
+     agent — its own when it holds exactly one, the org's when it holds none and the org
+     exactly one, the order its model keys take (`vaultKeys`): a member who connects a key
+     of their own spends it, and one who has not spends the org's — so two grants on one host (the org's mailbox and a member's, a bot token and a
      user token) stay apart by the variable the agent reached for, and a placeholder for
      a variable the agent is not fronted answers `401`. The proxy terminates ONLY
      the authorities a fronted grant binds — where a placeholder can ride and the swap
@@ -3357,8 +3367,8 @@ true for exec (kernel handles it), false for control (only harness/human authori
      `extra.hosts`; for a service with no connector, the shipped `token` door writes the
      row from a paste — the tool column of the §4 grid, one row and nothing else), main
      fronts what's declared PER AGENT, read off the vault at every spawn so a grant stored
-     while the org runs is in the next command's pocket — the org's row, or the
-     agent's own, never a peer's (`frontedFor`), and the audit's agent is the connection's
+     while the org runs is in the next command's pocket — the agent's own row, else
+     the org's, never a peer's (`frontedFor`), and the audit's agent is the connection's
      — and the swap refuses any dial outside the declaration (so a placeholder can't be
      aimed at an echo endpoint to read the token back). A host in the declaration may carry a port, which then binds that port alone,
      so a grant can name a local service (`localhost:8080`). The proxy fronts credentials
@@ -3517,32 +3527,44 @@ into a sandbox; on files, docs stay files: `$EDITOR`-able, git-able).
 The Docker layout, concretely — one volume, one project, root supervising:
 
 ```
-/app/                        the project, baked into the image: config.jsonc (the
-                             declaration, git-tracked) · connectors/ · processors/ ·
+/app/                        the project, baked into the image: config.yaml (what the
+                             org declares, git-tracked) · connectors/ · processors/ ·
                              entrypoint.sh — /app/data is a symlink to /data
 /data/                       the single volume: the org's living state
   log/                       root:root 0700 — the substrate; no agent reads it directly
-  org/                       root:agents 2775 + default ACL — the shared floor
-  system/                    read-only for everyone — the harness's docs
+  shared/                    root:agents — the shared floor: folders 2775, files g+rw,
+                             and a default ACL giving the group rwX
+  system/                    read-only for everyone — the harness's docs; ca.key, the
+                             egress CA's key, root's alone, 0600
   agents/<name>/             <name>:agents 0700 — personal, invisible to peers
-/home/<name> → /data/agents/<name>    the entrypoint's symlink: $HOME IS the workspace
+/home/<name> → /data/agents/<name>    $HOME IS the workspace
 ```
 
-The entrypoint materializes the roster as LINUX USERS — uid pinned by name-hash so volume
-ownership survives rebuilds and roster edits — lays the symlinks and the permission sweep,
-and execs `liquen start`; bash spawns drop to the agent's own uid (exec/bash.ts), so the
-kernel enforces the classification above. What the HARNESS creates inside an agent's
-folder it gives to the agent (exec/user.ts): the seeded docs and `bin/` at plane install,
-an output spill as it lands, and `door.sock` — owned by the agent, mode 0600, so the
-socket a script connects to is its own agent's and no peer holds a bit on it. The image
-carries no state and no secret: `.dockerignore` keeps `data/` and `.env` out of `COPY`,
-and the entrypoint's `/app/data` link refuses a populated folder in its place.
+A harness running as root gives Linux to its agents itself (`src/users.ts`): boot makes
+the `agents` group, then each agent's user, then the owners — a container's `/etc/passwd`
+is made anew at every start, so the users are made from the roster's rows at every boot,
+and one more when an agent is made while the org runs. The uid is pinned by name-hash, so
+ownership on the volume holds across rebuilds. Boot gives the floors their owners before
+anything is laid on them and makes `system/` read-only once everything is; the sweeps are
+recursive, so a boot also mends ownership that drifted. The image holds the tools it runs
+(`groupadd`, `useradd`, `userdel`, `chown`, `chmod`, `setfacl`), and boot refuses, naming
+the tool, when one is missing. Off root — a laptop, bare or in bubbles — there is no user
+to make and none of it runs. The entrypoint links `/app/data` to the volume, does what is
+the org's own, and execs `liquen start`; bash spawns drop to the agent's own uid
+(exec/bash.ts), so the kernel enforces the classification above. What the HARNESS creates
+inside an agent's folder it gives to the agent (exec/user.ts): the seeded docs and `bin/`
+at plane install, an output spill as it lands, and `door.sock` — owned by the agent, mode
+0600, so the socket a script connects to is its own agent's and no peer holds a bit on
+it. The image carries no state and no secret: `.dockerignore` keeps `data/` and `.env`
+out of `COPY`, and the entrypoint's `/app/data` link refuses a populated folder in its
+place.
 
 Local (dev, one user — same shape, no enforcement): `<root>/data/{log/, system/,
-org/, agents/<name>/}` (the vault is a table in `log/log.db`) — `agents/<name>/` plays `/home/<agent>`. **Agents are created "the
-framework way"**: the catalog's `agents` section is the roster — at boot each entry
-compiles into a registry row and a home folder (config → tables → folders; a blank entry
-is a blank agent). The REPL
+shared/, agents/<name>/}` (the vault is a table in `log/log.db`) — `agents/<name>/` plays `/home/<agent>`. **An agent is a row
+of the store's roster** (`agents`, `store/agents.ts`): `liquen agent <name>` makes one, a
+connector makes one for a room it routes, and `config.yaml` declares the ones a repo wants
+pinned; main brings each row up — its home folder, its ground, its tail of the log — and
+a blank row is a blank agent. The REPL
 principal is the **OS username**, trusted because localhost; when the roster carries that
 name, principal name = agent name and **no identity map is
 needed** — and when they share user/pass, user and agent are one (the vision line). The
@@ -3556,25 +3578,99 @@ Both import one seam module, `src/connector.ts` (log, vault, broker, config, typ
 contract and the per-service map are CONNECTORS.md. The github connector lives in
 `connectors/` as the reference: a custom connector is a swap of places, nothing more.
 **The same framework way extends to settings — the catalog** (`src/config.ts`): every
-harness knob, its default, one file exposing them all. `config.jsonc` sits at the
-PROJECT ROOT — git-tracked, deployed with the image, and the project marker itself:
-`findRoot` walks up from cwd to the nearest one, the way git finds `.git`, and everything
-else (`data/`, the connectors, the processors) is addressed from the root it names — the
-org lives where you run liquen and cwd selects it; `--dir <path>` is the one flag every entry
-point accepts, for an agent that stands in a directory its org does not contain (a repo, a
-task's workdir — `liquen cli` hands the door the cwd it attached from). The file is a DECLARATION,
-written only by the setup doors: `liquen init` materializes the whole catalog with its
-comments and an empty roster, `liquen agent <name>` adds one roster entry — `agents.<name>`
-with the identity handles its flags declared (`--name`, `--email`, `--phone`) and null
-for the rest — and `liquen connect` adds the one line a grant earns — `connections.<name>`, the
-subsection that makes `liquen start` spawn that connector — since the map alone never starts
-a process; `liquen connect --remove` takes it out again with the service's last connection.
-Each of them reloads a running org (`liquen reload`), so what it wrote runs without a stop.
-Git is its history, a human is watching for all three, and boot COMPILES it — the
-roster into registry rows and
-homes, everything else funneled to the deepest function that needs it (main → xi → nu →
-mu). What the system learns at runtime — grants, discovered handles, verdicts — lands in
-the store's tables, never in the file. Its sections are split by AUDIENCE — `system`
+harness knob, its default, one place exposing them all. **The org's configuration lives
+in the store**, in two tables (`store/agents.ts`). `agents` is the roster, the org's
+`/etc/passwd`: who exists and who steers whom — the id, the mind session, `name`, `email`,
+`phone`, `principals`, and the backlog floor, a fact of the agent written once when its
+row is made (that moment less `backlogHours`), so the history a prompt opens on stays put
+and its cache with it. These are the columns SQL joins: the roster views and the ingest
+classifier read them, and policy stands on those views. `config` is `(scope, key, value)`,
+the value JSON, a row per leaf; the scopes are the catalog's sections — `system`,
+`shared`, `shared.agents`, `agents.<name>`, `processors`, `edge`, `connections.<service>`.
+A row present is a key set, no row is a key inherited, and `null` is a value ("every
+tool", "never sleeps"). An agent's setting resolves `agents.<name>` → `shared.agents` →
+the catalog's constant WHEN IT IS READ (`configOf`, runner.ts), so a change to
+`shared.agents` reaches every agent that does not set the key itself; `mind` is a setting
+like the rest, and the `principals` view resolves it with a `coalesce` over `config`. A
+`connections.<service>` scope is that connector's knobs, and its standing in the store is
+what makes `liquen start` spawn the connector.
+
+**`config.yaml` is input only.** It sits at the PROJECT ROOT — git-tracked, deployed with
+the image, and the project marker itself: `findRoot` walks up from cwd to the nearest one,
+the way git finds `.git`, and everything else (`data/`, the connectors, the processors) is
+addressed from the root it names — the org lives where you run liquen and cwd selects it;
+`--dir <path>` is the one flag every entry point accepts, for an agent that stands in a
+directory its org does not contain (a repo, a task's workdir — `liquen cli` hands the door
+the cwd it attached from). `liquen init` lays it once, the catalog as a commented template;
+from then on humans and repos write it, and no command does. Boot and `liquen reload`
+APPLY it to the store (`applyFile`, org.ts): a key the file declares overwrites the
+store's; a key it leaves out keeps the store's value; an agent it does not declare is
+left alone. Taking a key out of the file stops pinning it and resets nothing. So every
+key has one owner — the file when it declares it, a command otherwise — and a command
+that would change a key the file declares refuses: `agents.dubiku.model is declared in
+config.yaml; edit it there`. In a pod, the repo owns what its file declares and the volume
+owns the rest. The org as it would stand is checked whole before a row is written, so a
+file boot cannot run changes nothing. `deployment` is the one section the store cannot
+hold, since it names where the store is: it is read off the file by every process. A
+phone is taken quoted or bare: YAML reads `+549…` as a number, and the catalog takes a
+number there as its digits, which is all a handle is compared by.
+
+**Commands write the store, never the file.** `liquen agent <name>` is an upsert: it makes
+the agent or changes it, a flag per setting (`--model`, `--tools '[send, bash]'`, the value
+read as YAML), `--unset <key>` deleting a row so the key inherits again, `--remove`
+taking the agent out whole; with no name it lists every agent — declared or not, running
+or paused, its last turn. `liquen connect` declares the `connections.<name>` scope a grant
+earns, and `--remove` takes it out with the service's last connection. `liquen config`
+prints the store's state as YAML, read-only: a key the store holds is a line, what a
+person copies into the file to pin; a key it does not is a comment with its default. A
+command, a connector and a tool an agent calls make an agent by one path (`roster.ts`):
+the store function checks and writes — the name a folder and a Unix user can be, no key
+the file declares, every principal a member, the org as it would stand one boot can run,
+the provider able to run the model at its effort — then the row and its `config` scope in
+one transaction, its docs laid beside it. Then the POKE: `POST {agent}` on
+`data/run/main.sock`, which main serves; it reconciles that one agent from its row and
+answers with what it did, or with the sentence it refused on. The socket is the harness's
+own user's, 0600 — root's in a container, where an agent's user cannot connect to it. With
+no main running the rows stand, and the next boot reconciles every row.
+
+**main brings one agent up, down, or onto new settings, and boot is up for each row.**
+Each agent's part is held by agent. UP is its entries and its subscription: its metered
+transport; its mind's runner, in a map the named sessions and `tune` look it up in; its
+ground in the sandbox (`add`: on this machine its folder, `bin/`, its proxy nonce; on the
+gateway its sandbox); the writes that converge — the provider check, the mind's
+membership, its docs, its Unix user and folder when root; its door; its tail of its own
+view of the log, then the trigger-less look at what the log owes it. DOWN is the same,
+undone: it leaves the maps so nothing new starts for it, its subscription and its burst's
+timer go, its turns in flight are waited out, its keeper stops, and the sandbox ends its
+shells and no one else's (`remove`). A command that adds an agent brings it up; one that
+removes it, or pauses it (`mind: false`), brings it down; unpausing brings it up. A change
+of settings is neither: the runner's config and transport are read at every invocation,
+so main replaces them and the next turn runs on them, while one already running finishes
+as it began. Nothing restarts, and no other agent's turn is cut.
+
+**Removal is total, and the database enforces it.** `liquen agent --remove <name>` asks
+main to bring the agent down, deletes it in one transaction (`dropAgent`), then its
+folder and its Unix user. The store's references to an agent are foreign keys, enforced
+on both engines (SQLite's `foreign_keys` on every connection): `memberships`,
+`connections`, `credentials` and `rules` reference `agents` `ON DELETE CASCADE`, so what
+the agent owns goes with its row, its keys and its grants included. A trigger on deleting
+from `agents` refuses while another row's `principals` names the agent, naming who: a key
+cannot point into a JSON array, so the trigger is the `RESTRICT` (an agent naming itself,
+and `"*"`, name no one it waits on). The agent's `config` scope, its docs where they are
+rows, and its turn leases — named for its rooms, which no key can reference — are deleted
+in the same transaction. `events`, `usage` and `egress` are history and reference nothing:
+their `agent_id` stamps stay. Nothing the agent saw leaks by it: with its connection rows
+and memberships gone its traffic is visible through no branch of the law, other agents'
+memberships in shared rooms are their own, and a `mirrors.rooms` entry naming it drops
+out of `aliases` by the join. A name added again is the agent coming back: its mind room
+is `mind@<name>`, the log keeps it, and the new membership grants it whole. An agent the
+file declares is the file's to remove first; out of the file, it is an undeclared agent,
+still running, until the command removes it. An undeclared agent with no turn for 30 days
+(`IDLE_DAYS`, its last `usage` row) is named at boot, one line for all of them.
+
+What the system learns at runtime — grants, discovered handles, verdicts — is rows of the
+store too. Every other knob is funneled to the deepest function that needs it (main → xi →
+nu → mu). The catalog's sections are split by AUDIENCE — `system`
 (machinery tuning, every deployment works on the defaults: bashWaitMs · debounceMs ·
 prices), `deployment` (where the org's parts live: database —
 sqlite is SQLite in `data/log`, a Postgres URL is a schema of that database, its password in
@@ -3586,11 +3682,12 @@ or a gateway, which needs the docs in the database · mounts · sandboxSleepMinu
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
 `shared.agents`, the defaults every agent inherits: model · effort · maxTokens · the
 window, compactAt · keepRecent · provider · tools · rules · the attention knobs · presence), `processors` (media→text commands, §5), `agents`
-(the roster: each entry re-declares `shared.agents` keys sparsely, plus `identity` —
+(the roster: each entry sets `shared.agents` keys sparsely, plus `identity` —
 `name`/`email`/`phone`, the agent's own: the name it goes by and the handles of the
-account it acts as, mirrored into the registry's columns; whether that account is a
+account it acts as, the roster's columns; whether that account is a
 member's or the org's is the connection row's fact, §4 — `principals`, the whole list of
-who steers as roster usernames when the derivation of §4 is not wanted, `[]` for nobody
+who steers as roster usernames when the derivation of §4 is not wanted, `[]` for nobody,
+`"*"` for anyone writing in its steering room
 — and `mind: false`, a member with no agent of their own), and `connections` (one subsection per connector, OWNED by the
 connector: its `config.ts` declares the defaults and validates its subsection through
 `connectorConfig`, so custom connectors configure identically). `rules` is the
@@ -3608,12 +3705,11 @@ table on the log (store/rules.ts), written by standing verdicts — the principa
 card `/{y,n} [once|conv|conn|always|all] [reason]`, and a scope word pins an allow/deny row to where
 that call landed (upserted by scope: a later verdict replaces the action). The gate
 compiles both, remembered first: the principal outranks the base, and among the
-remembered the most specific wins. Same division of labor as the registry — humans write
-config, verdicts write rows, the reader merges. Resolution, most specific wins:
-`agents.<name>` → MainConfig (the process: tests) → `shared.agents` → the catalog's
-constants — a key left out takes its default, and an unknown key or malformed value
-fails the boot loudly: a typo must not run silently, and a silent fallback would run the
-org on settings the human believes overridden. The functions are 100% parametrized —
+remembered the most specific wins: humans set the base, verdicts write rows, the reader
+merges. Resolution, most specific wins: `agents.<name>` → `shared.agents` → the catalog's
+constants — a key nothing sets takes its default, and an unknown key or malformed value
+in the file fails the boot loudly: a typo must not run silently, and a silent fallback
+would run the org on settings the human believes set. The functions are 100% parametrized —
 `start`/`xi`/`nu`/`mu` take values as
 arguments and never read env; their argument defaults are the same exported constants
 (ergonomics for direct callers: tests), so code and file cannot drift. Env is for secrets only
@@ -3701,7 +3797,7 @@ loudly, the same law as an unknown config key.
   silently dead — the failure that reads as a broken agent) is not a representable state.
 - **No dependency order, no readiness probes, no IPC.** The log is the bus; every process
   tails it, so start order is irrelevant. A child finds the org the way every process does
-  (cwd walks up to `config.jsonc`) and env rides through untouched (secrets only).
+  (cwd walks up to `config.yaml`) and env rides through untouched (secrets only).
 - **Death is loud in the run log and nowhere else.** Exits restart with doubling backoff (1s
   → 60s cap, forgiven after a healthy minute); the supervisor never opens the event log. The outer layer
   supervises `liquen start` itself: docker restart policy in the container (run with `--init` so
@@ -3758,20 +3854,24 @@ loudly, the same law as an unknown config key.
   logged once and left down until a reload, because a port already held or a key the file
   got wrong will be held and wrong again a second later. The org keeps running with
   whatever is left, and `liquen start` refuses when nothing is.
-- **The file is read again on a reload, never by itself.** `liquen reload` — and every
-  setup door that writes `config.jsonc` — reads the file, refuses one boot would reject,
-  and asks the supervisor over the run's socket (`data/run/liquen.sock`, src/reload.ts),
-  which reads it again and brings the run in line: each process restarts when the part of
-  the file it reads changed (`reads`, src/start.ts — the shared sections for every liquen
-  process, the roster and the WhatsApp bridge's address for main, the edge and its own
-  section for a connection), a connection declared since starts, one no longer declared
-  stops, and one that refused gets another go, since what it refused over may be what the
-  edit changed. The request also NAMES processes to restart whatever the file says of
-  them, for what a process reads once at boot from elsewhere — the Slack app door names
-  its connection when it has stored a carrier, which the ingest picks off the vault as it
-  starts. The supervisor answers with what moved, so the door or the command says it.
-  Nothing watches the file: a half-made edit restarts nothing, and a file the supervisor
-  cannot take leaves the run as it was. So a connection, a grant or an agent is added to an org that stays up; a stop is
+- **The file is applied again on a reload, never by itself.** Boot is a reload at start.
+  `liquen reload` — and every setup door that wrote the store — reads the file, refuses
+  one boot would reject, and asks the supervisor over the run's socket
+  (`data/run/liquen.sock`, src/reload.ts), which applies it to the store and brings the
+  run in line with what the store then holds: each process restarts when the part of the
+  configuration it reads at its start changed (`reads`, src/start.ts — where the store is,
+  the machinery's knobs and the org's clock for every liquen process, the WhatsApp
+  bridge's address for main too, the edge and its own scope for a connection), a
+  connection declared since starts, one no longer declared stops, and one that refused
+  gets another go, since what it refused over may be what the edit changed. The roster
+  and every agent's settings restart nothing: main is poked, and reconciles each agent
+  from its row while the others run on. The request also NAMES processes to restart
+  whatever the store says of them, for what a process reads once at boot from elsewhere —
+  the Slack app door names its connection when it has stored a carrier, which the ingest
+  picks off the vault as it starts. The supervisor answers with what moved, so the door or
+  the command says it. With no run, `liquen reload` applies the file itself, for the next
+  start to find. Nothing watches the file: a half-made edit restarts nothing, and a file
+  the supervisor cannot take leaves the run as it was. So a connection, a grant or an agent is added to an org that stays up; a stop is
   only ever the operator's own order. What main offers doesn't hang on the file either —
   every service's rooms and address-book ports stand from boot, reached only through an
   account the agent holds — and the grants are the vault's, read at each use.
@@ -3805,10 +3905,48 @@ loudly, the same law as an unknown config key.
   default would resolve BACKWARDS past the release being asked for, and the package alone
   because an org's own dependencies are its business. New code reaches a running org at its
   next boot and never before, so the command says who is running — and an org that LINKS a
-  checkout is refused outright, because it runs that folder's files whatever the lock says,
-  and a version printed about it would not be the code it runs. Either way the org is then
-  synced to the release it runs, as that release (`update --sync <from>`): the tasks it
-  ships, and its tool docs weighed against the words of `<from>`.
+  checkout has no release to move to, because it runs that folder's files whatever the
+  lock says, and a version printed about it would not be the code it runs. Either way the
+  org is then synced to the release it runs, as that release (`update --sync`): the tasks
+  it ships, and the docs under `data/system/` (below).
+- **Scaffolding lays the org's files; updating brings `data/system/`** (store/seed.ts).
+  SCAFFOLDS are the org's from the moment they are laid, and no release touches them
+  again: `shared/instructions.md` and `shared/memories.md`, each agent's
+  `instructions.md` and `memories.md`, `config.yaml`. A new agent starts from the default
+  two, laid where missing, and its principal shapes it from there; what every agent of
+  the org shares is `shared/`'s. SYSTEM DOCS are the release's words, kept as files in
+  `data/system/` where agents read them — `instructions/`, `tools/`, `compaction.md`, the
+  skills shipped and the ones a connector's door lays — and each is brought one by one,
+  so a file a release adds reaches every org. THE MANIFEST is a table of the store,
+  whatever `deployment.docs` says: the schema's version, the release last booted, and per
+  system doc the hash of the release text the org last took or acknowledged. Against it a
+  doc is unedited, edited or deleted, and a release changed it or did not:
+
+  | release | the org's doc | applied by | what happens |
+  |---|---|---|---|
+  | ships it, no row | missing | boot | laid: new in this release |
+  | ships it | as the release's | boot | recorded |
+  | changed it | unedited | boot | replaced |
+  | dropped it | unedited | boot | deleted |
+  | changed it | edited | update | replaced, kept, or the release's laid beside it as `.md.new` |
+  | changed it | deleted | update | laid again, or kept deleted |
+  | dropped it | edited | update | deleted, or kept |
+  | did not change it | edited or deleted | nobody | the org's choice stands |
+
+  One function, `bringSystemDocs`, plans and applies: the unambiguous rows always, each
+  ambiguous one through a `decide` its caller gives. Boot's decides nothing — the doc
+  stays as the org left it, and every boot names the ones unresolved. `liquen update`
+  moves the lock, then runs the same function through the org's import map, so the text it
+  weighs is the new release's; its `decide` asks at a terminal and reads flags without
+  one, printing the flags that settle each doc: `--restore [<doc>…]` lays again what the
+  org deleted, `--replace [<doc>…]` takes the release's words over the org's and deletes
+  what the release dropped, `--beside [<doc>…]` lays the release's text as `<doc>.md.new`,
+  which nothing loads, and `--keep [<doc>…]` takes the org's as acknowledged — the row
+  records the release's hash, and the doc is quiet until a release changes it again. No
+  name means every doc the flag fits. The plan is idempotent, so the order of boot and
+  update is free. An org with docs and no manifest ADOPTS it: each doc that matches the
+  release is recorded as taken, and every other, a missing one included, is the org's
+  choice.
 - **Local dev keeps its inner loop.** `deno task cli` hosts main in-process behind the REPL,
   and `deno task run:<name>` runs one connection alone; `deno task start` is the same
   headless shape a deployment runs.

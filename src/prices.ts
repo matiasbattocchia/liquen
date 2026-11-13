@@ -5,7 +5,7 @@
  * per million tokens. A model's price over time is several rows, so a call is priced at
  * the rate in effect when it was made, and a correction to a row reprices history the
  * next time it is read: nothing priced is ever stored. The package ships `PRICES`, the
- * providers' list prices as their pages state them; `system.prices` in `config.jsonc`
+ * providers' list prices as their pages state them; `system.prices` in `config.yaml`
  * holds an org's own rows (a negotiated rate, a model the list lacks), and an org row in
  * effect wins over the package's.
  *

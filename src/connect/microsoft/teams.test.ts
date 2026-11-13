@@ -26,6 +26,7 @@ import {
 } from "./teams.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
+import { membersAt } from "../../testing.ts";
 import {
   type Appender,
   type DeliveryPatch,
@@ -77,6 +78,7 @@ async function withVault(
   scope = SCOPES,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
+  await membersAt(dir, "ana", "bo");
   const creds = await openCredentials(dir);
   try {
     await creds.put({
@@ -1123,7 +1125,7 @@ async function withOrg(
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
-    await log.syncAgents([
+    await log.putAgents([
       {
         agentId: "ana",
         mind: "mind@ana",
@@ -1131,7 +1133,7 @@ async function withOrg(
         principals: ["ana", "sol", "bo"],
       },
       { agentId: "bo", mind: "mind@bo", email: "bo@contoso.com" },
-      { agentId: "sol", mind: "mind@sol", email: "sol@contoso.com", runs: false },
+      { agentId: "sol", mind: "mind@sol", email: "sol@contoso.com", settings: { mind: false } },
       { agentId: "ventas", mind: "mind@ventas" },
     ]);
     await log.upsertConnections([

@@ -1,11 +1,12 @@
 /**
- * runner: a session built from the store, the row and the host's ports — the row is the
- * config, the seams ride beside it, and a host with no sandbox builds a session with no
- * exec plane.
+ * runner: a session built from the store, the agent's config and the host's ports — the
+ * row and the org's configuration are the config, the seams ride beside it, and a host
+ * with no sandbox builds a session with no exec plane.
  */
 
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { configOf, type Host, runnerFor } from "./runner.ts";
+import { orgOf, parseDeclared } from "./config.ts";
 import { openLog } from "./store/log.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { NOTHING } from "./policy.ts";
@@ -15,13 +16,55 @@ import type { ModelTransport } from "./transport/mod.ts";
 const row: AgentRow = {
   agentId: "ana",
   mind: "mind@ana",
-  model: "claude-x",
-  effort: "low",
   name: "Ana",
-  settings: { maxTokens: 512, tools: ["send"], sleepHours: null },
+  since: "2026-09-25T00:00:00.000Z",
 };
 
-Deno.test("runner: the row is the config, the seams ride beside it, and no sandbox means no exec plane", async () => {
+/** The org over these rows: ana's own settings, the org's for the rest. */
+const org = orgOf(parseDeclared("", "test").deployment, [
+  { scope: "agents.ana", key: "model", value: "claude-x" },
+  { scope: "agents.ana", key: "effort", value: "low" },
+  { scope: "agents.ana", key: "maxTokens", value: 512 },
+  { scope: "agents.ana", key: "tools", value: ["send"] },
+  { scope: "agents.ana", key: "sleepHours", value: null },
+  { scope: "agents.bo", key: "provider", value: "google" },
+  { scope: "agents.bo", key: "model", value: "gemini-x" },
+  { scope: "shared.agents", key: "digestMinutes", value: 7 },
+  { scope: "shared", key: "timezone", value: "Asia/Tokyo" },
+  { scope: "processors", key: "audio", value: "transcribe.sh" },
+], [row, { agentId: "bo", mind: "mind@bo" }]);
+
+Deno.test("configOf: the row's identity and floor, its own settings over the org's, and what the org shares", () => {
+  assertEquals(configOf(row, org, "mind"), {
+    agentId: "ana",
+    sessionId: "mind",
+    model: "claude-x",
+    effort: "low",
+    name: "Ana",
+    maxTokens: 512,
+    tools: ["send"],
+    rules: org.shared.agents.rules,
+    since: "2026-09-25T00:00:00.000Z",
+    timezone: "Asia/Tokyo",
+    engagedMinutes: 15,
+    digestAfterMessages: 25,
+    digestMinutes: 7, // the org's, since ana sets none
+    sleepHours: null, // a value: never sleeps
+    processors: ["audio"],
+    compactAt: 50_000,
+    keepRecent: 20_000,
+    cache: "marked", // the provider's: ana names none, so Anthropic's
+  });
+  // a key the org changes reaches an agent that does not set it, when the config is read
+  const later = orgOf(org.deployment, [
+    { scope: "shared.agents", key: "model", value: "claude-y" },
+    { scope: "shared.agents", key: "tools", value: null },
+  ], [{ agentId: "bo", mind: "mind@bo" }]);
+  const bo = configOf({ agentId: "bo", mind: "mind@bo" }, later, "mind");
+  assertEquals([bo.model, bo.tools, bo.since], ["claude-y", undefined, undefined]);
+});
+
+Deno.test("runner: the config is the session's, the seams ride beside it, and no sandbox means no exec plane", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
   try {
@@ -38,19 +81,9 @@ Deno.test("runner: the row is the config, the seams ride beside it, and no sandb
       onDelta: (agentId, sessionId) => seen.push(`delta ${sessionId}@${agentId}`),
     };
     const gate = () => "allow" as const;
-    const r = runnerFor(host, row, "build", { gate });
-    assertEquals(r.config, {
-      agentId: "ana",
-      sessionId: "build",
-      model: "claude-x",
-      effort: "low",
-      name: "Ana",
-      maxTokens: 512,
-      tools: ["send"],
-      sleepHours: null,
-      cache: "marked", // the provider's: the row names none, so Anthropic's
-      gate,
-    });
+    const config = configOf(row, org, "build");
+    const r = runnerFor(host, config, undefined, { gate });
+    assertEquals(r.config, { ...config, gate });
     assertEquals(r.ports.transport, transport);
     assertEquals(r.ports.exec, undefined);
     assertEquals(r.ports.files, undefined);
@@ -86,7 +119,7 @@ Deno.test("runner: a host with a reach into the docs table gives the session the
       policy: () => ({ using: NOTHING }),
       transport: () => ({} as ModelTransport),
     };
-    const r = runnerFor(host, row, "build");
+    const r = runnerFor(host, configOf(row, org, "build"), undefined);
     assertEquals(Object.keys(r.ports.exec!), ["read", "write", "edit"]);
     assertEquals(asked, ["ana"]);
     assertEquals(
@@ -120,9 +153,13 @@ Deno.test("runner: a mind has a keeper, kept where its provider is Anthropic; a 
         };
       },
     };
-    const mind = runnerFor(host, row, "mind");
-    const gemini = runnerFor(host, { ...row, agentId: "bo", provider: "google" }, "mind");
-    const build = runnerFor(host, row, "build");
+    const mind = runnerFor(host, configOf(row, org, "mind"), undefined);
+    const gemini = runnerFor(
+      host,
+      configOf({ agentId: "bo", mind: "mind@bo" }, org, "mind"),
+      "google",
+    );
+    const build = runnerFor(host, configOf(row, org, "build"), undefined);
     assertEquals(made.map((w) => w.kept), [[true], [false]]);
     assert(mind.warmth !== gemini.warmth);
     assertEquals(build.warmth, undefined);
@@ -132,9 +169,4 @@ Deno.test("runner: a mind has a keeper, kept where its provider is Anthropic; a 
     await log.close();
     await Deno.remove(dir, { recursive: true });
   }
-});
-
-Deno.test("configOf: a row without settings or model is one no session runs on", () => {
-  assertThrows(() => configOf({ ...row, settings: undefined }, "mind"), Error, "no settings");
-  assertThrows(() => configOf({ ...row, model: undefined }, "mind"), Error, "no settings");
 });

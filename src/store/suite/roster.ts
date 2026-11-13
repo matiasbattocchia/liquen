@@ -1,13 +1,19 @@
 import { assertEquals } from "@std/assert";
-import type { AgentRow } from "../agents.ts";
+import type { AgentPut } from "../agents.ts";
 import type { ConnectionRow } from "../connections.ts";
 import { speaksThrough } from "../roster.ts";
 import type { Log } from "../log.ts";
 import { type Substrate, withStore } from "./mod.ts";
 
-export const roster: AgentRow[] = [
+export const roster: AgentPut[] = [
   { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "+54 9 11 555-0001" },
-  { agentId: "sol", mind: "mind@sol", name: "Sol", phone: "549115550002", runs: false },
+  {
+    agentId: "sol",
+    mind: "mind@sol",
+    name: "Sol",
+    phone: "549115550002",
+    settings: { mind: false },
+  },
   {
     agentId: "ventas",
     mind: "mind@ventas",
@@ -28,12 +34,12 @@ export const connections: ConnectionRow[] = [
 export function rosterSuite(s: Substrate): void {
   /** The views, over a store holding these rows. */
   async function withRoster(
-    agents: AgentRow[],
+    agents: AgentPut[],
     rows: ConnectionRow[],
     fn: (log: Log) => Promise<void> | void,
   ): Promise<void> {
     await withStore(s, async (log) => {
-      await log.syncAgents(agents);
+      await log.putAgents(agents);
       await log.upsertConnections(rows);
       await fn(log);
     });
@@ -96,9 +102,9 @@ export function rosterSuite(s: Substrate): void {
   });
 
   Deno.test("slack: the recorded DMs of principals are surfaces of the agent that owns the bot", async () => {
-    const agents: AgentRow[] = [
+    const agents: AgentPut[] = [
       { agentId: "matias", mind: "mind@matias", email: "matias@acme.co" },
-      { agentId: "sol", mind: "mind@sol", email: "sol@acme.co", runs: false },
+      { agentId: "sol", mind: "mind@sol", email: "sol@acme.co", settings: { mind: false } },
       { agentId: "ventas", mind: "mind@ventas", principals: ["matias", "sol"] },
     ];
     const connections: ConnectionRow[] = [

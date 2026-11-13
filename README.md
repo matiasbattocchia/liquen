@@ -36,7 +36,8 @@ instead of `.env`, the org's or one agent's own: `liquen connect ai <provider>`.
 
 ```sh
 liquen repl              # talk to your agent
-liquen agent ana         # add a teammate
+liquen agent ana         # add a teammate; `liquen agent` lists them, `--remove` takes one out
+liquen config            # every setting as it stands
 liquen start -D          # keep the org running in the background
 liquen connect           # list the services you can bring in
 liquen status            # see who and what the org holds
@@ -56,8 +57,9 @@ Each service guides its own setup, and `--help` on any of them explains the rest
 WhatsApp, Teams, Google and Microsoft mail and calendar, GitHub, and any HTTP API by token
 come in the box.
 
-Your org is a folder. `config.jsonc` holds every setting, `.env` the secrets, `data/` the
-living state. Tell your agent who it is in `data/agents/<you>/instructions.md`. It
+Your org is a folder. `config.yaml` declares what you want pinned, `.env` holds the
+secrets, `data/` the living state: `liquen agent` and `liquen connect` write there, and
+`liquen config` prints every setting as it stands. Tell your agent who it is in `data/agents/<you>/instructions.md`. It
 reads the file fresh on every turn.
 
 ## More

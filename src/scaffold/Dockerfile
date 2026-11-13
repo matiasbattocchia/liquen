@@ -3,8 +3,9 @@
 #
 #   docker run --env-file .env -v ./data:/data <image>
 #
-# config.jsonc ships WITH the image (it is the project, git-tracked); data/ is the org's
-# living state and stays on the volume.
+# config.yaml ships WITH the image (it is the project, git-tracked); data/ is the org's
+# living state and stays on the volume: the roster and every knob a command set are rows
+# of the store there, and survive a rebuild.
 FROM denoland/deno:latest
 
 # openssl mints the egress proxy's CA and its leaves; tzdata lets `date` in a shell honor

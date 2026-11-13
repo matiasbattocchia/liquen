@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { init } from "./init.ts";
-import { findRoot, readConfig } from "./config.ts";
+import { findRoot, readFile } from "./config.ts";
 
 Deno.test("init scaffolds a project the reader accepts, roster empty, and refuses to do it twice", async () => {
   const tmp = await Deno.makeTempDir();
@@ -9,10 +9,12 @@ Deno.test("init scaffolds a project the reader accepts, roster empty, and refuse
     await init(path);
     // the catalog is the project marker — findRoot lands on it from anywhere inside
     assertEquals(findRoot({ from: `${path}/data` }), await Deno.realPath(path));
-    const cfg = await readConfig(path);
-    assertEquals(cfg.agents, {}); // `liquen agent` declares each one
-    assertEquals(cfg.connections, {});
-    assert(cfg.shared.timezone.length > 0); // the machine's clock, interviewed for the human
+    const declared = await readFile(path);
+    assertEquals(declared.agents, {}); // `liquen agent` makes each one, in the store
+    assertEquals(declared.leaves.some((l) => l.scope.startsWith("connections.")), false);
+    // the machine's clock, interviewed for the human
+    const zone = declared.leaves.find((l) => l.scope === "shared" && l.key === "timezone");
+    assert(String(zone?.value).length > 0);
     for (
       const f of [
         "Dockerfile",

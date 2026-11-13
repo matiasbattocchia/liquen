@@ -13,7 +13,7 @@ Deno.test("liquen: the org's task, found upward from the cwd or named by --dir",
   const org = `${tmp}/acme`;
   try {
     await Deno.mkdir(`${org}/data`, { recursive: true });
-    await Deno.writeTextFile(`${org}/config.jsonc`, "{}");
+    await Deno.writeTextFile(`${org}/config.yaml`, "{}");
     await Deno.writeTextFile(
       `${org}/deno.jsonc`,
       JSON.stringify({ tasks: { hello: "echo hello" } }),

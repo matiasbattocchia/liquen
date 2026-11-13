@@ -185,12 +185,10 @@ export async function openSqliteDocs(dir: string): Promise<DocTable> {
 
     as: calls,
 
-    laid(scope, owner, folder) {
-      const r = db.prepare(
-        `SELECT EXISTS (SELECT 1 FROM docs WHERE scope = ? AND owner = ?
-           AND substr(name, 1, length(?) + 1) = ? || '/') AS v`,
-      ).get(scope, owner, folder, folder) as { v: number };
-      return Promise.resolve(r.v === 1);
+    drop(scope, owner, name) {
+      const r = db.prepare("DELETE FROM docs WHERE scope = ? AND owner = ? AND name = ?")
+        .run(scope, owner, name);
+      return Promise.resolve(Number(r.changes) > 0);
     },
 
     lay(scope, owner, name, text) {

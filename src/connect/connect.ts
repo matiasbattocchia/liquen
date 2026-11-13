@@ -12,7 +12,8 @@
  * is the same three records whichever door wrote them (`remove.ts`).
  */
 
-import { findRoot, orgFlag, undeclareConnection } from "../config.ts";
+import { findRoot, orgFlag } from "../config.ts";
+import { undeclareConnection } from "../roster.ts";
 import { entry, report } from "../entry.ts";
 import { openStore } from "../store/mod.ts";
 import { moved, reload } from "../reload.ts";
@@ -85,7 +86,7 @@ export function usage(doors: string[]): string {
   <path>        a door by module path (anything with a slash) — the org's own live under
                 <org>/connectors/<name>/connect.ts and are named like the shipped ones
   --remove <t>  take a grant back: a connection or a token as \`liquen status\` prints it.
-                Its secret leaves the vault, and the service leaves config.jsonc with its
+                Its secret leaves the vault, and the service stops being declared with its
                 last connection; the platform keeps its side until revoked there
   --dir <org>   the org, when run from elsewhere`;
 }
@@ -136,7 +137,7 @@ if (import.meta.main) {
   });
 }
 
-/** `--remove`: the grant undone in the store and the catalog, then who still holds it. */
+/** `--remove`: the grant undone in the store, then who still holds it. */
 async function remove(root: string, target: string): Promise<void> {
   const store = await openStore(root);
   const log = await store.log();
@@ -145,7 +146,7 @@ async function remove(root: string, target: string): Promise<void> {
     const said = await removeConnection(target, {
       store: log,
       creds,
-      undeclare: (service) => undeclareConnection(root, service),
+      undeclare: (service) => undeclareConnection(root, log, service),
       services: available(root),
     });
     for (const line of said) console.log(line);

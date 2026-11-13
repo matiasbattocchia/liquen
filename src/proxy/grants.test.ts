@@ -11,11 +11,13 @@ import {
 } from "./grants.ts";
 import { SignedOut } from "../connect/errors.ts";
 import { openCredentials } from "../store/credentials.ts";
+import { membersAt } from "../testing.ts";
 
 async function withVault(
   fn: (creds: Awaited<ReturnType<typeof openCredentials>>) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
+  await membersAt(dir, "ana", "bo");
   const creds = await openCredentials(dir);
   try {
     await fn(creds);
@@ -429,6 +431,20 @@ Deno.test("accessTokenFor: a github user grant with no app to refresh by is null
     });
     assertEquals(await broker.accessTokenFor(broker.issue("github:ana")), null);
   });
+});
+
+Deno.test("frontedFor: an agent's own row wins over the org's for the same var", () => {
+  const rows = [
+    { key: "github:org", extra: { env: "GH_TOKEN" } },
+    { key: "github:ana", agentId: "ana", extra: { env: "GH_TOKEN" } },
+    { key: "crm:bo:1", agentId: "bo", extra: { env: "CRM_TOKEN" } },
+    { key: "crm:bo:2", agentId: "bo", extra: { env: "CRM_TOKEN" } },
+    { key: "crm:org", extra: { env: "CRM_TOKEN" } },
+  ];
+  const keys = (agentId: string) => frontedFor(rows, agentId).map((r) => r.key);
+  assertEquals(keys("ana"), ["github:ana", "crm:org"]);
+  // two of its own contend: the var stays unset, the org's row does not step in
+  assertEquals(keys("bo"), ["github:org"]);
 });
 
 Deno.test("frontedFor: an agent is fronted with the org's rows and its OWN — never a peer's", () => {

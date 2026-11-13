@@ -1,10 +1,12 @@
 import { assertEquals } from "@std/assert";
 import { beat, inboundProbe, linked, rowsOf, setState } from "./health.ts";
 import { type Log, openLog } from "../store/log.ts";
+import { members } from "../testing.ts";
 
 async function withLog(fn: (log: Log) => Promise<void>): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
+  await members(log, "ana");
   try {
     await fn(log);
   } finally {

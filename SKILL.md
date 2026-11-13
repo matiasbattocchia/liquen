@@ -18,7 +18,7 @@ deno run -A jsr:@liquen/liquen/init <org> && cd <org>   # the folder's name is t
 deno task agent <username>                              # the developer's agent, on the roster
 ```
 
-The org is a folder: `config.jsonc` declares it, `data/` fills at first boot, `.env`
+The org is a folder: `config.yaml` declares it, `data/` fills at first boot, `.env`
 carries secrets, and `deno.jsonc` names the package every task runs. `deno install -g -A
 -n liquen jsr:@liquen/liquen/liquen` puts `liquen` on the PATH: `liquen <task>` is
 `deno task <task>` from anywhere inside the org, and every message below names it that way.
@@ -59,8 +59,10 @@ deployment's. Edit the live copies; boot never overwrites. Ask the developer, th
 - Optionally `harness/instruction/principal.md` — the machine contract; edit only if the
   org wants different channel/memory/conduct rules.
 
-Every knob lives in `config.jsonc` at the project root: the model, effort, per-agent
-`compactAt`/`keepRecent`, and the gate policy (default: only `send` is gated). The org is
+Every knob is in the catalog `config.yaml` at the project root lays out: the model,
+effort, per-agent `compactAt`/`keepRecent`, and the gate policy (default: only `send` is
+gated). A key set there is applied at boot and by `liquen reload`; one agent's setting is
+`liquen agent <name> --<setting> <value>`, and `liquen config` prints what the org runs on. The org is
 where you run liquen; `--dir <path>` names it from anywhere else.
 
 ## 5. Hand off

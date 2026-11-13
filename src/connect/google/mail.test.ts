@@ -3,6 +3,7 @@ import { encodeBase64Url } from "@std/encoding/base64url";
 import { createGmailPoller, gmailSend, MAILBOX, parseAddresses, parseMessage } from "./mail.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
+import { membersAt } from "../../testing.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Draft, Event, FilePart, MessageEvent, RoomPart } from "../../types.ts";
 import type { SaveFile } from "../mail.ts";
@@ -30,6 +31,7 @@ async function withVault(
   scope = READ,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
+  await membersAt(dir, "me", "ana");
   const creds = await openCredentials(dir);
   try {
     await creds.put({ key: "google:app:cid", value: { client_id: "cid", client_secret: "sec" } });

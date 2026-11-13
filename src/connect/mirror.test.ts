@@ -4,6 +4,7 @@ import { words } from "../i18n.ts";
 import { SILENCE } from "../render.ts";
 import { answerLine, parseVerdict } from "../verdict.ts";
 import { openLog } from "../store/log.ts";
+import { members } from "../testing.ts";
 import type {
   CallFailure,
   Draft,
@@ -35,6 +36,7 @@ async function withMirror(
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
+  await members(log, "ana");
   await log.upsertConnections([
     { service: "slack", address: "T1" }, // the workspace anchor inbounds carry (§4)
     { service: "slack", address: "T1:U1", agentId: "ana", extra: { mirrors: { self: "D1" } } },
@@ -1139,9 +1141,15 @@ Deno.test("mirror: a SILENCE note reaches no surface — nothing said is nothing
 Deno.test("mirror fan-in: a principal's DM with the agent's own number copies to its mind, signed by the roster (§4)", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  await log.syncAgents([
+  await log.putAgents([
     { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "549115550001" },
-    { agentId: "sol", mind: "mind@sol", name: "Sol", phone: "549115550002", runs: false },
+    {
+      agentId: "sol",
+      mind: "mind@sol",
+      name: "Sol",
+      phone: "549115550002",
+      settings: { mind: false },
+    },
     {
       agentId: "ventas",
       mind: "mind@ventas",
@@ -1218,7 +1226,7 @@ Deno.test("mirror: a Teams account's self-chat and a principal's DM with it both
   const DM = "19:aaaa_mmmm@unq.gbl.spaces";
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  await log.syncAgents([
+  await log.putAgents([
     { agentId: "matias", mind: "mind@matias", name: "Matías", email: "matias@contoso.com" },
     {
       agentId: "ventas",
@@ -1347,11 +1355,12 @@ async function withRoom(
     errorsIn: (conversation: string) => Promise<Event[]>;
     waitFor: (cond: () => Promise<boolean>) => Promise<void>;
   }) => Promise<void>,
+  principals: string[] | "*" = ["pablo"], // who steers sonar
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
-  await log.syncAgents([
-    { agentId: "sonar", mind: "mind@sonar", principals: ["pablo"] },
+  await log.putAgents([
+    { agentId: "sonar", mind: "mind@sonar", principals },
     { agentId: "pablo", mind: "mind@pablo" },
     { agentId: "scout", mind: "mind@scout" },
   ]);
@@ -1369,7 +1378,11 @@ async function withRoom(
     read: (q) => log.read(q),
     gates: (scope) => log.gates(scope),
     aliases: () => log.aliases(),
-    principalsOf: (id) => log.principalsOf(id),
+    // as main wires it: `"*"` is the row's own word, the view derives nobody from it
+    principalsOf: async (id) =>
+      (await log.agents()).find((a) => a.agentId === id)?.principals === "*"
+        ? "*"
+        : await log.principalsOf(id),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     presence: () => "tools",
   }, 30);
@@ -1477,6 +1490,29 @@ Deno.test("mirror fan-in: another agent's line in a steering room keeps its writ
       ["/y", "scout"], // a peer's word, a line like any other
     ]);
   });
+});
+
+Deno.test('mirror fan-in: principals "*" — everyone writing in the steering room steers, a roster member as the person they are', async () => {
+  await withRoom(async ({ publish, inConv, errorsIn, waitFor }) => {
+    const stamped = (text: string, id: string, name: string) => ({
+      ...roomLine(text, { address: `U-${id}`, name }),
+      agent: { id },
+    });
+    // scout has an agent of their own, and writes here as a person: no `via.agent`
+    await publish(stamped("mirá el reporte", "scout", "Scout"));
+    // …so their /y is a verdict: with nothing waiting, the harness answers it
+    await publish(stamped("/y", "scout", "Scout"));
+    await waitFor(async () => (await errorsIn("mind@sonar")).length === 1);
+    const copies = await inConv("mind@sonar");
+    assertEquals(
+      copies.map((c) => [
+        textOf(c),
+        c.envelope.sender?.name,
+        (c.extra?.via as { agent?: string }).agent,
+      ]),
+      [["mirá el reporte", "Scout", undefined]],
+    );
+  }, "*");
 });
 
 Deno.test("mirror fan-in: a steering room line that names no sender crosses as nothing", async () => {

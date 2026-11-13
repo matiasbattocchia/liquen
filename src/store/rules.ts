@@ -1,7 +1,7 @@
 /**
  * store/rules.ts — remembered policies (§9): the standing half of the permission table.
  *
- * Config declares the BASE policy (`agent.rules` in org/agent config.jsonc — the human's
+ * Config declares the BASE policy (the `rules` setting, the org's or an agent's — the human's
  * writing); this table holds what the principal ruled FROM A SURFACE: `/y conv`,
  * `/n conn`, `/y always` on an approval card land here as rows, upserted by scope — a later
  * verdict on the same scope replaces the action, it never piles up. The gate compiles
@@ -33,7 +33,7 @@ export interface Standing {
 }
 
 export const RULES_DDL = `CREATE TABLE IF NOT EXISTS rules (
-  agent_id     TEXT NOT NULL,
+  agent_id     TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
   tool         TEXT NOT NULL,
   connection   TEXT NOT NULL DEFAULT '',
   conversation TEXT NOT NULL DEFAULT '',

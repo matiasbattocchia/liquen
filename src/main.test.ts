@@ -14,14 +14,15 @@ import type { Policy } from "./policy.ts";
 import type { Draft, Event, MessageEvent, ToolResultEvent } from "./types.ts";
 import type { ModelTransport } from "./mu.ts";
 import { canned, scripted } from "./testing.ts";
-import { type OrgConfig, readConfig } from "./config.ts";
 import { readTurns } from "./turns.ts";
+import { poke, removeAgent, upsertAgent } from "./roster.ts";
+import { onFiles } from "./store/seed.ts";
 
 type Principal = AgentConfig & Policy;
 
-/** The registry's identity columns — what a row says about who, beside what it runs with. */
+/** The roster's rows as they say who each agent is, less the backlog floor. */
 const identities = async (log: { agents(): Promise<AgentRow[]> }) =>
-  (await log.agents()).map(({ settings: _settings, ...row }) => row);
+  (await log.agents()).map(({ since: _since, ...row }) => row);
 
 /** A mind pinned to one room: it sees that room alone and writes anywhere. */
 const onlyIn = (room: string): Policy => ({
@@ -55,13 +56,21 @@ function principalMsg(mind: string, text: string): Draft<MessageEvent> {
   };
 }
 
-/** A derived-mode org: the catalog's roster declares the agents (the framework way, §9). */
+/** An org whose file declares these agents, on a model every one of them inherits (§9). */
 async function orgDir(
   agents: Record<string, unknown>,
-): Promise<{ root: string; dir: string; catalog: OrgConfig }> {
+  over: Record<string, unknown> = {},
+): Promise<{ root: string; dir: string }> {
   const root = await Deno.makeTempDir();
-  await Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ agents }));
-  return { root, dir: `${root}/data`, catalog: await readConfig(root) };
+  await Deno.writeTextFile(
+    `${root}/config.yaml`,
+    JSON.stringify({
+      shared: { agents: { model: "claude-x", maxTokens: 1024 } },
+      agents,
+      ...over,
+    }),
+  );
+  return { root, dir: `${root}/data` };
 }
 
 async function waitFor(cond: () => Promise<boolean> | boolean, ms = 4000): Promise<void> {
@@ -291,18 +300,18 @@ Deno.test("a turn's end is one line in the process's log: what opened it, its st
   ) assert(line.includes(part), `${part} — in: ${line}`);
 });
 
-Deno.test("the framework way: the catalog's roster declares the org; the table mirrors it", async () => {
-  const { root, dir, catalog } = await orgDir({ ana: {}, bo: {} });
+Deno.test("the file applied at boot: the agents it declares are rows, and each row runs", async () => {
+  const { root, dir } = await orgDir({ ana: {}, bo: {} });
   const { transport } = scripted([reply("hola"), reply("hola")]);
-  // no `principals`: the catalog's roster IS the org — a blank entry is a blank agent (§9)
-  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  // no `principals`: the store's roster IS the org — a blank entry is a blank agent (§9)
+  const main = await start({ dir, root, debounceMs: 0 }, {
     transport,
   });
   try {
-    await Deno.stat(`${dir}/agents/ana`); // config → folders: boot derived the home
-    assertEquals(await identities(main.log), [ // the registry mirrors the roster (the RLS substrate)
-      { agentId: "ana", mind: "mind@ana", model: "claude-x" },
-      { agentId: "bo", mind: "mind@bo", model: "claude-x" },
+    await Deno.stat(`${dir}/agents/ana`); // up made the home
+    assertEquals(await identities(main.log), [
+      { agentId: "ana", mind: "mind@ana" },
+      { agentId: "bo", mind: "mind@bo" },
     ]);
     await main.log.publish(principalMsg("mind@ana", "hola ana"));
     await waitFor(async () =>
@@ -322,8 +331,12 @@ Deno.test("the framework way: the catalog's roster declares the org; the table m
 Deno.test("docs in SQLite's table: boot seeds them there, and the agent writes and reads its own by handle", async () => {
   const root = await Deno.makeTempDir();
   await Deno.writeTextFile(
-    `${root}/config.jsonc`,
-    JSON.stringify({ deployment: { docs: "database" }, agents: { ana: {} } }),
+    `${root}/config.yaml`,
+    JSON.stringify({
+      deployment: { docs: "database" },
+      shared: { agents: { model: "claude-x", maxTokens: 1024 } },
+      agents: { ana: {} },
+    }),
   );
   const dir = `${root}/data`;
   const note = "---\nkind: memory\ndescription: the note\n---\nremember";
@@ -340,13 +353,7 @@ Deno.test("docs in SQLite's table: boot seeds them there, and the agent writes a
     sent.push(params);
     return script(params, ...rest);
   };
-  const main = await start({
-    dir,
-    catalog: await readConfig(root),
-    debounceMs: 0,
-    model: "claude-x",
-    maxTokens: 1024,
-  }, { transport });
+  const main = await start({ dir, root, debounceMs: 0 }, { transport });
   try {
     await main.log.publish(principalMsg("mind@ana", "anotá algo"));
     await waitFor(async () => (await main.log.read({ types: ["tool_result"] })).length === 2);
@@ -368,28 +375,32 @@ Deno.test("docs in SQLite's table: boot seeds them there, and the agent writes a
   }
 });
 
-Deno.test("config.jsonc declares the agent: settings override defaults, handles mirror in (§9)", async () => {
-  const { root, dir, catalog } = await orgDir({
-    // shared.agents' keys, overridden per agent — plus the handles a human knows it by
+Deno.test("config.yaml declares the agent: its settings are leaves of its own scope, its handles the row's (§9)", async () => {
+  const { root, dir } = await orgDir({
+    // shared.agents' keys, set for this agent — plus the handles a human knows it by
     ana: { model: "claude-y", effort: "low", identity: { email: "ana@org.example" } },
   });
   const { transport } = scripted([reply("hola")]);
-  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, root, debounceMs: 0 }, {
     transport,
   });
   try {
     assertEquals(await identities(main.log), [{
       agentId: "ana",
       mind: "mind@ana",
-      model: "claude-y", // config wins over the MainConfig default
-      effort: "low",
       email: "ana@org.example",
     }]);
-    // an agent IS its row (§9): the funnel's result is on it, and main runs from there
-    const [{ settings }] = await main.log.agents();
-    assertEquals(settings?.maxTokens, 1024);
-    assertEquals(typeof settings?.since, "string");
-    assert(Array.isArray(settings?.tools)); // the catalog's offer, funneled
+    // what the file set is a row each; what it left out is no row, and inherits
+    assertEquals(await main.log.config("agents.ana"), [
+      { scope: "agents.ana", key: "effort", value: "low" },
+      { scope: "agents.ana", key: "model", value: "claude-y" },
+    ]);
+    assertEquals(await main.log.config("shared.agents"), [
+      { scope: "shared.agents", key: "maxTokens", value: 1024 },
+      { scope: "shared.agents", key: "model", value: "claude-x" },
+    ]);
+    // the backlog floor is the row's, written once
+    assertEquals(typeof (await main.log.agents())[0].since, "string");
     await main.log.publish(principalMsg("mind@ana", "hola ana"));
     await waitFor(async () =>
       (await main.log.read({ types: ["message"] })).some((e) =>
@@ -409,9 +420,9 @@ Deno.test("config.jsonc declares the agent: settings override defaults, handles 
 });
 
 Deno.test("derived policy: another agent's mind is invisible — no spurious turn (§6)", async () => {
-  const { root, dir, catalog } = await orgDir({ ana: {}, bo: {} });
+  const { root, dir } = await orgDir({ ana: {}, bo: {} });
   const { transport, calls } = scripted([reply("hola")]);
-  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, root, debounceMs: 0 }, {
     transport,
   });
   try {
@@ -430,12 +441,12 @@ Deno.test("derived policy: another agent's mind is invisible — no spurious tur
 });
 
 Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls both (§6)", async () => {
-  const { root, dir, catalog } = await orgDir({ ana: {}, bo: {} });
+  const { root, dir } = await orgDir({ ana: {}, bo: {} });
   // ana's first think emits a send to "bo"; every later think closes tersely (empty script)
   const { transport } = scripted([
     canned([{ kind: "tool_use", name: "send", input: { to: "bo", text: "hola bo" } }], "tool_use"),
   ]);
-  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, root, debounceMs: 0 }, {
     transport,
   });
   try {
@@ -457,11 +468,11 @@ Deno.test("team chat: sending to a peer's NAME canonicalizes to a DM and enrolls
 });
 
 Deno.test("team chat: a list opens a direct room of its members, the sender among them, in any order (§6)", async () => {
-  const { root, dir, catalog } = await orgDir({ ana: {}, bo: {}, cy: {} });
+  const { root, dir } = await orgDir({ ana: {}, bo: {}, cy: {} });
   const { transport } = scripted([
     canned([{ kind: "tool_use", name: "send", input: { to: "cy, bo", text: "hola" } }], "tool_use"),
   ]);
-  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, root, debounceMs: 0 }, {
     transport,
   });
   try {
@@ -481,14 +492,14 @@ Deno.test("team chat: a list opens a direct room of its members, the sender amon
 });
 
 Deno.test("team chat: a list with a subject opens a room of its own — `#ops` a channel, recorded and enrolled (§6)", async () => {
-  const { root, dir, catalog } = await orgDir({ ana: {}, bo: {}, cy: {} });
+  const { root, dir } = await orgDir({ ana: {}, bo: {}, cy: {} });
   const { transport } = scripted([
     canned(
       [{ kind: "tool_use", name: "send", input: { to: "bo,cy", subject: "#ops", text: "hola" } }],
       "tool_use",
     ),
   ]);
-  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, root, debounceMs: 0 }, {
     transport,
   });
   try {
@@ -516,7 +527,7 @@ Deno.test("team chat: a list with a subject opens a room of its own — `#ops` a
 
 Deno.test("team chat: `conversation` adds, renames, lists and leaves — each change said in the room, the last one out closing it (§6)", async () => {
   // ana's sends go unasked, so the script's steps run in the order written
-  const { root, dir, catalog } = await orgDir({
+  const { root, dir } = await orgDir({
     ana: { rules: [{ tool: "*", action: "allow" }] },
     bo: {},
     cy: {},
@@ -563,7 +574,7 @@ Deno.test("team chat: `conversation` adds, renames, lists and leaves — each ch
       meta,
       signal,
     );
-  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, root, debounceMs: 0 }, {
     transport: byAgent,
   });
   try {
@@ -636,7 +647,7 @@ Deno.test("team chat: `conversation` adds, renames, lists and leaves — each ch
 });
 
 Deno.test("send anchors to the conversation's own connection — a reply lands where it came from (§4)", async () => {
-  const { root, dir, catalog } = await orgDir({ ana: {} });
+  const { root, dir } = await orgDir({ ana: {} });
   const { transport } = scripted([
     canned([{
       kind: "tool_use",
@@ -644,7 +655,7 @@ Deno.test("send anchors to the conversation's own connection — a reply lands w
       input: { to: "C1", text: "on it" },
     }], "tool_use"),
   ]);
-  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, root, debounceMs: 0 }, {
     transport,
   });
   try {
@@ -1050,12 +1061,12 @@ Deno.test("a cancel mid-think aborts the model call: no reply, the turn ends on 
 });
 
 Deno.test("a person alone (mind: false, §4): a registry row, a door, no session, no workspace", async () => {
-  const { root, dir, catalog } = await orgDir({
+  const { root, dir } = await orgDir({
     ventas: { identity: { name: "Ventas", phone: "549117770000" } },
     sol: { identity: { name: "Sol", phone: "549115550002" }, mind: false },
   });
   const { transport } = scripted([reply("hola")]);
-  const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+  const main = await start({ dir, root, debounceMs: 0 }, {
     transport,
   });
   try {
@@ -1063,7 +1074,6 @@ Deno.test("a person alone (mind: false, §4): a registry row, a door, no session
       {
         agentId: "sol",
         mind: "mind@sol",
-        model: "claude-x",
         name: "Sol",
         phone: "549115550002",
         runs: false,
@@ -1071,7 +1081,6 @@ Deno.test("a person alone (mind: false, §4): a registry row, a door, no session
       {
         agentId: "ventas",
         mind: "mind@ventas",
-        model: "claude-x",
         name: "Ventas",
         phone: "549117770000",
       },
@@ -1194,9 +1203,9 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
-    const { root, dir, catalog } = await orgDir({ a1: {} });
+    const { root, dir } = await orgDir({ a1: {} });
     const { transport } = scripted([]);
-    const main = await start({ dir, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 }, {
+    const main = await start({ dir, root, debounceMs: 0 }, {
       transport,
     });
     try {
@@ -1301,6 +1310,85 @@ Deno.test({
     } finally {
       await main.stop();
       await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "an agent made while the org runs is brought up by a poke; retuned, paused and removed the same way, the others running on",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { root, dir } = await orgDir({ ana: {} });
+    const { transport } = scripted([
+      reply("hola, soy bo"),
+      reply("ahora con otro modelo"),
+      reply("ana sigue aquí"),
+      reply("de vuelta"),
+    ]);
+    let main = await start({ dir, root, debounceMs: 0 }, { transport });
+    const said = async (agent: string) =>
+      (await main.log.read({ types: ["message"] }))
+        .filter((e) => e.agent?.id === agent && e.agent?.session_id === "mind")
+        .map((e) => e.parts?.[0].type === "text" ? e.parts[0].text : "");
+    const models = async (agentId: string) =>
+      (await main.log.spend({ agentId })).map((u) => u.model);
+    try {
+      // a command writes the row, then tells main: up, with its home and its door
+      await upsertAgent(root, main.log, "bo", { set: { model: "claude-y" } }, {
+        docs: onFiles(dir),
+      });
+      assertEquals(await poke(root, { agent: "bo" }), "bo up");
+      await Deno.stat(`${dir}/agents/bo/door.sock`);
+      await main.log.publish(principalMsg("mind@bo", "hola bo"));
+      await waitFor(async () => (await said("bo")).length === 1);
+      assertEquals(await models("bo"), ["claude-y"]);
+
+      // a change of settings is neither up nor down: the next turn runs on them
+      await upsertAgent(root, main.log, "bo", { set: { model: "claude-z" } });
+      assertEquals(await poke(root, { agent: "bo" }), "bo changed");
+      await main.log.publish(principalMsg("mind@bo", "y ahora?"));
+      await waitFor(async () => (await said("bo")).length === 2);
+      assertEquals(await models("bo"), ["claude-y", "claude-z"]);
+
+      // paused: down, its door still open on its rooms, and a line to it wakes nobody
+      await upsertAgent(root, main.log, "bo", { set: { mind: false } });
+      assertEquals(await poke(root, { agent: "bo" }), "bo paused");
+      await Deno.stat(`${dir}/agents/bo/door.sock`);
+      await main.log.publish(principalMsg("mind@bo", "estás?"));
+      // the others ran on through all of it
+      await main.log.publish(principalMsg("mind@ana", "hola ana"));
+      await waitFor(async () => (await said("ana")).length === 1);
+      assertEquals((await said("bo")).length, 2);
+
+      // unpaused: up again, and the line that waited is owed to it
+      await upsertAgent(root, main.log, "bo", { set: { mind: true } });
+      assertEquals(await poke(root, { agent: "bo" }), "bo up");
+      await waitFor(async () => (await said("bo")).length === 3);
+
+      // no agent named: every row reconciled
+      assertEquals(await poke(root), "ana changed · bo changed");
+
+      // a boot leaves an agent the file does not declare alone: it is a row, and it runs
+      await main.stop();
+      main = await start({ dir, root, debounceMs: 0 }, { transport });
+      assertEquals((await main.log.agents()).map((a) => [a.agentId, a.runs !== false]), [
+        ["ana", true],
+        ["bo", true],
+      ]);
+      assertEquals(await poke(root, { agent: "bo" }), "bo changed");
+
+      // removed: main brings it down, then its rows and its folder go
+      await removeAgent(root, main.log, "bo");
+      assertEquals((await main.log.agents()).map((a) => a.agentId), ["ana"]);
+      assertEquals(await Deno.stat(`${dir}/agents/bo`).catch(() => null), null);
+      assertEquals(await poke(root, { agent: "bo" }), "bo is not running");
+      // what it wrote stays in the log
+      assertEquals((await said("bo")).length, 3);
+    } finally {
+      await main.stop();
+      await Deno.remove(root, { recursive: true });
     }
   },
 });

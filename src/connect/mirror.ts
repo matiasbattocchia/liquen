@@ -117,8 +117,9 @@ export interface MirrorDeps {
    *  what the replayed-input tag names. Absent ⇒ the username. */
   nameOf?: (agentId: string) => Promise<string>;
   /** Who steers an agent (§4): a roster member writing on its surface who is not among
-   *  them is a peer, whose line settles no card. Absent ⇒ the binding's own principal. */
-  principalsOf?: (agentId: string) => Promise<string[]>;
+   *  them is a peer, whose line settles no card; `"*"` ⇒ everyone writing there steers.
+   *  Absent ⇒ the binding's own principal. */
+  principalsOf?: (agentId: string) => Promise<string[] | "*">;
   /** The org's language (config `locale`) — the harness's own words on a surface: the tags,
    *  the reply hint, the presence line. The model's voice needs no translating: the prefix
    *  states the locale and it answers in it. Unset, or a tongue we don't speak ⇒ English. */
@@ -258,10 +259,13 @@ async function fanIn(
   const mind = sessionAddress(binding.agentId, MIND);
   const origin = await quotedOrigin(deps, e, mind);
   // a roster member other than the mind's own wrote it (the classifier's stamp): the copy
-  // keeps who, so the mind reads another agent's line as that agent's (`extra.via.agent`)
-  const writer = e.agent?.id !== undefined && e.agent.id !== binding.agentId
+  // keeps who, so the mind reads another agent's line as that agent's (`extra.via.agent`).
+  // Where everyone steers (`principals: "*"`), a member writes as the person they are
+  const stamped = e.agent?.id !== undefined && e.agent.id !== binding.agentId
     ? e.agent.id
     : undefined;
+  const steering = stamped === undefined ? [] : await deps.principalsOf?.(binding.agentId) ?? [];
+  const writer = steering === "*" ? undefined : stamped;
   // whose, and where from, whatever the row becomes in the mind
   const from = {
     // the principal's stamp (§3): whose mind + entered through the harness — a surface is
@@ -294,7 +298,7 @@ async function fanIn(
   // reads a terminal's `/y` by (`verdict.ts`). What settles nothing is the harness's to say.
   // Only who steers rules on an ask: a peer's `/y` is a line like any other
   const steers = writer === undefined || writer === binding.principal ||
-    (await deps.principalsOf?.(binding.agentId) ?? []).includes(writer);
+    steering.includes(writer);
   const card = origin && steers ? await cardAt(deps, mind, origin) : undefined;
   const said = steers ? verdictSaid(e, card) : undefined;
   if (said) {

@@ -2,7 +2,7 @@ import { assertEquals } from "@std/assert";
 import type { Log } from "../log.ts";
 import { RETRY_BACKOFF_MS, STALLED_AFTER_MS } from "../sweep.ts";
 import type { Draft, Event, MessageEvent } from "../../types.ts";
-import { type Substrate, withStore } from "./mod.ts";
+import { cast, type Substrate, withStore } from "./mod.ts";
 
 export function sweepSuite(s: Substrate): void {
   // a clock of its own, far past any real stamp the store writes while the test runs
@@ -12,6 +12,7 @@ export function sweepSuite(s: Substrate): void {
 
   const withLog = (fn: (log: Log) => Promise<void>) =>
     withStore(s, async (log) => {
+      await cast(log);
       await log.upsertConnections([{ service: "slack", address: "T1", agentId: "ana" }]);
       await fn(log);
     });

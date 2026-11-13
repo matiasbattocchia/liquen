@@ -1,23 +1,27 @@
 /**
  * connect/declare.ts — the last step of every connect door (DESIGN §4, §9).
  *
- * A grant writes the MAP (connections, memberships, the vault); the catalog is what says
- * a PROCESS should run — `liquen start` spawns one child per `connections.<name>`. So the two
- * halves land together: the door that just earned the grant declares the connection, and
- * says so, because the file is git-tracked and the operator is owed the diff. A running
- * org is reloaded on the spot (reload.ts), so what the door wrote runs without a restart.
+ * A grant writes the MAP (connections, memberships, the vault); the `connections.<name>`
+ * scope of the store's configuration is what says a PROCESS should run — `liquen start`
+ * spawns one child per scope. So the two halves land together: the door that just earned
+ * the grant declares the connection in the store, and says so. A running org is reloaded
+ * on the spot (reload.ts), so what the door wrote runs without a restart.
  */
 
-import { type ConnectorSpec, declareConnection, readConfig } from "../config.ts";
+import type { ConnectorSpec } from "../config.ts";
+import { readConfig } from "../org.ts";
+import { declareConnection } from "../roster.ts";
+import { openStore } from "../store/mod.ts";
+import type { Json } from "../types.ts";
 import { ingestUp } from "./serve.ts";
 import { socketOf } from "../edge.ts";
 import { reloaded } from "../reload.ts";
 
 /** Declare the service — `decided` is what the door earned — reload the running org, and
- *  report what config.jsonc now holds. A declared section is the operator's and is left as
- *  found. The reload also gives a process that refused another go: what it refused over
+ *  report what the store now holds. A connection already declared is left as found. The
+ *  reload also gives a process that refused another go: what it refused over
  *  (an app not yet in the vault) may be what the door just stored. `restart` names the
- *  processes to restart whatever the file says of them — the connection itself, when the
+ *  processes to restart whatever the store says of them — the connection itself, when the
  *  door stored something its process reads once at boot. */
 export async function declared(
   root: string,
@@ -25,14 +29,18 @@ export async function declared(
   decided: Record<string, unknown> = {},
   restart: string[] = [],
 ): Promise<void> {
-  const added = await declareConnection(root, spec.name, decided);
+  const log = await (await openStore(root)).log();
+  let added: boolean;
+  try {
+    added = await declareConnection(log, spec.name, decided as Record<string, Json>);
+  } finally {
+    await log.close();
+  }
   const who = await reloaded(root, restart);
   console.error(
     added
-      ? `  declared "connections": { "${spec.name}": ${
-        JSON.stringify(decided)
-      } } in config.jsonc — ${who}`
-      : `  config.jsonc already declares "${spec.name}" — ${who}`,
+      ? `  declared connections.${spec.name} ${JSON.stringify(decided)} — ${who}`
+      : `  connections.${spec.name} is already declared — ${who}`,
   );
 }
 
@@ -67,7 +75,7 @@ async function awaited(
  *
  *  Declared, because `liquen start` runs one child per `connections.<name>` and nothing
  *  else does — a door on a fresh org would otherwise wait for a listener nothing will ever
- *  start. Running the door is the decision, so the file says so from the first run on.
+ *  start. Running the door is the decision, so the store says so from the first run on.
  *
  *  Up, because the grant itself makes the service deliver from that second on — the
  *  whatsmeow bridge posts the phone's history within seconds of a pairing, once — and a

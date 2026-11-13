@@ -2,8 +2,8 @@
 // CLI is the package, every task runs it, and the org's own connectors/ and processors/
 // import the same package (`@liquen/liquen/connector`). A checkout stands in for the
 // registry with `"links": ["../liquen"]`. `liquen update` adds the tasks a newer package
-// ships; a task already here is yours and stays as you wrote it. It brings the tool docs
-// under data/system/tools/ too, keeping any you edited.
+// ships; a task already here is yours and stays as you wrote it. It brings the docs under
+// data/system/ too, and asks about any you edited or deleted.
 {
   "imports": {
     "@liquen/liquen": "jsr:@liquen/liquen@^0.1.0"
@@ -18,8 +18,8 @@
       "description": "end the run, whoever started it"
     },
     "reload": {
-      "command": "deno run -A @liquen/liquen/reload",
-      "description": "the running org takes up an edit to config.jsonc"
+      "command": "deno run -A --env-file=.env @liquen/liquen/reload",
+      "description": "apply an edit to config.yaml to the running org"
     },
     "update": {
       "command": "deno run -A @liquen/liquen/update",
@@ -34,8 +34,12 @@
       "description": "talk to an agent at the terminal"
     },
     "agent": {
-      "command": "deno run -A @liquen/liquen/agent",
-      "description": "add a member to the roster"
+      "command": "deno run -A --env-file=.env @liquen/liquen/agent",
+      "description": "list the roster; make an agent, change it, or --remove it"
+    },
+    "config": {
+      "command": "deno run -A --env-file=.env @liquen/liquen/config",
+      "description": "the org's configuration as the store holds it, as YAML"
     },
     "connect": {
       "command": "deno run -A --env-file=.env @liquen/liquen/connect",

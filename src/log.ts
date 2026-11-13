@@ -11,7 +11,8 @@ import type { Event, SessionRef, ToolResultEvent, ToolUseEvent } from "./types.t
 import type { ErrorEvent } from "./types.ts";
 import type { Log, UsageRow } from "./store/log.ts";
 import { openStore } from "./store/mod.ts";
-import { findRoot, type OrgConfig, orgFlag, readConfig } from "./config.ts";
+import { findRoot, type OrgConfig, orgFlag } from "./config.ts";
+import { readConfig } from "./org.ts";
 import { entry } from "./entry.ts";
 import { hhmm } from "./render.ts";
 import { MIND, sessionAddress } from "./session.ts";
@@ -590,7 +591,7 @@ if (import.meta.main) {
     const args = parseLogArgs(view, rest, zone);
     const roster = Object.keys(catalog.agents);
     if (args.agent !== undefined && !roster.includes(args.agent)) {
-      throw new Error(`no agent "${args.agent}" in ${root}/config.jsonc`);
+      throw new Error(`no agent "${args.agent}" in ${root}`);
     }
     const log = await (await openStore(root)).log();
     try {

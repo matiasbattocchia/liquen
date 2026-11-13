@@ -56,7 +56,7 @@ Deno.test("migrate v6: a pre-sessions log settles on the pair vocabulary (§4, �
   db.exec(
     `UPDATE events SET session_id = 'ana', conversation_address = 'mind:ana';
    UPDATE memberships SET conversation_address = 'mind:ana';
-   PRAGMA user_version = 5;`,
+   UPDATE manifest SET value = '5' WHERE key = 'schema';`,
   );
   db.close();
 
@@ -128,7 +128,7 @@ Deno.test("migrate v13: mail rows are filed by thread — the reply chain walked
   db.exec("ALTER TABLE events ADD COLUMN conversation_thread TEXT");
   const keep = db.prepare("UPDATE events SET conversation_thread = ? WHERE external_id = ?");
   for (const [key, subject] of Object.entries(subjects)) keep.run(subject, key);
-  db.exec("PRAGMA user_version = 12");
+  db.exec("UPDATE manifest SET value = '12' WHERE key = 'schema'");
   db.close();
 
   const log = await openLog(dir); // reopening IS the migration
@@ -209,7 +209,7 @@ Deno.test("migrate v14: mail is keyed per mailbox and filed at the Gmail thread 
   ]);
   await first.close();
   const db = new DatabaseSync(`${dir}/log.db`);
-  db.exec("PRAGMA user_version = 13");
+  db.exec("UPDATE manifest SET value = '13' WHERE key = 'schema'");
   db.close();
 
   const log = await openLog(dir); // reopening IS the migration
@@ -270,7 +270,7 @@ Deno.test("migrate v15: every mail thread is a group, a send not yet confirmed i
   ]);
   await first.close();
   const db = new DatabaseSync(`${dir}/log.db`);
-  db.exec("PRAGMA user_version = 14");
+  db.exec("UPDATE manifest SET value = '14' WHERE key = 'schema'");
   db.close();
 
   const log = await openLog(dir); // reopening IS the migration
@@ -300,7 +300,7 @@ Deno.test("migrate v17: a log that armed wakes in a table opens without it", asy
   db.exec(
     `CREATE TABLE timers (id TEXT PRIMARY KEY, fire_at TEXT NOT NULL);
    INSERT INTO timers VALUES ('t1', '2026-11-06T13:00:00.000Z');
-   PRAGMA user_version = 16;`,
+   UPDATE manifest SET value = '16' WHERE key = 'schema';`,
   );
   db.close();
 
@@ -313,8 +313,87 @@ Deno.test("migrate v17: a log that armed wakes in a table opens without it", asy
       undefined,
     );
     assertEquals(
-      (again.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-      17,
+      again.prepare("SELECT value FROM manifest WHERE key = 'schema'").get(),
+      { value: "18" },
+    );
+  } finally {
+    again.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate v18: a store whose version the engine kept takes the manifest; the roster keeps who and its floor, and what names a gone agent goes", async () => {
+  const dir = await Deno.makeTempDir();
+  // a store as v17 left it: settings on the row, no key from any table to the roster, the
+  // version in the engine's own counter
+  const db = new DatabaseSync(`${dir}/log.db`);
+  db.exec(
+    `CREATE TABLE events (id TEXT PRIMARY KEY, external_id TEXT, type TEXT NOT NULL, service TEXT,
+       connection_address TEXT, conversation_address TEXT, conversation_name TEXT,
+       conversation_kind TEXT, session_id TEXT, sender_address TEXT, sender_name TEXT,
+       agent_id TEXT, timestamp TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+       text TEXT, parts TEXT, payload TEXT NOT NULL, extra TEXT, status TEXT);
+     CREATE TABLE agents (agent_id TEXT PRIMARY KEY, mind TEXT NOT NULL, provider TEXT, model TEXT,
+       effort TEXT, name TEXT, email TEXT, phone TEXT, principals TEXT,
+       runs INTEGER NOT NULL DEFAULT 1, settings TEXT, created_at TEXT NOT NULL,
+       updated_at TEXT NOT NULL);
+     CREATE TABLE connections (service TEXT NOT NULL, address TEXT NOT NULL, agent_id TEXT,
+       credential_key TEXT, extra TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+       deleted_at TEXT, PRIMARY KEY (service, address));
+     CREATE TABLE memberships (service TEXT NOT NULL, connection_address TEXT NOT NULL,
+       conversation_address TEXT NOT NULL, agent_id TEXT NOT NULL, session_id TEXT NOT NULL,
+       created_at TEXT NOT NULL, deleted_at TEXT,
+       PRIMARY KEY (service, connection_address, conversation_address, agent_id, session_id));
+     CREATE TABLE rules (agent_id TEXT NOT NULL, tool TEXT NOT NULL,
+       connection TEXT NOT NULL DEFAULT '', conversation TEXT NOT NULL DEFAULT '',
+       action TEXT NOT NULL, updated_at TEXT NOT NULL,
+       PRIMARY KEY (agent_id, tool, connection, conversation));
+     CREATE TABLE credentials (key TEXT PRIMARY KEY, value TEXT NOT NULL, agent_id TEXT,
+       extra TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+     INSERT INTO agents VALUES ('ana', 'mind@ana', 'anthropic', 'claude-x', 'low', 'Ana',
+       'ana@org.example', NULL, '["ana"]', 1,
+       '{"maxTokens":1024,"since":"2026-11-01T00:00:00.000Z"}', 't', 't');
+     INSERT INTO connections VALUES ('slack', 'T1', NULL, 'slack:T1:org', NULL, 't', 't', NULL),
+       ('slack', 'T1:U1', 'ana', NULL, '{"mirrors":{"self":"D1"}}', 't', 't', NULL),
+       ('slack', 'T1:U9', 'gone', NULL, NULL, 't', 't', NULL);
+     INSERT INTO memberships VALUES ('local', 'default', 'mind@ana', 'ana', 'mind', 't', NULL),
+       ('local', 'default', 'mind@gone', 'gone', 'mind', 't', NULL);
+     INSERT INTO rules VALUES ('ana', 'send', '', '', 'allow', 't'),
+       ('gone', 'send', '', '', 'allow', 't');
+     INSERT INTO credentials VALUES ('ai:anthropic:ana', '{"token":"a"}', 'ana', NULL, 't', 't'),
+       ('ai:anthropic:gone', '{"token":"g"}', 'gone', NULL, 't', 't'),
+       ('slack:T1:org', '{"token":"o"}', NULL, NULL, 't', 't');
+     PRAGMA user_version = 17;`,
+  );
+  db.close();
+
+  const log = await openLog(dir); // reopening IS the migration
+  try {
+    assertEquals(await log.agents(), [{
+      agentId: "ana",
+      mind: "mind@ana",
+      name: "Ana",
+      email: "ana@org.example",
+      principals: ["ana"],
+      since: "2026-11-01T00:00:00.000Z", // the floor its settings held: the prompt's history stays put
+    }]);
+    assertEquals((await log.manifest()).schema, "18");
+    assertEquals(await log.config(), []); // the settings are the file's to set again at this boot
+    assertEquals((await log.connections()).map((c) => c.address), ["T1", "T1:U1"]);
+    assertEquals((await log.memberships()).map((m) => m.agentId), ["ana"]);
+    assertEquals((await log.remembered("gone")).length, 0);
+    assertEquals((await log.remembered("ana")).length, 1);
+    // the keys are enforced from here on: what names an agent goes with it
+    await log.dropAgent("ana");
+    assertEquals((await log.connections()).map((c) => c.address), ["T1"]);
+  } finally {
+    await log.close();
+  }
+  const again = new DatabaseSync(`${dir}/log.db`);
+  try {
+    assertEquals(
+      again.prepare("SELECT key FROM credentials ORDER BY key").all(),
+      [{ key: "slack:T1:org" }],
     );
   } finally {
     again.close();

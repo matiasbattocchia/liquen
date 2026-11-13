@@ -9,8 +9,15 @@
  */
 
 import type { LeaseRows } from "../lock.ts";
-import { agentOf, type AgentRow, type Registry } from "../agents.ts";
-import type { PermissionBehavior } from "../../types.ts";
+import {
+  agentOf,
+  agentScope,
+  type ConfigRow,
+  type Registry,
+  steeredBy,
+  steeringRefusal,
+} from "../agents.ts";
+import type { Json, PermissionBehavior } from "../../types.ts";
 import type { RememberedRule, Standing } from "../rules.ts";
 import {
   type AliasColumns,
@@ -30,7 +37,7 @@ import { routedSession } from "../../session.ts";
 import { type Gates, owedOf, type RulingRow } from "../gates.ts";
 import { RETRY_BACKOFF_MS, STALLED_AFTER_MS, type Sweeper } from "../sweep.ts";
 import type { Event, PermissionRequestEvent, ToolUseEvent } from "../../types.ts";
-import { count, type Db, rows } from "./sql.ts";
+import { count, type Db, rows, type Sql } from "./sql.ts";
 
 export function pgLeases(db: Db): LeaseRows {
   return {
@@ -77,50 +84,136 @@ export function pgLeases(db: Db): LeaseRows {
 /** The release a turn's last publish runs in its own transaction (§2). */
 export const RELEASE = "DELETE FROM locks WHERE name = $1::text AND born = $2::bigint";
 
-export function pgRegistry(db: Db): Registry {
-  const all = `SELECT agent_id, mind, provider, model, effort, name, email, phone, principals,
-                 runs, settings
-               FROM agents ORDER BY agent_id`;
+export function pgRegistry(sql: Sql): Registry {
+  const all = `SELECT a.agent_id, a.mind, a.name, a.email, a.phone, a.principals, a.since,
+                 agent_runs(a.agent_id) AS runs
+               FROM agents a ORDER BY a.agent_id`;
+  const set = `INSERT INTO config (scope, key, value, updated_at)
+               VALUES ($1::text, $2::text, $3::jsonb, $4::text)
+               ON CONFLICT (scope, key) DO UPDATE SET
+                 value = excluded.value, updated_at = excluded.updated_at`;
+  const write = async (tx: Db, list: ConfigRow[], now: string) => {
+    for (const r of list) await count(tx, set, [r.scope, r.key, JSON.stringify(r.value), now]);
+  };
+  const read = async (db: Db) =>
+    (await rows<Record<string, string | boolean | null>>(db, all)).map(agentOf);
   return {
-    async syncAgents(list: AgentRow[]): Promise<void> {
+    async putAgents(list): Promise<void> {
       const now = new Date().toISOString();
-      const keep = new Set(list.map((r) => r.agentId));
-      for (const r of list) {
-        await count(
-          db,
-          `INSERT INTO agents (agent_id, mind, provider, model, effort, name, email, phone,
-             principals, runs, settings, created_at, updated_at)
-           VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::text,
-             $8::text, $9::jsonb, $10::integer, $11::jsonb, $12::text, $12::text)
-           ON CONFLICT (agent_id) DO UPDATE SET
-             mind = excluded.mind, provider = excluded.provider, model = excluded.model,
-             effort = excluded.effort, name = excluded.name, email = excluded.email,
-             phone = excluded.phone, principals = excluded.principals, runs = excluded.runs,
-             settings = excluded.settings, updated_at = excluded.updated_at`,
-          [
-            r.agentId,
-            r.mind,
-            r.provider ?? null,
-            r.model ?? null,
-            r.effort ?? null,
-            r.name ?? null,
-            r.email ?? null,
-            r.phone ?? null,
-            r.principals ? JSON.stringify(r.principals) : null,
-            r.runs === false ? 0 : 1,
-            r.settings ? JSON.stringify(r.settings) : null,
+      await sql.begin(async (tx) => {
+        for (const r of list) {
+          await count(
+            tx,
+            `INSERT INTO agents (agent_id, mind, name, email, phone, principals, since,
+               created_at, updated_at)
+             VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::jsonb, $7::text,
+               $8::text, $8::text)
+             ON CONFLICT (agent_id) DO UPDATE SET
+               mind = excluded.mind, name = excluded.name, email = excluded.email,
+               phone = excluded.phone, principals = excluded.principals,
+               since = coalesce(excluded.since, agents.since), updated_at = excluded.updated_at`,
+            [
+              r.agentId,
+              r.mind,
+              r.name ?? null,
+              r.email ?? null,
+              r.phone ?? null,
+              r.principals !== undefined ? JSON.stringify(r.principals) : null,
+              r.since ?? null,
+              now,
+            ],
+          );
+          await write(
+            tx,
+            Object.entries(r.settings ?? {}).map(([key, value]) => ({
+              scope: agentScope(r.agentId),
+              key,
+              value,
+            })),
             now,
-          ],
-        );
-      }
-      for (const row of await rows<{ agent_id: string }>(db, all)) {
-        if (!keep.has(row.agent_id)) {
-          await count(db, "DELETE FROM agents WHERE agent_id = $1::text", [row.agent_id]);
+          );
+          for (const key of r.unset ?? []) {
+            await count(tx, "DELETE FROM config WHERE scope = $1::text AND key = $2::text", [
+              agentScope(r.agentId),
+              key,
+            ]);
+          }
         }
-      }
+      });
     },
-    async agents(): Promise<AgentRow[]> {
-      return (await rows<Record<string, string | number | null>>(db, all)).map(agentOf);
+    async dropAgent(agentId: string): Promise<void> {
+      await sql.begin(async (tx) => {
+        const steered = steeredBy(await read(tx), agentId);
+        if (steered.length > 0) throw steeringRefusal(agentId, steered);
+        await count(tx, "DELETE FROM agents WHERE agent_id = $1::text", [agentId]);
+        await count(tx, "DELETE FROM config WHERE scope = $1::text", [agentScope(agentId)]);
+        // its sessions' rooms end in `@<agent>`, and a turn's lease is named for its room
+        await count(tx, "DELETE FROM locks WHERE name LIKE 'turn-%@' || $1::text", [agentId]);
+        await count(tx, "DELETE FROM docs WHERE scope = 'agent' AND owner = $1::text", [agentId]);
+      });
+    },
+    agents: () => read(sql),
+    async config(scope?: string): Promise<ConfigRow[]> {
+      const found = scope === undefined
+        ? await rows<{ scope: string; key: string; value: string }>(
+          sql,
+          "SELECT scope, key, value FROM config ORDER BY scope, key",
+        )
+        : await rows<{ scope: string; key: string; value: string }>(
+          sql,
+          "SELECT scope, key, value FROM config WHERE scope = $1::text ORDER BY key",
+          [scope],
+        );
+      return found.map((r) => ({ ...r, value: JSON.parse(r.value) as Json }));
+    },
+    async setConfig(list: ConfigRow[]): Promise<void> {
+      const now = new Date().toISOString();
+      await sql.begin((tx) => write(tx, list, now));
+    },
+    async unsetConfig(scope: string, keys?: string[]): Promise<void> {
+      await sql.begin(async (tx) => {
+        if (keys === undefined) {
+          await count(tx, "DELETE FROM config WHERE scope = $1::text", [scope]);
+        } else {
+          for (const key of keys) {
+            await count(tx, "DELETE FROM config WHERE scope = $1::text AND key = $2::text", [
+              scope,
+              key,
+            ]);
+          }
+        }
+      });
+    },
+    async lastTurns(): Promise<Record<string, string>> {
+      const found = await rows<{ agent_id: string; last: string }>(
+        sql,
+        `SELECT agent_id, max(created_at) AS last FROM usage
+         WHERE agent_id IS NOT NULL GROUP BY agent_id`,
+      );
+      return Object.fromEntries(found.map((r) => [r.agent_id, r.last]));
+    },
+    async manifest(): Promise<Record<string, string>> {
+      const found = await rows<{ key: string; value: string }>(
+        sql,
+        "SELECT key, value FROM manifest",
+      );
+      return Object.fromEntries(found.map((r) => [r.key, r.value]));
+    },
+    async setManifest(entries): Promise<void> {
+      await sql.begin(async (tx) => {
+        for (const [key, value] of Object.entries(entries)) {
+          if (value === null) {
+            await count(tx, "DELETE FROM manifest WHERE key = $1::text", [key]);
+          } else {
+            await count(
+              tx,
+              `INSERT INTO manifest (key, value) VALUES ($1::text, $2::text)
+               ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+              [key, value],
+            );
+          }
+        }
+      });
     },
   };
 }

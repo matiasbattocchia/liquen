@@ -4,6 +4,7 @@ import { SignedOut } from "../errors.ts";
 import { cursorFor } from "../poll.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
+import { membersAt } from "../../testing.ts";
 import type { Appender, Draft, Event, MessageEvent } from "../../connector.ts";
 
 const SELF = "78777806";
@@ -137,6 +138,7 @@ async function withVault(
   fn: (creds: Awaited<ReturnType<typeof openCredentials>>) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
+  await membersAt(dir, "ana", "bo");
   const creds = await openCredentials(dir);
   try {
     await creds.put({

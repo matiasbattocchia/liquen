@@ -2,6 +2,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { createDispatcher, isOutbound } from "./dispatcher.ts";
 import { DispatchError, SignedOut } from "./errors.ts";
 import { type DeliveryPatch, openLog, type Subscriber } from "../store/log.ts";
+import { members } from "../testing.ts";
 import type { Draft, Event, EventId, MessageEvent } from "../types.ts";
 import { newId } from "../store/id.ts";
 
@@ -140,6 +141,7 @@ Deno.test("dispatcher: a post refused as signed out says so of the account, and 
   const dir = await Deno.makeTempDir();
   const store = await openLog(dir);
   try {
+    await members(store, "ana", "a1");
     await store.upsertConnections([
       { service: "github", address: "conn", credentialKey: "github:org" },
       { service: "github", address: "ana-dev", agentId: "ana", credentialKey: "github:ana" },

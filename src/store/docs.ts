@@ -123,14 +123,14 @@ export interface DocCalls {
 export interface DocTable extends Docs {
   /** The agent's reach: its calls, bounded to what `ctx` may see and write. */
   as(ctx: DocContext): DocCalls;
-  /** Whether a row of the scope lies under `folder/` — the seed's unit of if-absent. */
-  laid(scope: DocScope, owner: string, folder: string): Promise<boolean>;
   /** Lay a row where none is. Answers whether it wrote. */
   lay(scope: DocScope, owner: string, name: string, text: string): Promise<boolean>;
   /** One row's whole text, or null where none is. */
   text(scope: DocScope, owner: string, name: string): Promise<string | null>;
   /** Replace one row's text with `to` while it is still `from`. Answers whether it wrote. */
   swap(scope: DocScope, owner: string, name: string, from: string, to: string): Promise<boolean>;
+  /** Take one row out. Answers whether there was one. */
+  drop(scope: DocScope, owner: string, name: string): Promise<boolean>;
   close(): Promise<void>;
 }
 

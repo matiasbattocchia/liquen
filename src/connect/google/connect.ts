@@ -30,7 +30,8 @@
 
 import { helpFlag } from "../help.ts";
 import type { CredentialRow, Credentials } from "../../store/credentials.ts";
-import { findRoot, orgFlag, readConfig } from "../../config.ts";
+import { findRoot, orgFlag } from "../../config.ts";
+import { readConfig } from "../../org.ts";
 import { callbackAddress } from "../../edge.ts";
 import { declared, printNext, requireEdge } from "../declare.ts";
 import {

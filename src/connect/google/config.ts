@@ -1,10 +1,11 @@
 /**
  * connect/google/config.ts — the google connector's catalog (the config rules, §4):
  * its DEFAULT_s live here and nowhere else, used as argument defaults; the values heal
- * into `data/config.jsonc` under `connections.google` and are validated at boot.
+ * under `connections.google` (`config.yaml`, or the store) and are validated at boot.
  */
 
-import { checkAmong, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { checkAmong, checkStrings, type ConnectorSpec } from "../../config.ts";
+import { connectorConfig } from "../../org.ts";
 
 /** What the connection can read into the log, each by its own ingest in `run.ts`. */
 export const SURFACES = ["calendar", "mail"] as const;
@@ -59,7 +60,7 @@ export const SPEC: ConnectorSpec = {
   ],
 };
 
-/** Read (and heal) `connections.google` from the org's config.jsonc. */
+/** Read `connections.google` as the org's store holds it. */
 export function googleConfig(root: string): Promise<GoogleConfig> {
   return connectorConfig<GoogleConfig>(root, SPEC);
 }

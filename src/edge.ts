@@ -28,7 +28,8 @@
  * `edge.tunnel` beside it when the org runs its own tunnel.
  */
 
-import { findRoot, type OrgConfig, orgFlag, readConfig, SERVICE_NAME } from "./config.ts";
+import { findRoot, type OrgConfig, orgFlag, SERVICE_NAME } from "./config.ts";
+import { readConfig } from "./org.ts";
 import { entry } from "./entry.ts";
 
 /** This machine's edge, as a dialer on this host reaches it. */

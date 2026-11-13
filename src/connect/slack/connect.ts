@@ -551,7 +551,7 @@ if (import.meta.main) {
   await entry(async () => {
     const { openStore } = await import("../../store/mod.ts");
     const { slackConfig } = await import("./config.ts");
-    const { readConfig } = await import("../../config.ts");
+    const { readConfig } = await import("../../org.ts");
 
     const org = orgFlag();
     helpFlag(org.args, USAGE);
@@ -584,7 +584,7 @@ if (import.meta.main) {
       const entry = (await readConfig(root)).agents[name];
       if (!entry) {
         console.error(
-          `no agent "${name}" in ${root}/config.jsonc — \`liquen agent ${name}\` adds one`,
+          `no agent "${name}" in ${root} — \`liquen agent ${name}\` makes one`,
         );
         Deno.exit(2);
       }

@@ -1,17 +1,19 @@
 /**
  * init.ts — `liquen init <path>`: scaffold a new org project (§9).
  *
- * Dumb on purpose: materialize the catalog, copy the scaffold, seed the org's half of the
- * doc cascade (`data/system/`, `data/shared/` — what every agent will read, headers to
- * fill). The project it leaves behind carries no runnable code — the CLI is the package
- * its `deno.jsonc` names — and what only a run can make (the log, the CA, the shims) waits
- * for the first boot. What init decides is only what a human would otherwise type: the
- * org's clock and locale (the machine's). The roster starts empty; `liquen agent` adds
- * each agent as its own declaration, and lays that agent's half of the cascade.
+ * Dumb on purpose: lay `config.yaml`, the catalog as a commented template; copy the
+ * scaffold; seed the org's half of the doc cascade (`data/system/`, `data/shared/` — what
+ * every agent will read, headers to fill). The project it leaves behind carries no
+ * runnable code — the CLI is the package its `deno.jsonc` names — and what only a run can
+ * make (the log, the CA, the shims) waits for the first boot. What init decides is only
+ * what a human would otherwise type: the org's clock and locale (the machine's). The
+ * roster starts empty; `liquen agent` makes each agent in the store, and lays that
+ * agent's half of the cascade. The files laid here are the org's from this moment: no
+ * later release rewrites them.
  */
 
-import { materialize, starterConfig } from "./config.ts";
-import { onFiles, seedOrg } from "./store/seed.ts";
+import { CONFIG_FILE, materialize, starterConfig } from "./config.ts";
+import { bringSystemDocs, onFiles, seedOrg } from "./store/seed.ts";
 import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
 
@@ -27,7 +29,7 @@ const SCAFFOLD: [string, string][] = [
 ];
 
 export async function init(path: string): Promise<void> {
-  const exists = await Deno.stat(`${path}/config.jsonc`).then(() => true, () => false);
+  const exists = await Deno.stat(`${path}/${CONFIG_FILE}`).then(() => true, () => false);
   if (exists) {
     throw new Error(
       `${path} is already a liquen org — \`liquen agent <name>\` adds an agent to it`,
@@ -36,7 +38,7 @@ export async function init(path: string): Promise<void> {
   for (const sub of ["", "/connectors", "/processors", "/data"]) {
     await Deno.mkdir(`${path}${sub}`, { recursive: true });
   }
-  await Deno.writeTextFile(`${path}/config.jsonc`, materialize(starterConfig()));
+  await Deno.writeTextFile(`${path}/${CONFIG_FILE}`, materialize(starterConfig()));
   // the scaffold travels with the module, whose URL is the registry's when init is run
   // straight off it — fetch reads both that and a checkout's file:
   for (const [from, to] of SCAFFOLD) {
@@ -46,12 +48,14 @@ export async function init(path: string): Promise<void> {
   await Deno.chmod(`${path}/entrypoint.sh`, 0o755);
   // the org's own words, on disk before anything runs: a starter catalog keeps its docs
   // as files
-  await seedOrg(onFiles(`${path}/data`));
+  const bed = onFiles(`${path}/data`);
+  await seedOrg(bed);
+  await bringSystemDocs(bed);
 }
 
 export const USAGE = `usage: liquen init <path>
 
-  Make a new org at <path>: its config.jsonc, its scaffold, and the docs every agent reads.
+  Make a new org at <path>: its config.yaml, its scaffold, and the docs every agent reads.
   \`liquen agent <name>\` then adds an agent to it.`;
 
 if (import.meta.main) {

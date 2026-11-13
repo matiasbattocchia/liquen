@@ -54,7 +54,9 @@ export function bindRoster(db: DatabaseSync): void {
  *               it owns a connection (a person's account, revoked ones included), else
  *               the org's people — an agent that holds no account of its own is the
  *               org's, and the members who are persons (an account of their own, or a
- *               person alone, `mind: false`) steer it
+ *               person alone, `mind` false by its own setting or the org's) steer it.
+ *               `"*"` gives no rows: it names nobody, and who steers by it is whoever
+ *               writes in the agent's steering room (the mirror's to read)
  *   aliases     (service, connection, conversation, agent_id, principal, live, raw)
  *               the mind surfaces, each read off `extra.mirrors` or derived beside it:
  *               self   on a connection the agent owns, its self-conversation
@@ -71,13 +73,18 @@ export function bindRoster(db: DatabaseSync): void {
 export const ROSTER_VIEWS = `
 CREATE TEMP VIEW IF NOT EXISTS principals AS
   SELECT a.agent_id, p.value AS principal, p.key AS rank
-  FROM agents a, json_each(coalesce(a.principals, '[]')) p
+  FROM agents a,
+       json_each(CASE WHEN json_type(a.principals) = 'array' THEN a.principals ELSE '[]' END) p
   UNION ALL
   SELECT a.agent_id, b.agent_id, 0
   FROM agents a JOIN agents b
   WHERE a.principals IS NULL
     AND NOT EXISTS (SELECT 1 FROM connections c WHERE c.agent_id = a.agent_id)
-    AND (b.runs = 0 OR EXISTS (SELECT 1 FROM connections c WHERE c.agent_id = b.agent_id))
+    AND (coalesce(
+           (SELECT value FROM config WHERE scope = 'agents.' || b.agent_id AND key = 'mind'),
+           (SELECT value FROM config WHERE scope = 'shared.agents' AND key = 'mind'),
+           'true') = 'false'
+         OR EXISTS (SELECT 1 FROM connections c WHERE c.agent_id = b.agent_id))
   UNION ALL
   SELECT a.agent_id, a.agent_id, 0
   FROM agents a

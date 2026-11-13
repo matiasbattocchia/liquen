@@ -8,7 +8,8 @@
  *     the bot; a tool: whatever its config's `credential_key` names); `value` is the
  *     service-shaped secret blob (`{token, app_token}`, `{client_id, client_secret}`,
  *     `{api_key}`); `agent_id` is the owner, absent = the org's — the same convention as
- *     connections, whose `credential_key` column points here. `put` MERGES `value`/
+ *     connections, whose `credential_key` column points here; an owner is a row of the
+ *     roster, and its keys go with it. `put` MERGES `value`/
  *     `extra` fields: each door writes the field it holds (a pasted xoxp, a socket xapp)
  *     and never clobbers a sibling's; removal is a deliberate SQL act. The merge is
  *     FIELD-WISE and the database's own (under the write lock), so a nested map lands
@@ -24,6 +25,7 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
+import { AGENTS_DDL } from "./agents.ts";
 
 export interface CredentialRow {
   key: string;
@@ -50,6 +52,15 @@ export interface Credentials {
 
 const STATE_TTL_MS = 10 * 60 * 1000; // OAuth codes live ~10min; states match
 
+export const CREDENTIALS_DDL = `CREATE TABLE IF NOT EXISTS credentials (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  agent_id   TEXT REFERENCES agents(agent_id) ON DELETE CASCADE,
+  extra      TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);`;
+
 /** Open the vault on the org's log.db (its own connection — WAL serves both). */
 /** `now` is the clock the OAuth-state TTL is measured against (§9): a test ages a state
  *  by moving it rather than waiting ten minutes. */
@@ -63,14 +74,9 @@ export async function openCredentials(
   db.exec(
     `PRAGMA busy_timeout=5000;
      PRAGMA journal_mode=WAL;
-     CREATE TABLE IF NOT EXISTS credentials (
-       key        TEXT PRIMARY KEY,
-       value      TEXT NOT NULL,
-       agent_id   TEXT,
-       extra      TEXT,
-       created_at TEXT NOT NULL,
-       updated_at TEXT NOT NULL
-     );
+     PRAGMA foreign_keys=ON;
+     ${AGENTS_DDL}
+     ${CREDENTIALS_DDL}
      CREATE TABLE IF NOT EXISTS oauth_states (
        state   TEXT PRIMARY KEY,
        service TEXT NOT NULL,

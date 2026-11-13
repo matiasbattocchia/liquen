@@ -6,6 +6,7 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { openLocalSandbox } from "./sandbox.ts";
 import { storeAt } from "./store/mod.ts";
+import { membersAt } from "./testing.ts";
 
 Deno.test("a session's shell is its own and kept: where one stands, its sibling does not", async () => {
   const dir = await Deno.makeTempDir();
@@ -79,6 +80,7 @@ Deno.test("a shell spends its own grant by the variable's name, and keeps reachi
   );
   const authority = `127.0.0.1:${origin.addr.port}`;
   const store = storeAt({ engine: "sqlite", dir, docs: "filesystem" });
+  await membersAt(dir, "a1", "a2");
   const vault = await store.vault();
   await vault.put({
     key: "token:crm:a1",
@@ -124,7 +126,7 @@ Deno.test("an agent's shell inherits the variables it exports, as the harness ho
   const sandbox = await openLocalSandbox(dir, {
     store: storeAt({ engine: "sqlite", dir, docs: "filesystem" }),
     agents: ["a1", "a2"],
-    exports: { a1: ["LIQUEN_TEST_DISPLAY", "LIQUEN_TEST_UNSET"] },
+    exports: (agentId) => agentId === "a1" ? ["LIQUEN_TEST_DISPLAY", "LIQUEN_TEST_UNSET"] : [],
   });
   const say = async (agent: string) => {
     const out = await sandbox.forAgent(agent).session("mind").exec.bash.execute(
@@ -141,6 +143,32 @@ Deno.test("an agent's shell inherits the variables it exports, as the harness ho
     assertEquals(await say("a1"), "[:1] [unset]");
   } finally {
     Deno.env.delete("LIQUEN_TEST_DISPLAY");
+    await sandbox.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a ground is added and removed while the sandbox stands: one agent's shells end, no one else's", async () => {
+  const dir = await Deno.makeTempDir();
+  const sandbox = await openLocalSandbox(dir, {
+    store: storeAt({ engine: "sqlite", dir, docs: "filesystem" }),
+    agents: ["a1"],
+  });
+  try {
+    assertThrows(() => sandbox.forAgent("a2"), Error, "no ground prepared");
+    await sandbox.add("a2");
+    await sandbox.add("a2"); // a ground already there stands
+    const peer = sandbox.forAgent("a1").session("mind");
+    const mine = sandbox.forAgent("a2").session("mind");
+    assertEquals((await mine.ambient())[0], `cwd: ${dir}/agents/a2`);
+    const state = () => Deno.readTextFile(`${dir}/system/proxy.json`).then(JSON.parse);
+    await mine.exec.bash.execute({ command: "true" }, new AbortController().signal);
+    assertEquals(Object.keys((await state()).nonces), ["a2"]);
+    await sandbox.remove("a2");
+    assertThrows(() => sandbox.forAgent("a2"), Error, "no ground prepared");
+    assertEquals(Object.keys((await state()).nonces), []); // its way out is gone with it
+    assertEquals((await peer.ambient())[0], `cwd: ${dir}/agents/a1`);
+  } finally {
     await sandbox.close();
     await Deno.remove(dir, { recursive: true });
   }

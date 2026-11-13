@@ -11,7 +11,7 @@ import { OWN_TOOLS } from "./xi.ts";
 import { bashShape } from "./exec/bash.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
 import { openFileDocs } from "./store/docs.ts";
-import { onFiles, seedOrg } from "./store/seed.ts";
+import { bringSystemDocs, onFiles } from "./store/seed.ts";
 
 const PIN: ToolShape = {
   spec: {
@@ -156,7 +156,7 @@ Deno.test("wordedAll: a missing doc is named", async () => {
 Deno.test("the seeded docs word every builtin tool, the numbers filled from code", async () => {
   const root = await Deno.makeTempDir();
   try {
-    await seedOrg(onFiles(root));
+    await bringSystemDocs(onFiles(root));
     const docs = openFileDocs(root);
     const read = (name: string) =>
       docs.read({ agent: "a" }, { scope: "system", kind: "tool", name });

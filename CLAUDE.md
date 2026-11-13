@@ -3,7 +3,7 @@
 ## What this repo is
 
 The package `@liquen/liquen`: `src/`, the docs, the scaffold. An org is a folder somewhere
-else — `config.jsonc`, `data/`, `.env`, its own `connectors/` and `processors/` — whose
+else — `config.yaml`, `data/`, `.env`, its own `connectors/` and `processors/` — whose
 `deno.jsonc` names the package and whose tasks run it; a checkout stands in for the
 registry through `"links": ["../liquen"]`. No org file lives here.
 
@@ -55,16 +55,21 @@ Write the positive property. If the rejected design is genuinely worth recording
 - `RENDER.md` — every tag and line the model reads, by skill, and whether the system
   instructions describe it. A change to what `render.ts` emits updates it.
 - Agent-facing instructions are the templates in `src/seed/`. A running org holds its live
-  copies under `data/system/` (`instructions/`, `tools/`, `skills/`), seeded write-if-absent
-  at boot, so a template edit reaches an existing org only through its live copy; verify the
-  two agree with `diff -q`. An org on this machine may instead symlink those folders at the
-  checkout's `src/seed/system/` folders and read them live.
+  copies under `data/system/` (`instructions/`, `tools/`, `skills/`), brought by boot and
+  by `liquen update` against the manifest its store keeps: a copy the org left as a
+  release had it follows the template, and one the org edited or deleted stays its own
+  until `liquen update` is told otherwise. So a template edit reaches an org when it runs
+  the code that holds it — a release, or a linked checkout at its next boot; `diff -q`
+  shows the copies an org made its own.
 
 ## Configuration
 
-Knobs live in `config.jsonc`'s catalog or as named constants in source. The environment
-carries only secrets. An unknown key or section in an org's `config.jsonc` is a boot error,
-so the catalog and every org's `config.jsonc` change together.
+Knobs live in the catalog (`src/config.ts`) or as named constants in source. An org's
+values are rows of its store: `config.yaml` declares the ones a repo pins, applied at
+boot and by `liquen reload`, and `liquen agent`, `liquen connect` and the connectors write
+the rest. No command writes the file. The environment carries only secrets. An unknown
+key or section in an org's `config.yaml` is a boot error, so the catalog and every org's
+`config.yaml` change together.
 
 ## One path, no side doors
 

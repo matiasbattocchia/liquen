@@ -51,7 +51,7 @@ Deno.test("cross-process: a webhook to the ingest PROCESS wakes a subscriber in 
   // run liquen (a cwd, not an env var) — and serves the org's own socket, so a parallel
   // suite has nothing to collide on
   await Deno.writeTextFile(
-    `${dir}/config.jsonc`,
+    `${dir}/config.yaml`,
     JSON.stringify({ connections: { github: {} } }),
   );
   const child = new Deno.Command(Deno.execPath(), {

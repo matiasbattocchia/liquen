@@ -51,7 +51,6 @@ Deno.test("storeAt: the SQLite store's docs are the files under its data root, s
       true,
     );
     assertEquals(await docs.bed.lay("agent", "a1", "memories/x", "again"), false);
-    assertEquals(await docs.bed.laid("agent", "a1", "memories"), true);
     assertEquals(
       (await docs.list({ agent: "a1" })).map((d) => d.header.handle),
       [`${dir}/agents/a1/memories/x.md`],
@@ -65,7 +64,7 @@ Deno.test("storeAt: the SQLite store's docs are the files under its data root, s
 Deno.test("openStore: an org with no database knob opens log.db under data/log, log and vault on one file", async () => {
   const root = await Deno.makeTempDir();
   try {
-    await Deno.writeTextFile(`${root}/config.jsonc`, "{}");
+    await Deno.writeTextFile(`${root}/config.yaml`, "{}");
     const store = await openStore(root);
     const log = await store.log();
     const vault = await store.vault();

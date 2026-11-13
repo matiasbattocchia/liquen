@@ -15,7 +15,7 @@
  *
  * Opening a store runs all of it, under an advisory lock on the schema's name, so the
  * processes an org boots at once create it once and the rest find it there. The schema
- * carries its version (`schema_version`, one row): a store behind `VERSION` is raised in
+ * carries its version (the manifest's `schema`): a store behind `VERSION` is raised in
  * place before the DDL runs, and a store ahead of it belongs to a newer liquen.
  */
 
@@ -195,21 +195,42 @@ CREATE TABLE IF NOT EXISTS locks (
 CREATE TABLE IF NOT EXISTS agents (
   agent_id   ${T} PRIMARY KEY,
   mind       ${T} NOT NULL,
-  provider   ${T},
-  model      ${T},
-  effort     ${T},
   name       ${T},
   email      ${T},
   phone      ${T},
   principals jsonb,
-  runs       integer NOT NULL DEFAULT 1,
-  settings   jsonb,
+  since      ${T},
   created_at ${T} NOT NULL,
   updated_at ${T} NOT NULL
 );
+CREATE TABLE IF NOT EXISTS config (
+  scope      ${T} NOT NULL,
+  key        ${T} NOT NULL,
+  value      jsonb NOT NULL,
+  updated_at ${T} NOT NULL,
+  PRIMARY KEY (scope, key)
+);
+
+-- the RESTRICT a key cannot spell: a principal lives in a JSON array. An agent naming
+-- itself waits on no one, and "*" names no one
+CREATE OR REPLACE FUNCTION agents_steering() RETURNS trigger LANGUAGE plpgsql AS $f$
+DECLARE who text;
+BEGIN
+  SELECT string_agg(a.agent_id, ', ' ORDER BY a.agent_id) INTO who
+  FROM agents a
+  WHERE a.agent_id <> OLD.agent_id AND jsonb_typeof(a.principals) = 'array'
+    AND a.principals ? OLD.agent_id;
+  IF who IS NOT NULL THEN
+    RAISE EXCEPTION '% is a principal of % — take it out of their principals first',
+      OLD.agent_id, who;
+  END IF;
+  RETURN OLD;
+END $f$;
+CREATE OR REPLACE TRIGGER agents_steering BEFORE DELETE ON agents
+  FOR EACH ROW EXECUTE FUNCTION agents_steering();
 
 CREATE TABLE IF NOT EXISTS rules (
-  agent_id     ${T} NOT NULL,
+  agent_id     ${T} NOT NULL REFERENCES agents (agent_id) ON DELETE CASCADE,
   tool         ${T} NOT NULL,
   connection   ${T} NOT NULL DEFAULT '',
   conversation ${T} NOT NULL DEFAULT '',
@@ -222,7 +243,7 @@ CREATE TABLE IF NOT EXISTS rules (
 CREATE TABLE IF NOT EXISTS connections (
   service        ${T} NOT NULL,
   address        ${T} NOT NULL,
-  agent_id       ${T},
+  agent_id       ${T} REFERENCES agents (agent_id) ON DELETE CASCADE,
   credential_key ${T},
   extra          jsonb,
   created_at     ${T} NOT NULL,
@@ -234,7 +255,7 @@ CREATE TABLE IF NOT EXISTS memberships (
   service              ${T} NOT NULL,
   connection_address   ${T} NOT NULL,
   conversation_address ${T} NOT NULL,
-  agent_id             ${T} NOT NULL,
+  agent_id             ${T} NOT NULL REFERENCES agents (agent_id) ON DELETE CASCADE,
   session_id           ${T} NOT NULL,
   created_at           ${T} NOT NULL,
   deleted_at           ${T},
@@ -255,16 +276,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS conversations_local_name
   ON conversations (connection_address, name) WHERE service = 'local' AND deleted_at IS NULL;
 
 
+-- whether a session of the agent runs: its own \`mind\`, else the org's, else it does
+CREATE OR REPLACE FUNCTION agent_runs(id text) RETURNS boolean LANGUAGE sql STABLE AS $f$
+  SELECT coalesce(
+    (SELECT value FROM config WHERE scope = 'agents.' || id AND key = 'mind'),
+    (SELECT value FROM config WHERE scope = 'shared.agents' AND key = 'mind'),
+    'true'::jsonb) <> 'false'::jsonb;
+$f$;
 CREATE OR REPLACE VIEW principals AS
   SELECT a.agent_id, p.value COLLATE "C" AS principal, (p.ord - 1)::integer AS rank
   FROM agents a,
-       jsonb_array_elements_text(coalesce(a.principals, '[]'::jsonb)) WITH ORDINALITY p(value, ord)
+       jsonb_array_elements_text(CASE WHEN jsonb_typeof(a.principals) = 'array'
+                                      THEN a.principals ELSE '[]'::jsonb END)
+         WITH ORDINALITY p(value, ord)
   UNION ALL
   SELECT a.agent_id, b.agent_id, 0
   FROM agents a CROSS JOIN agents b
   WHERE a.principals IS NULL
     AND NOT EXISTS (SELECT 1 FROM connections c WHERE c.agent_id = a.agent_id)
-    AND (b.runs = 0 OR EXISTS (SELECT 1 FROM connections c WHERE c.agent_id = b.agent_id))
+    AND (NOT agent_runs(b.agent_id)
+         OR EXISTS (SELECT 1 FROM connections c WHERE c.agent_id = b.agent_id))
   UNION ALL
   SELECT a.agent_id, a.agent_id, 0
   FROM agents a
@@ -312,7 +343,7 @@ export const VAULT_DDL = `
 CREATE TABLE IF NOT EXISTS credentials (
   key        ${T} PRIMARY KEY,
   value      jsonb NOT NULL,
-  agent_id   ${T},
+  agent_id   ${T} REFERENCES agents (agent_id) ON DELETE CASCADE,
   extra      jsonb,
   created_at ${T} NOT NULL,
   updated_at ${T} NOT NULL
@@ -644,7 +675,7 @@ END $d$;
 
 /** The version the DDL creates. A store found below it is raised in place, once, by the
  *  steps between; a store above it was made by a newer liquen, and this one refuses it. */
-export const VERSION = 8;
+export const VERSION = 9;
 
 /** `RAISE[v]` takes a store from version `v` to `v + 1`: the ALTERs the DDL's `IF NOT
  *  EXISTS` cannot express, run before the DDL so the views it replaces find their columns.
@@ -681,6 +712,27 @@ const RAISE: Record<number, (tx: Db) => Promise<void>> = {
   7: async (tx) => {
     await tx.unsafe("DROP TABLE IF EXISTS timers");
   },
+  // v9 — the roster is primary (§9). `agents` keeps who exists and who steers, and gains
+  // the backlog floor, the last one its settings held; the settings themselves are
+  // `config`'s, set again by the file at this boot. The tables that name an agent take a
+  // foreign key to it, less the rows whose agent is gone
+  8: async (tx) => {
+    await tx.unsafe(`
+      DROP VIEW IF EXISTS aliases;
+      DROP VIEW IF EXISTS principals;
+      ALTER TABLE agents ADD COLUMN IF NOT EXISTS since ${T};
+      UPDATE agents SET since = settings ->> 'since';
+      ALTER TABLE agents DROP COLUMN settings, DROP COLUMN provider, DROP COLUMN model,
+        DROP COLUMN effort, DROP COLUMN runs;`);
+    for (const table of ["connections", "memberships", "rules", "credentials"]) {
+      await tx.unsafe(`
+        DELETE FROM ${table}
+          WHERE agent_id IS NOT NULL AND agent_id NOT IN (SELECT agent_id FROM agents);
+        ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${table}_agent_id_fkey;
+        ALTER TABLE ${table} ADD CONSTRAINT ${table}_agent_id_fkey
+          FOREIGN KEY (agent_id) REFERENCES agents (agent_id) ON DELETE CASCADE;`);
+    }
+  },
 };
 
 /** Open the schema: create it when absent, raise it when behind, and run the DDL — every
@@ -692,26 +744,46 @@ export async function prepare(sql: Sql, schema: string, bucket?: string): Promis
   await sql.begin(async (tx) => {
     await tx.unsafe("SELECT pg_advisory_xact_lock(hashtext($1::text))", [`liquen:${schema}`]);
     await tx.unsafe(`CREATE SCHEMA IF NOT EXISTS ${ident(schema)}`);
-    await tx.unsafe("CREATE TABLE IF NOT EXISTS schema_version (version integer NOT NULL)");
-    const [found] = await tx.unsafe("SELECT version FROM schema_version") as unknown as {
-      version: number;
-    }[];
-    if (found !== undefined && found.version > VERSION) {
+    await tx.unsafe(
+      `CREATE TABLE IF NOT EXISTS manifest (key ${T} PRIMARY KEY, value ${T} NOT NULL)`,
+    );
+    const found = await versionOf(tx);
+    if (found !== undefined && found > VERSION) {
       throw new Error(
-        `the store in ${schema} is at schema version ${found.version}; this liquen knows ` +
+        `the store in ${schema} is at schema version ${found}; this liquen knows ` +
           `${VERSION} — update the org`,
       );
     }
-    for (let v = found?.version ?? VERSION; v < VERSION; v++) await RAISE[v]?.(tx);
+    for (let v = found ?? VERSION; v < VERSION; v++) await RAISE[v]?.(tx);
     await tx.unsafe(
       functions() + LOG_DDL + VAULT_DDL + docsDdl(schema) + objectsDdl(schema, bucket),
     );
-    if (found === undefined) {
-      await tx.unsafe("INSERT INTO schema_version (version) VALUES ($1::integer)", [VERSION]);
-    } else if (found.version < VERSION) {
-      await tx.unsafe("UPDATE schema_version SET version = $1::integer", [VERSION]);
+    if (found !== VERSION) {
+      await tx.unsafe(
+        `INSERT INTO manifest (key, value) VALUES ('schema', $1::text)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+        [String(VERSION)],
+      );
+      await tx.unsafe("DROP TABLE IF EXISTS schema_version");
     }
   });
+}
+
+/** The schema's version: the manifest's word, or the one row of `schema_version` on a
+ *  store made before the manifest held it; undefined on a schema with no store yet. */
+async function versionOf(tx: Db): Promise<number | undefined> {
+  const [row] = await tx.unsafe("SELECT value FROM manifest WHERE key = 'schema'") as unknown as {
+    value: string;
+  }[];
+  if (row !== undefined) return Number(row.value);
+  const [old] = await tx.unsafe(
+    "SELECT to_regclass('schema_version') IS NOT NULL AS has",
+  ) as unknown as { has: boolean }[];
+  if (!old.has) return undefined;
+  const [v] = await tx.unsafe("SELECT version FROM schema_version") as unknown as {
+    version: number;
+  }[];
+  return v?.version;
 }
 
 /** A name quoted as an identifier. */

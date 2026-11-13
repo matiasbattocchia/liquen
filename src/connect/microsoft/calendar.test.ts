@@ -2,6 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { createMicrosoftCalendar } from "./calendar.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
+import { membersAt } from "../../testing.ts";
 import type { Appender, Reader } from "../../store/log.ts";
 import type { CalendarPart, Draft, Event, MessageEvent } from "../../types.ts";
 
@@ -37,6 +38,7 @@ async function withVault(
   fn: (creds: Awaited<ReturnType<typeof openCredentials>>) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
+  await membersAt(dir, "ana", "bo");
   const creds = await openCredentials(dir);
   try {
     await creds.put({

@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { connectMercadopago } from "./connect.ts";
 import { openCredentials } from "../../store/credentials.ts";
+import { membersAt } from "../../testing.ts";
 import type { Appender, Draft, Event, MessageEvent } from "../../connector.ts";
 
 /** A store and a publish that capture what the door writes. */
@@ -33,6 +34,7 @@ async function withVault(
   fn: (creds: Awaited<ReturnType<typeof openCredentials>>) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
+  await membersAt(dir, "ana", "bo");
   const creds = await openCredentials(dir);
   try {
     await fn(creds);

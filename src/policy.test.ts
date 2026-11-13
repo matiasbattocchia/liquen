@@ -6,6 +6,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { type Law, type Log, openLog } from "./store/log.ts";
+import { members } from "./testing.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
 import type { Event, MessageEvent } from "./types.ts";
 
@@ -32,6 +33,7 @@ const inConv = (c: string): Law => ({
 async function withLog(fn: (log: Log) => Promise<void> | void): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
+  await members(log, "ana", "bo");
   try {
     await fn(log);
   } finally {

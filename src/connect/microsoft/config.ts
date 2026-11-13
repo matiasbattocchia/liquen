@@ -1,13 +1,14 @@
 /**
  * connect/microsoft/config.ts — the microsoft connector's catalog (the config rules, §4):
  * its DEFAULT_s live here and nowhere else, used as argument defaults; the values heal
- * into `data/config.jsonc` under `connections.microsoft` and are validated at boot.
+ * under `connections.microsoft` (`config.yaml`, or the store) and are validated at boot.
  *
  * The tenant is not a knob: an Entra app registration lives in one tenant, so the tenant
  * is a fact about the app and rides on the app's vault row (`liquen connect microsoft app`).
  */
 
-import { checkAmong, checkStrings, connectorConfig, type ConnectorSpec } from "../../config.ts";
+import { checkAmong, checkStrings, type ConnectorSpec } from "../../config.ts";
+import { connectorConfig } from "../../org.ts";
 
 /** What the connection can read into the log, each by its own ingest in `run.ts`. */
 export const SURFACES = ["calendar", "mail", "teams"] as const;
@@ -94,7 +95,7 @@ export const SPEC: ConnectorSpec = {
   ],
 };
 
-/** Read (and heal) `connections.microsoft` from the org's config.jsonc. */
+/** Read `connections.microsoft` as the org's store holds it. */
 export function microsoftConfig(root: string): Promise<MicrosoftConfig> {
   return connectorConfig<MicrosoftConfig>(root, SPEC);
 }

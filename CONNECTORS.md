@@ -81,7 +81,8 @@ credential — is its own business; the rule is only for what throws.
 
 Configuration follows the harness's own config rules: the connector ships a `config.ts`
 declaring its DEFAULT_s and its `ConnectorSpec`; `connectorConfig` reads the
-`connections.<name>` subsection of the root `config.jsonc` over the spec's defaults
+`connections.<name>` scope of the org's configuration, as the store holds it — set by
+`config.yaml` at a boot or a reload, or by the connector's door — over the spec's defaults
 (missing keys default, unknown keys a boot error, `check`s run at boot) and returns the
 merged values — nothing is ever written back. Secrets never enter the file — they live in the vault (slack and github keep
 their app, bot, and grants there) or, for a local bridge, in env (`WA_BRIDGE_TOKEN`).
@@ -111,8 +112,8 @@ credential row — `extra.env`, the env var the placeholder is issued under (wha
 reads: `GH_TOKEN`, which holds `sentinel-GH_TOKEN`), and `extra.hosts`, the only origins the
 token may be spent toward (exact hostnames or `*.suffix`), and optionally `extra.paths`, the
 only paths there (whole segments). main fronts every row that
-declares an env var (the org's own row wins; several contenders for one var → none is
-fronted), and the proxy substitutes the grant the calling agent is fronted under that
+declares an env var (the agent's own row wins over the org's; several contenders for one
+var at the level that wins → none is fronted), and the proxy substitutes the grant the calling agent is fronted under that
 variable wherever the placeholder appears in a header value — no proxy or main change
 per tool. A service with no connector at all takes the same row
 from the shipped `token` door (`liquen connect token <name> --env <VAR> --hosts <list>
@@ -133,11 +134,11 @@ liquen's own address is stated once at most — to a service that keeps it, by t
 that hands it over (below).
 
 A door may **decide** a knob's value the way `liquen init` decides the org's clock — what a
-human would otherwise type, typed once and written with the section, so the file says it
-from then on. `connections.whatsapp.organizationId` is the case: the whatsmeow bridge is
+human would otherwise type, typed once and written with the connection's scope in the
+store, so the org says it from then on. `connections.whatsapp.organizationId` is the case: the whatsmeow bridge is
 multi-tenant, orgs sharing one sidecar each name their own, and the first
 `liquen connect whatsapp` names the tenant after the org's folder. Set it beforehand to
-choose otherwise; a declared section is the operator's and the door leaves it as found.
+choose otherwise, in `config.yaml`; a connection already declared is left as found.
 
 When a connector also **prints an app definition** — slack's manifest, the prefill link
 `liquen connect slack` opens — that definition is filled from the same knobs at print time
@@ -205,6 +206,30 @@ records it on the connection row under `extra.mirrors`, and the alias view reads
   none on a row of your own making. A service the org runs writes its own at connect; a
   wire whose rooms anyone can open adopts one only for an agent that owns no account, by
   id, and says the adoption in the agent's mind as a room line (Slack's ingest, §4).
+  A roster member writing there who is not among the agent's principals is another agent
+  among us; an agent whose `principals` is `"*"` is steered by everyone in its room, a
+  member included.
+
+**A room routed to an agent, made on its first line.** A connector that gives each person
+or each room an agent of its own calls `ensureRoute` (the seam, `src/connector.ts`) before
+it publishes the room's line:
+
+```ts
+await ensureRoute(root, log, { service, connection, room, agent }, {
+  identity: { name, email, phone }, // every handle you know: the agent is its person
+  // principals: [] unless you name someone — nobody steers it but its room
+}, { docs: (await store.docs()).bed });
+await log.publish(line);
+```
+
+The agent is made if missing — its name a folder and a Unix user can be, its settings the
+org's unless `set` gives its own — then the route is one merge of `extra.mirrors.rooms`
+that leaves every other agent's room as it was (`null` takes one out; one room per agent
+per connection), and a new agent is poked up on main's socket. The line is owed to the
+agent from its backlog floor, its creation, whether main has brought it up yet or not.
+`upsertAgent`, `removeAgent` and `poke` are the same path `liquen agent` takes, for a
+connector that manages its agents further. A key `config.yaml` declares is the file's:
+the call refuses to change it, in a sentence.
 
 Teams reads every record off a chat's members, never off the grant whose notice brought the
 line. A chat two connected accounts share reaches both subscriptions, and the row anchors to
@@ -314,7 +339,7 @@ Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispat
   Cross-service helpers (`flavor.ts`, `mentions.ts`, `mirror.ts`, `errors.ts`, `status.ts`)
   and the grammars a kind of connector shares (`poll.ts`, `calendar.ts`, `mail.ts`) live at
   `src/connect/` root.
-- **Custom** — `<org>/connectors/<name>/`, beside the org's `config.jsonc`. Connectors are
+- **Custom** — `<org>/connectors/<name>/`, beside the org's `config.yaml`. Connectors are
   code and ship with the org's image (`data/` is the volume — state only); an org's
   deployment is the package + `connectors/` + config, and a package upgrade is a version
   bump that never touches them. A custom connector imports the seam as

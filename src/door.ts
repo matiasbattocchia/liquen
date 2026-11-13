@@ -167,6 +167,11 @@ export interface Doors {
   usage(agentId: string, row: UsageRow): void;
   /** Live connections across every door — what an attachment-derived lifetime reads. */
   attachments(): number;
+  /** Open an agent's door, or hand a door already open to `agent`: the connections it
+   *  takes from here on are served by it. */
+  open(agent: DoorAgent): Promise<void>;
+  /** Shut an agent's door: its connections hung up, its socket gone. */
+  shut(agentId: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -239,16 +244,27 @@ function pushStatus(t: Tailer, line: Status): void {
 }
 
 /** Serve one door per agent under `dir` — one unix socket in each agent's own folder. */
-export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Doors> {
-  const conns = new Set<Deno.Conn>();
-  const listeners: { listener: Deno.Listener; path: string }[] = [];
-  const serving: Promise<void>[] = [];
+export async function installDoors(dir: string, agents: DoorAgent[] = []): Promise<Doors> {
+  /** One agent's door: who answers it now, its socket, and the connections it holds. */
+  interface Door {
+    agent: DoorAgent;
+    listener: Deno.Listener;
+    path: string;
+    conns: Set<Deno.Conn>;
+    serving: Promise<void>;
+  }
+  const doors = new Map<string, Door>();
   const casts = new Map<string, Set<Tailer>>();
   // the sessions mid-turn, `agent/session`: a tail that opens during a turn starts on its
   // busy edge, since the edge itself was pushed before the tail existed
   const running = new Set<string>();
 
-  for (const agent of agents) {
+  const open = async (agent: DoorAgent) => {
+    const standing = doors.get(agent.agentId);
+    if (standing) {
+      standing.agent = agent;
+      return;
+    }
     const home = `${dir}/agents/${agent.agentId}`;
     await Deno.mkdir(home, { recursive: true });
     const path = `${home}/door.sock`;
@@ -260,27 +276,47 @@ export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Do
     // is the agent's uid and no peer holds a bit on it
     await Deno.chmod(path, 0o600);
     await own(path, agentUser(agent.agentId));
-    listeners.push({ listener, path });
     const cast = new Set<Tailer>();
     casts.set(agent.agentId, cast);
-    serving.push(
-      (async () => {
-        for await (const conn of listener) {
-          conns.add(conn);
-          serve(conn, agent, cast, (session) => running.has(`${agent.agentId}/${session}`))
-            .catch((err) => console.error(`[door] ${agent.agentId}:`, err))
-            .finally(() => {
-              conns.delete(conn);
-              try {
-                conn.close();
-              } catch { /* already closed */ }
-            });
-        }
-      })().catch(() => {/* listener closed — teardown */}),
-    );
-  }
+    const door: Door = { agent, listener, path, conns: new Set(), serving: Promise.resolve() };
+    door.serving = (async () => {
+      for await (const conn of listener) {
+        door.conns.add(conn);
+        serve(conn, door.agent, cast, (session) => running.has(`${agent.agentId}/${session}`))
+          .catch((err) => console.error(`[door] ${agent.agentId}:`, err))
+          .finally(() => {
+            door.conns.delete(conn);
+            try {
+              conn.close();
+            } catch { /* already closed */ }
+          });
+      }
+    })().catch(() => {/* listener closed — teardown */});
+    doors.set(agent.agentId, door);
+  };
+
+  const shut = async (agentId: string) => {
+    const door = doors.get(agentId);
+    if (!door) return;
+    doors.delete(agentId);
+    casts.delete(agentId);
+    door.listener.close();
+    for (const conn of door.conns) {
+      try {
+        conn.close();
+      } catch { /* already closed */ }
+    }
+    await door.serving;
+    try {
+      await Deno.remove(door.path);
+    } catch { /* already gone */ }
+  };
+
+  for (const agent of agents) await open(agent);
 
   return {
+    open,
+    shut,
     emit(agentId: string, sessionId: string, delta: Delta) {
       for (const t of casts.get(agentId) ?? []) {
         if (t.session === sessionId) t.push({ delta });
@@ -296,20 +332,9 @@ export async function installDoors(dir: string, agents: DoorAgent[]): Promise<Do
     usage(agentId: string, row: UsageRow) {
       for (const t of casts.get(agentId) ?? []) pushUsage(t, row);
     },
-    attachments: () => conns.size,
+    attachments: () => [...doors.values()].reduce((n, d) => n + d.conns.size, 0),
     async close() {
-      for (const { listener } of listeners) listener.close();
-      for (const conn of conns) {
-        try {
-          conn.close();
-        } catch { /* already closed */ }
-      }
-      await Promise.all(serving);
-      for (const { path } of listeners) {
-        try {
-          await Deno.remove(path);
-        } catch { /* already gone */ }
-      }
+      for (const agentId of [...doors.keys()]) await shut(agentId);
     },
   };
 }
@@ -436,7 +461,7 @@ async function handle(
   const port = await agent.port(session);
   if (agent.paused && ORDERS.includes(req.op as string)) {
     throw new Error(
-      `${agent.agentId} is paused — mind: false in config.jsonc (agents.${agent.agentId}, ` +
+      `${agent.agentId} is paused — mind: false (agents.${agent.agentId}, ` +
         `or shared.agents for every agent); the door reads, it takes no orders`,
     );
   }

@@ -18,7 +18,7 @@ Deno.test("status --json: the org's facts, and each agent's turns — running, t
   const at = (s: number) => new Date(Date.parse("2026-10-13T15:00:00Z") + s * 1000).toISOString();
   const put = async (d: Partial<Draft>) => (await log.publish({ envelope: room, ...d } as Draft))!;
   try {
-    await log.syncAgents([{ agentId: "ana", mind: "mind@ana" }]);
+    await log.putAgents([{ agentId: "ana", mind: "mind@ana" }]);
     await creds.put({ key: "slack:T1", value: { token: "xoxb-secret", team: "T1" } });
     const hi = await put({
       ts: at(0),

@@ -9,7 +9,8 @@
 
 import { TextLineStream } from "@std/streams";
 import { userInfo } from "node:os";
-import { EFFORTS, findRoot, PROVIDERS, readConfig } from "./config.ts";
+import { EFFORTS, findRoot, PROVIDERS } from "./config.ts";
+import { readConfig } from "./org.ts";
 import type { Status, Tune } from "./door.ts";
 import type { Delta, Effort, Event, PermissionVerdict } from "./types.ts";
 import type { UsageRow } from "./store/log.ts";
@@ -56,7 +57,7 @@ export function tuneFlags(args: string[]): Tune {
   return tune;
 }
 
-/** The org lives where you run liquen: the nearest config.jsonc up from cwd is the project
+/** The org lives where you run liquen: the nearest config.yaml up from cwd is the project
  *  marker, and the substrate sits beside it. The roster is the catalog's — an agent the
  *  config does not declare cannot run. When the agent folder shares the OS username, no
  *  identity map exists at all (principal name = agent name); an explicit argument talks
@@ -78,7 +79,7 @@ export async function resolveAgent(
   const target = explicit ?? username;
   if (!(target in catalog.agents)) {
     throw new Error(
-      `no agent "${target}" in ${root}/config.jsonc — \`liquen agent ${target}\` adds one ` +
+      `no agent "${target}" in ${root} — \`liquen agent ${target}\` makes one ` +
         `(\`liquen repl --help\` for the usage)`,
     );
   }

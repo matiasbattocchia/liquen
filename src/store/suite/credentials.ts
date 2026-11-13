@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import type { Substrate } from "./mod.ts";
+import { cast, type Substrate } from "./mod.ts";
 
 export function credentialsSuite(s: Substrate): void {
   /** An OAuth state is one-shot and short-lived: consumed once, and only within its TTL.
@@ -27,6 +27,9 @@ export function credentialsSuite(s: Substrate): void {
   /** A deleted secret is gone from every read, and a second delete finds nothing. */
   Deno.test("delete drops the row, and says whether there was one", async () => {
     const store = await s.fresh();
+    const log = await store.open();
+    await cast(log); // a key's owner is a row of the roster
+    await log.close();
     const creds = await store.vault();
     try {
       await creds.put({ key: "token:openai", value: { token: "t" } });

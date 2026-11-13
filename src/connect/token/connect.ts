@@ -246,7 +246,7 @@ if (import.meta.main) {
 
     if (args.agentId) {
       // the roster is the catalog's say (`agents.<name>`): a door runs before any start
-      const { readConfig } = await import("../../config.ts");
+      const { readConfig } = await import("../../org.ts");
       const known = Object.keys((await readConfig(root)).agents);
       if (!known.includes(args.agentId)) {
         throw new Error(

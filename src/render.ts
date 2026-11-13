@@ -88,7 +88,7 @@ export interface Surface {
 
 /** The facts the harness owns about who and where the agent is (§5): its id — the roster
  *  entry, the unix user, the folder — the name it goes by and the handles its principal is
- *  known by, its home, the org's clock and locale (all from `config.jsonc`), the rest of
+ *  known by, its home, the org's clock and locale (all from the org's configuration), the rest of
  *  the roster split by who steers it, and the surfaces it speaks through (from the
  *  connections map). Harness-authored — not a doc, so no edit can lose them. Every stamp
  *  the model sees is already on this clock; naming the zone is what lets it convert a

@@ -6,13 +6,14 @@
 
 import { assertEquals, assertRejects } from "@std/assert";
 import { aliasOf } from "../connections.ts";
-import type { Substrate } from "./mod.ts";
+import { cast, type Substrate } from "./mod.ts";
 
 export function connectionsSuite(s: Substrate): void {
   Deno.test("connections(): the live map, extra and all — a soft-deleted grant is not listed", async () => {
     const store = await s.fresh();
     const log = await store.open();
     try {
+      await cast(log);
       await log.upsertConnections([
         { service: "whatsapp", address: "549", agentId: "ana", extra: { state: "connected" } },
         { service: "slack", address: "T1", credentialKey: "slack:T1:org" },
@@ -36,6 +37,7 @@ export function connectionsSuite(s: Substrate): void {
     const row = { service: "slack", connection: "T1", conversation: "slack:T1:C1", agentId: "ana" };
     const member = (ts?: string) => log.isMember("slack", "T1", "slack:T1:C1", "ana", "mind", ts);
     try {
+      await cast(log);
       assertEquals(await member(), false);
       await log.upsertMemberships([row, row]); // re-enroll: no duplicate, no error
       assertEquals(await member(), true);
@@ -67,6 +69,7 @@ export function connectionsSuite(s: Substrate): void {
       kind: "group" as const,
     };
     try {
+      await cast(log);
       await log.createConversation(ops);
       assertEquals(await log.conversation("local", "default", "0192abc"), ops);
       assertEquals(await log.conversation("local", "default", "nope"), null);
@@ -140,6 +143,7 @@ export function connectionsSuite(s: Substrate): void {
     const store = await s.fresh();
     const log = await store.open();
     try {
+      await cast(log);
       await log.upsertConnections([
         { service: "slack", address: "T1" }, // no owner, no binding — not an alias
         { service: "slack", address: "T1:U1", agentId: "ana", extra: { mirrors: { self: "D1" } } },
@@ -194,7 +198,7 @@ export function connectionsSuite(s: Substrate): void {
     const store = await s.fresh();
     const log = await store.open();
     try {
-      await log.syncAgents([{ agentId: "sonar", mind: "mind@sonar", principals: [] }]);
+      await log.putAgents([{ agentId: "sonar", mind: "mind@sonar", principals: [] }]);
       await log.upsertConnections([
         {
           service: "sonar",
@@ -246,7 +250,7 @@ export function connectionsSuite(s: Substrate): void {
     const store = await s.fresh();
     const log = await store.open();
     try {
-      await log.syncAgents([
+      await log.putAgents([
         { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "549115550001" },
         {
           agentId: "ventas",
@@ -300,6 +304,7 @@ export function connectionsSuite(s: Substrate): void {
     const store = await s.fresh();
     const log = await store.open();
     try {
+      await cast(log);
       await log.upsertMemberships([
         { service: "slack", connection: "T1", conversation: "slack:T1:C9", agentId: "bo" },
         { service: "slack", connection: "T1", conversation: "slack:T1:C1", agentId: "ana" },

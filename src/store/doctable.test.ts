@@ -16,7 +16,7 @@ Deno.test("openStore: docs in the table are a table of log.db, beside the log an
   const root = await Deno.makeTempDir();
   try {
     await Deno.writeTextFile(
-      `${root}/config.jsonc`,
+      `${root}/config.yaml`,
       JSON.stringify({ deployment: { docs: "database" } }),
     );
     const store = await openStore(root);

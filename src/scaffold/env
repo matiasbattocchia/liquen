@@ -1,4 +1,4 @@
-# .env — secrets only. Every knob lives in config.jsonc.
+# .env — secrets only. Every knob lives in config.yaml, or in the store (`liquen config`).
 # ANTHROPIC_API_KEY=
 # PGPASSWORD=            # the store's password, when deployment.database names Postgres
 # SANDBOX_API_KEY=       # the sandbox gateway's bearer token, when deployment.sandbox names one

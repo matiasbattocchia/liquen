@@ -323,9 +323,10 @@ export function createGrantBroker(deps: BrokerDeps): GrantBroker {
 }
 
 /** The vault rows an agent's user space is fronted with — one placeholder per row, under
- *  the var the row declares (`extra.env`). Per var: the org's own row (no owner) when
- *  there is exactly one, else the agent's own when there is exactly one. A row a peer
- *  holds never fronts this agent's var, and a var several rows contend for stays unset:
+ *  the var the row declares (`extra.env`). Per var: the agent's own row when it holds
+ *  exactly one, the org's (no owner) when the agent holds none and the org exactly one,
+ *  the order its model keys take (`vaultKeys`). A row a peer holds never fronts this
+ *  agent's var, and a var several rows contend for at the level that wins stays unset:
  *  the plane is the agent's, and which token it spends is that agent's grant to make. */
 export function frontedFor<R extends { agentId?: string; extra?: Record<string, unknown> }>(
   rows: R[],
@@ -342,7 +343,8 @@ export function frontedFor<R extends { agentId?: string; extra?: Record<string, 
   for (const candidates of byVar.values()) {
     const org = candidates.filter((r) => !r.agentId);
     const own = candidates.filter((r) => r.agentId === agentId);
-    const pick = org.length === 1 ? org[0] : org.length === 0 && own.length === 1 ? own[0] : null;
+    const level = own.length > 0 ? own : org;
+    const pick = level.length === 1 ? level[0] : null;
     if (pick) picked.push(pick);
   }
   return picked;

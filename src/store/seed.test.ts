@@ -1,11 +1,27 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { bringToolDocs, onFiles, seedAgent, seedOrg, seedSkill } from "./seed.ts";
+import { bringSystemDocs, hashOf, onFiles, seedAgent, seedOrg, seedSkill } from "./seed.ts";
 import { openFileDocs } from "./docs.ts";
+
+/** A manifest kept in memory, its rows in view. */
+function memory(rows: Record<string, string> = {}) {
+  return {
+    rows,
+    manifest: () => Promise.resolve({ ...rows }),
+    setManifest(entries: Record<string, string | null>) {
+      for (const [key, value] of Object.entries(entries)) {
+        if (value === null) delete rows[key];
+        else rows[key] = value;
+      }
+      return Promise.resolve();
+    },
+  };
+}
 
 Deno.test("seed installs the cascade; list inlines the always-layers and indexes the skills", async () => {
   const root = await Deno.makeTempDir();
   try {
     await seedOrg(onFiles(root));
+    await bringSystemDocs(onFiles(root));
     await seedAgent(onFiles(root), "alter");
     const docs = await openFileDocs(root).list({ agent: "alter" });
     const refs = docs.map((d) => `${d.header.scope}/${d.header.kind}/${d.header.name}`).sort();
@@ -76,39 +92,19 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
   }
 });
 
-Deno.test("seeding never overwrites an edited doc", async () => {
+Deno.test("a scaffold is the org's once laid: an edit is kept, an emptied one stays empty", async () => {
   const root = await Deno.makeTempDir();
   try {
     await seedOrg(onFiles(root));
+    await seedAgent(onFiles(root), "alter");
     const path = `${root}/shared/instructions.md`;
     await Deno.writeTextFile(path, "---\nkind: instruction\nload: always\n---\nEDITED");
-    await seedOrg(onFiles(root)); // idempotent boot
-    assertStringIncludes(await Deno.readTextFile(path), "EDITED");
-  } finally {
-    await Deno.remove(root, { recursive: true });
-  }
-});
-
-Deno.test("a deleted doc stays deleted in a folder the org has; a root doc answers for itself", async () => {
-  const root = await Deno.makeTempDir();
-  try {
-    await seedOrg(onFiles(root));
-    await seedAgent(onFiles(root), "alter");
-    // an org that wants one skill fewer
-    await Deno.remove(`${root}/system/skills/workflows.md`);
-    // one that wants no org-wide instruction empties it: a file with no header is no doc
-    await Deno.writeTextFile(`${root}/shared/instructions.md`, "");
-    // and a root doc deleted outright
-    await Deno.remove(`${root}/agents/alter/memories.md`);
+    // one that wants no memories doc empties it: a file with no header is no doc
+    await Deno.writeTextFile(`${root}/agents/alter/memories.md`, "");
     await seedOrg(onFiles(root)); // every later boot
     await seedAgent(onFiles(root), "alter");
-    assertEquals(await Deno.stat(`${root}/system/skills/workflows.md`).catch(() => null), null);
-    assertEquals(await Deno.readTextFile(`${root}/shared/instructions.md`), "");
-    assert((await Deno.stat(`${root}/agents/alter/memories.md`)).isFile);
-    // removing a folder asks for its set again
-    await Deno.remove(`${root}/system/skills`, { recursive: true });
-    await seedOrg(onFiles(root));
-    assert((await Deno.stat(`${root}/system/skills/workflows.md`)).isFile);
+    assertStringIncludes(await Deno.readTextFile(path), "EDITED");
+    assertEquals(await Deno.readTextFile(`${root}/agents/alter/memories.md`), "");
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -117,7 +113,7 @@ Deno.test("a deleted doc stays deleted in a folder the org has; a root doc answe
 Deno.test("the halves are the doors': org alone leaves no agent, and a home is a folder first", async () => {
   const root = await Deno.makeTempDir();
   try {
-    await seedOrg(onFiles(root)); // `liquen init`: nobody declared yet
+    await seedOrg(onFiles(root)); // `liquen init`: nobody made yet
     assertEquals(await Deno.stat(`${root}/agents`).catch(() => null), null);
     await seedAgent(onFiles(root), "alter"); // `liquen agent alter`
     assert((await Deno.stat(`${root}/agents/alter`)).isDirectory); // the workspace itself
@@ -130,66 +126,78 @@ Deno.test("the halves are the doors': org alone leaves no agent, and a home is a
   }
 });
 
-Deno.test("a release's tool docs reach an org that has its own: laid, brought, or kept", async () => {
+Deno.test("a release's system docs reach an org's files: new ones laid, unedited ones replaced, the org's own left for a decision", async () => {
   const root = await Deno.makeTempDir();
   try {
-    await seedOrg(onFiles(root));
     const bed = onFiles(root);
-    const path = (tool: string) => `${root}/system/tools/${tool}.md`;
-    const template = (tool: string) =>
-      fetch(new URL(`../seed/system/tools/${tool}.md`, import.meta.url)).then((r) => r.text());
-    // the org as an older release left it: bash and send in that release's words, cancel
-    // edited by the org, and contact a tool that release had no doc for
+    const manifest = memory();
+    await bringSystemDocs(bed, manifest); // the first boot: every doc laid and recorded
+    const path = (doc: string) => `${root}/system/${doc}.md`;
+    const template = (doc: string) =>
+      fetch(new URL(`../seed/system/${doc}.md`, import.meta.url)).then((r) => r.text());
+    // the org as an older release left it: bash in that release's words, cancel edited
+    // since, workflows deleted, and contact a doc that release did not have
     const older = "---\nkind: tool\n---\nolder words";
-    await Deno.writeTextFile(path("bash"), older);
-    await Deno.writeTextFile(path("send"), older);
-    await Deno.writeTextFile(path("cancel"), "---\nkind: tool\n---\nthe org's own");
-    await Deno.remove(path("contact"));
-    // what the older release published; search it worded as this one does
-    const was = (t: string) =>
-      t.endsWith("/contact.md")
-        ? Promise.resolve(null)
-        : t.endsWith("/search.md")
-        ? template("search")
-        : Promise.resolve(older);
-    assertEquals(await bringToolDocs(bed, was), {
-      laid: ["contact"],
-      updated: ["send", "bash"],
-      kept: ["cancel"],
-    });
-    assertEquals(await Deno.readTextFile(path("bash")), await template("bash"));
-    assertEquals(await Deno.readTextFile(path("contact")), await template("contact"));
-    assertStringIncludes(await Deno.readTextFile(path("cancel")), "the org's own");
-    // an edit the release did not reword is the org's, and goes unsaid
-    await Deno.writeTextFile(path("search"), "---\nkind: tool\n---\nthe org's search");
-    assertEquals(await bringToolDocs(bed, was), { laid: [], updated: [], kept: ["cancel"] });
-    assertStringIncludes(await Deno.readTextFile(path("search")), "the org's search");
-    // a folder linked at a checkout reads the checkout's words live: nothing to bring
-    const linked = await Deno.makeTempDir();
-    try {
-      await Deno.mkdir(`${linked}/system`);
-      await Deno.symlink(`${root}/system/tools`, `${linked}/system/tools`);
-      assertEquals(await bringToolDocs(onFiles(linked), was), null);
-    } finally {
-      await Deno.remove(linked, { recursive: true });
+    for (const doc of ["tools/bash", "tools/cancel", "skills/workflows"]) {
+      manifest.rows[`doc:system/${doc}`] = await hashOf(older);
     }
+    await Deno.writeTextFile(path("tools/bash"), older);
+    await Deno.writeTextFile(path("tools/cancel"), "---\nkind: tool\n---\nthe org's own");
+    await Deno.remove(path("skills/workflows"));
+    await Deno.remove(path("tools/contact"));
+    delete manifest.rows["doc:system/tools/contact"];
+    // an edit to a doc the release did not reword is the org's, and goes unsaid
+    await Deno.writeTextFile(path("tools/search"), "---\nkind: tool\n---\nthe org's search");
+
+    const boot = await bringSystemDocs(bed, manifest);
+    assertEquals([boot.laid, boot.replaced], [["tools/contact"], ["tools/bash"]]);
+    assertEquals(boot.pending, [
+      { doc: "tools/cancel", state: "edited" },
+      { doc: "skills/workflows", state: "deleted" },
+    ]);
+    assertEquals(await Deno.readTextFile(path("tools/bash")), await template("tools/bash"));
+    assertEquals(await Deno.readTextFile(path("tools/contact")), await template("tools/contact"));
+    assertStringIncludes(await Deno.readTextFile(path("tools/cancel")), "the org's own");
+    assertStringIncludes(await Deno.readTextFile(path("tools/search")), "the org's search");
+
+    // the release's words beside the org's: a file nothing loads, and the doc still waits
+    const beside = await bringSystemDocs(
+      bed,
+      manifest,
+      (p) => Promise.resolve(p.state === "edited" ? "beside" : undefined),
+    );
+    assertEquals(beside.beside, ["tools/cancel"]);
+    assertEquals(
+      await Deno.readTextFile(`${path("tools/cancel")}.new`),
+      await template("tools/cancel"),
+    );
+    const listed = await openFileDocs(root).list({ agent: "alter" });
+    assertEquals(listed.filter((d) => d.header.name.startsWith("tools/cancel")).length, 1);
+    // settled: the org's kept, the deleted one kept deleted — and both quiet from here on
+    const kept = await bringSystemDocs(bed, manifest, () => Promise.resolve("keep"));
+    assertEquals(kept.kept.sort(), ["skills/workflows", "tools/cancel"]);
+    assertEquals(await Deno.stat(path("skills/workflows")).catch(() => null), null);
+    assertEquals((await bringSystemDocs(bed, manifest)).pending, []);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
 });
 
-Deno.test("a connector's skill is laid by its door, by file — the skills folder already exists", async () => {
+Deno.test("a connector's skill is laid by its door, once, and recorded as taken", async () => {
   const root = await Deno.makeTempDir();
   try {
-    await seedOrg(onFiles(root)); // system/skills/ is here now, with the harness's own skills
-    assertEquals(await seedSkill(onFiles(root), "microsoft-graph"), true);
+    const manifest = memory();
+    await bringSystemDocs(onFiles(root), manifest);
     const path = `${root}/system/skills/microsoft-graph.md`;
+    assertEquals(await Deno.stat(path).catch(() => null), null); // no boot lays it
+    assertEquals(await seedSkill(onFiles(root), manifest, "microsoft-graph"), true);
     assertStringIncludes(await Deno.readTextFile(path), "MICROSOFT_GRAPH_TOKEN");
+    assert("doc:system/skills/microsoft-graph" in manifest.rows);
     const docs = await openFileDocs(root).list({ agent: "alter" });
     assert(docs.some((d) => d.header.name === "skills/microsoft-graph"));
     // a second door run keeps the org's edit
     await Deno.writeTextFile(path, "---\nkind: skill\ndescription: x\n---\nEDITED");
-    assertEquals(await seedSkill(onFiles(root), "microsoft-graph"), false);
+    assertEquals(await seedSkill(onFiles(root), manifest, "microsoft-graph"), false);
     assertStringIncludes(await Deno.readTextFile(path), "EDITED");
   } finally {
     await Deno.remove(root, { recursive: true });

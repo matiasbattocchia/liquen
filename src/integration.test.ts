@@ -27,10 +27,23 @@ import type { AgentRow } from "./store/agents.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { localFiles } from "./store/media.ts";
 import { fileStorage } from "./store/storage.ts";
-import { onFiles, seedOrg } from "./store/seed.ts";
+import { bringSystemDocs, onFiles, seedOrg } from "./store/seed.ts";
+
+/** A log with the scenarios' agent in its roster. */
+async function orgLog(dir: string): Promise<Log> {
+  const log = await openLog(dir);
+  await members(log, "a1");
+  return log;
+}
+
+/** A docs root as an org boots on it: the org's scaffolds, and the release's system docs. */
+async function laid(root: string): Promise<void> {
+  await seedOrg(onFiles(root));
+  await bringSystemDocs(onFiles(root));
+}
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission, ModelTransport } from "./mu.ts";
-import { canned, scripted } from "./testing.ts";
+import { canned, members, scripted } from "./testing.ts";
 import { shortId, textOf } from "./render.ts";
 import { answer, answerRows, isRefusal, refusalText, type Said } from "./verdict.ts";
 import type {
@@ -75,7 +88,7 @@ const FIXTURE_TOOLS: Record<string, string> = {
 
 /** A docs root as every org boots on it, plus the fixtures' tools. */
 async function docsAt(root: string) {
-  await seedOrg(onFiles(root));
+  await laid(root);
   for (const [name, words] of Object.entries(FIXTURE_TOOLS)) {
     await Deno.writeTextFile(
       `${root}/system/tools/${name}.md`,
@@ -162,7 +175,13 @@ function fanOut(config: AgentConfig, log: Log, ports: XiPorts): { stop(): Promis
 
 /** The account a scenario's agent holds unless it declares its own: first contact names
  *  one (`connection: "wa"`), since an address alone does not say which wire it is on. */
-const WA = { service: "whatsapp", address: "5491100000000", extra: { name: "wa" } } as const;
+// the org's account, with a key in the vault: every agent of the roster speaks through it
+const WA = {
+  service: "whatsapp",
+  address: "5491100000000",
+  credentialKey: "whatsapp:5491100000000",
+  extra: { name: "wa" },
+} as const;
 
 async function scenario(
   script: Anthropic.Message[],
@@ -180,9 +199,10 @@ async function scenario(
   connections: Parameters<Log["upsertConnections"]>[0] = [WA], // the accounts the roster speaks through
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await seedOrg(onFiles(`${dir}/docs`)); // the docs root as every org boots on it: the checkpoint instruction included
-  if (roster.length > 0) await log.syncAgents(roster);
+  const log = await orgLog(dir);
+  await laid(`${dir}/docs`); // the docs root as every org boots on it: the checkpoint instruction included
+  if (roster.length > 0) await log.putAgents(roster);
+  await members(log, config.agentId ?? CONFIG.agentId);
   if (connections.length > 0) await log.upsertConnections(connections);
   const preloaded: Event[] = [];
   for (const e of preload) preloaded.push((await log.publish(e))!);
@@ -556,8 +576,8 @@ Deno.test("send: a name two conversations answer to is handed back, never guesse
 
 Deno.test("send `connection`: a named account places first contact on its wire", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "whatsapp", address: "5491100000001", agentId: "a1", extra: { name: "Caja" } },
@@ -629,9 +649,9 @@ Deno.test("send `connection`: a named account places first contact on its wire",
 
 Deno.test("send: a room the window holds nothing of is read first, and the send made again goes", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await seedOrg(onFiles(`${dir}/docs`));
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await laid(`${dir}/docs`);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
@@ -695,9 +715,9 @@ Deno.test("send: a room whose last row is a reaction or a transcript is read by 
   };
   for (const [leaf, part] of Object.entries(leaves)) {
     const dir = await Deno.makeTempDir();
-    const log = await openLog(dir);
-    await seedOrg(onFiles(`${dir}/docs`));
-    await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+    const log = await orgLog(dir);
+    await laid(`${dir}/docs`);
+    await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
     await log.upsertConnections([
       { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     ]);
@@ -756,9 +776,9 @@ Deno.test("send: a room whose last row is a reaction or a transcript is read by 
 Deno.test("search: a page that reaches a room's newest line reads it, profile whole; an older hit does not", async () => {
   for (const asked of [{ text: "asado" }, {}] as Record<string, string>[]) {
     const dir = await Deno.makeTempDir();
-    const log = await openLog(dir);
-    await seedOrg(onFiles(`${dir}/docs`));
-    await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+    const log = await orgLog(dir);
+    await laid(`${dir}/docs`);
+    await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
     await log.upsertConnections([
       { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     ]);
@@ -821,8 +841,8 @@ Deno.test("search: a page that reaches a room's newest line reads it, profile wh
 
 Deno.test("send: a stranger's number rides the one account whose wire takes numbers", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "google", address: "sole@gmail.com", agentId: "a1" },
@@ -877,8 +897,8 @@ Deno.test("send: a stranger's number rides the one account whose wire takes numb
 
 Deno.test("send: a number typed with + and separators is the digits the wire spells", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
@@ -931,8 +951,8 @@ Deno.test("send: a number typed with + and separators is the digits the wire spe
 
 Deno.test("a gated send carries its preview: where it lands, the other side's last word, the text", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
@@ -1041,8 +1061,8 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
 
 Deno.test("a gated send that names its line carries that line and what it does to it", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
@@ -1094,8 +1114,8 @@ Deno.test("a gated send that names its line carries that line and what it does t
 
 Deno.test("a gated send's last word is a line without text: what it carried, and the words it has", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
@@ -1167,8 +1187,8 @@ Deno.test("a gated send's last word is a line without text: what it carried, and
 
 Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere else", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }, { agentId: "a2", mind: "mind@a2" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }, { agentId: "a2", mind: "mind@a2" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
@@ -1222,8 +1242,8 @@ Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere 
 
 Deno.test("send `contacts`: the harness shapes the cards, on WhatsApp only", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }, { agentId: "a2", mind: "mind@a2" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }, { agentId: "a2", mind: "mind@a2" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
@@ -1287,8 +1307,8 @@ Deno.test("send `contacts`: the harness shapes the cards, on WhatsApp only", asy
 
 Deno.test("send `subject`: a first send names the thread it opens; a send into a thread wears its name, and carries no rename", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "google", address: "me@org.com", agentId: "a1", extra: { name: "Me" } },
   ]);
@@ -1360,8 +1380,8 @@ Deno.test("send `subject`: a first send names the thread it opens; a send into a
 
 Deno.test("send: one address on two accounts is two conversations — `connection` says which, and `re` points only within it", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "microsoft", address: "me@org.com", agentId: "a1" },
     { service: "microsoft", address: "me@corp.com", agentId: "a1" },
@@ -1426,8 +1446,8 @@ Deno.test("send: one address on two accounts is two conversations — `connectio
 
 Deno.test("contact: `who` resolves like a send, the write rides the person's own account", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
@@ -1511,8 +1531,8 @@ Deno.test("contact: `who` resolves like a send, the write rides the person's own
 
 Deno.test("search `from` asks the address books too: someone saved and never heard from", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "slack", address: "T1:U9", agentId: "a1" }, // keeps no book: never asked
@@ -1596,8 +1616,8 @@ Deno.test("search `from` asks the address books too: someone saved and never hea
 
 Deno.test("search: a book that cannot be reached is named, never mistaken for an empty one", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
@@ -1641,8 +1661,8 @@ Deno.test("search: a book that cannot be reached is named, never mistaken for an
 
 Deno.test("search: a number nobody here knows is asked of its wire — who it reaches is the page", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "google", address: "sole@clinica.ar", agentId: "a1" }, // takes no phone
@@ -1655,9 +1675,7 @@ Deno.test("search: a number nobody here knows is asked of its wire — who it re
         asked.push(address);
         if (address === "5490000000000") return Promise.reject(new Error("HTTP 503"));
         return Promise.resolve(
-          address === "5492615550103"
-            ? { exists: true, name: "clinicaandina" }
-            : { exists: false },
+          address === "5492615550103" ? { exists: true, name: "clinicaandina" } : { exists: false },
         );
       },
     },
@@ -1724,8 +1742,8 @@ Deno.test("search: a number nobody here knows is asked of its wire — who it re
 
 Deno.test("search: a port is per service, a book is per ACCOUNT — every one of them answers", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1", phone: "5491100000002" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1", phone: "5491100000002" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "whatsapp", address: "5491100000001", agentId: "a1", extra: { name: "Clínica" } },
@@ -1788,8 +1806,8 @@ Deno.test("search: a port is per service, a book is per ACCOUNT — every one of
 
 Deno.test("contact: two accounts and a stranger — the model must say which book", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "whatsapp", address: "5491100000001", agentId: "a1", extra: { name: "Clínica" } },
@@ -1850,8 +1868,8 @@ Deno.test("contact: two accounts and a stranger — the model must say which boo
 
 Deno.test("contact: a person is in two places — a name saved on the book is reachable, a name two people wear is refused", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
     { service: "whatsapp", address: "5491100000001", agentId: "a1", extra: { name: "Clínica" } },
@@ -1929,8 +1947,8 @@ Deno.test("contact: a person is in two places — a name saved on the book is re
 
 Deno.test("contact: a `who` that names several people is refused before it is ever gated", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
@@ -1987,8 +2005,8 @@ const wireRow = (
 
 Deno.test("conversation on a wire: every verb goes through the wire's port as the agent on the account, `who` names people, and a wire with no port keeps its rooms", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "slack", address: "T1", agentId: "a1", extra: { name: "Acme" } },
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
@@ -2122,8 +2140,8 @@ Deno.test("conversation on a wire: every verb goes through the wire's port as th
 
 Deno.test("send: a list of people on a wire opens a room through the port — unnamed a direct room, named a group or a channel — and lands there; without a port the list stays whole", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   await log.upsertConnections([
     { service: "slack", address: "T1", agentId: "a1", extra: { name: "Acme" } },
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
@@ -2580,7 +2598,7 @@ Deno.test("run and gated share no vocabulary: what ran says `sent`, and only tha
 
 Deno.test("a pending ask lives in the ANCHOR — state, not transcript (§5)", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
   const script = [
     ok(
@@ -2614,7 +2632,7 @@ Deno.test("a pending ask lives in the ANCHOR — state, not transcript (§5)", a
 
 Deno.test("the anchor states the approval state either way — silence is not a denial", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
   const script = [
     ok(
@@ -2699,7 +2717,7 @@ const orphanUse = (): Draft<Event> => ({
 
 Deno.test("no duplicate turn: the decision is re-derived under the lease, not before it", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   const { transport, calls } = scripted([
     ok([{ kind: "assistant", text: "ya contesté" }], "end_turn"),
     ok([{ kind: "assistant", text: "DUPLICATE" }], "end_turn"), // must never be consumed
@@ -2723,7 +2741,7 @@ Deno.test("no duplicate turn: the decision is re-derived under the lease, not be
 
 Deno.test("the gate is free: a spectator event takes no lease and reads nothing", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   const { transport, calls } = scripted([ok([{ kind: "assistant", text: "no" }], "end_turn")]);
   const ports = { log, docs: await docsAt(`${dir}/docs`), transport };
   try {
@@ -2860,8 +2878,8 @@ Deno.test("recovery: a pending use with a cleanly released lock is simply run at
 
 Deno.test("a cut that reaches an act before its calls start answers them unrun, and no later turn runs them", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   let ran = 0;
   const echo = { ...echoTool, execute: (input: unknown) => (ran++, echoTool.execute(input)) };
   const { transport } = scripted([
@@ -2900,8 +2918,8 @@ Deno.test("a cut that reaches an act before its calls start answers them unrun, 
 
 Deno.test("an exec tool's result carries its run's facts in extra.exec — the model's output untouched", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
   // a shell-shaped tool: it reports its exit status and the bytes it printed, and fails
   const sh = {
     spec: { name: "sh", input_schema: { type: "object" as const } },
@@ -2991,7 +3009,7 @@ Deno.test("compaction: an over-budget window is checkpointed in the gap after th
 
 Deno.test("coalescing race: a message landing between window-read and closing publish is still answered", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   let release!: () => void;
   const hold = new Promise<void>((r) => (release = r));
   let n = 0;
@@ -3025,7 +3043,7 @@ Deno.test("coalescing race: a message landing between window-read and closing pu
 
 Deno.test("send `re`: the window's id resolves to the wire's name — reply, react, and a miss", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   await log.upsertConnections([{ service: "whatsapp", address: "org" }]); // the publish gate
   try {
     // what the model will point at: a peer message that already crossed a wire, so it has
@@ -3090,7 +3108,7 @@ Deno.test("send `re`: the window's id resolves to the wire's name — reply, rea
 
 Deno.test("send action: the account may unsay its own words, and lift its own reaction", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   await log.upsertConnections([{ service: "whatsapp", address: "org" }]);
   try {
     const wa = (id: string, text: string, mine: boolean) => ({
@@ -3170,7 +3188,7 @@ Deno.test("send action: the account may unsay its own words, and lift its own re
 
 Deno.test("cancel: a message of ours not yet out is withdrawn, never offered again, and send cannot point at it", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   await log.upsertConnections([{ service: "whatsapp", address: "org" }]);
   try {
     // one of ours the bridge never took: born an offer, no wire name yet
@@ -3244,8 +3262,10 @@ Deno.test("cancel: a message of ours not yet out is withdrawn, never offered aga
 
 Deno.test("a standing /n is remembered by the turn its deny wakes: no errand runs, and the rule stands", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.upsertConnections([{ service: "whatsapp", address: "org" }]);
+  const log = await orgLog(dir);
+  await log.upsertConnections([
+    { service: "whatsapp", address: "org", credentialKey: "whatsapp:org" },
+  ]);
   try {
     const send = { to: "wa:g1", text: "llego en 5", connection: "whatsapp" };
     const { transport, calls } = scripted([
@@ -3290,7 +3310,7 @@ Deno.test("a standing /n is remembered by the turn its deny wakes: no errand run
 
 Deno.test("cancel: an unsent message is anyone's to take back who may send there, whoever sent it — a denied room keeps it", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   await log.upsertConnections([{ service: "whatsapp", address: "org" }]);
   try {
     const waiting = (address: string, text: string) =>
@@ -3448,7 +3468,7 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
 Deno.test("search by keyword: a name only a doc knows points at the conversations it names", async () => {
   // "el Juancho" is nobody's saved name: the profile's keyword is what ties it to his chat
   const root = await Deno.makeTempDir();
-  await seedOrg(onFiles(root));
+  await laid(root);
   await Deno.mkdir(`${root}/agents/a1/profiles`, { recursive: true });
   await Deno.writeTextFile(
     `${root}/agents/a1/profiles/juan.md`,
@@ -3500,10 +3520,10 @@ Deno.test("search by keyword: a name only a doc knows points at the conversation
 
 Deno.test("search `from` takes the key a line wears: who among us wrote it, never a name", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
-  await log.syncAgents([
+  const log = await orgLog(dir);
+  await log.putAgents([
     { agentId: "a1", mind: "mind@a1", principals: ["matias"] },
-    { agentId: "matias", mind: "mind@matias", name: "Matías", runs: false },
+    { agentId: "matias", mind: "mind@matias", name: "Matías", settings: { mind: false } },
   ]);
   await log.upsertConnections([{ service: "whatsapp", address: "549", agentId: "a1" }]);
   const row = (
@@ -4234,7 +4254,7 @@ Deno.test("a standing verdict is PINNED: the ruled conversation runs, its neighb
 
 Deno.test("cancel: the agent withdraws one of two asks — and a bare /y settles the other", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
   const script: Anthropic.Message[] = [
     ok([
@@ -4304,7 +4324,7 @@ Deno.test("cancel: the agent withdraws one of two asks — and a bare /y settles
 
 Deno.test("a conditional doc loads while its conversation has an event in the window, and is indexed otherwise", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
   const transport: ModelTransport = (params) => {
     last = params;
@@ -4343,7 +4363,7 @@ Deno.test("a conditional doc loads while its conversation has an event in the wi
 
 Deno.test("the roster: the prefix splits it into who steers this agent and everyone else", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
   const transport: ModelTransport = (params) => {
     last = params;
@@ -4351,10 +4371,16 @@ Deno.test("the roster: the prefix splits it into who steers this agent and every
   };
   const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   try {
-    await log.syncAgents([
+    await log.putAgents([
       { agentId: "a1", mind: "mind@a1", principals: ["matias"] },
       // the one who steers: a person alone, no session of their own (§4)
-      { agentId: "matias", mind: "mind@matias", name: "Matías", phone: "+549", runs: false },
+      {
+        agentId: "matias",
+        mind: "mind@matias",
+        name: "Matías",
+        phone: "+549",
+        settings: { mind: false },
+      },
       { agentId: "sol", mind: "mind@sol", name: "Sol", email: "sol@x.io" },
     ]);
     await log.publish(principalMsg("hola"));
@@ -4370,7 +4396,7 @@ Deno.test("the roster: the prefix splits it into who steers this agent and every
 
 Deno.test("the surfaces: the prefix names them, the anchor lists the ones that are down", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
   const transport: ModelTransport = (params) => {
     last = params;
@@ -4379,6 +4405,7 @@ Deno.test("the surfaces: the prefix names them, the anchor lists the ones that a
   const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
   const config = { ...CONFIG, timezone: "UTC" };
   try {
+    await members(log, "a2");
     await log.upsertConnections([
       // owned by a1 and down: the bridge said so, stamped
       {
@@ -4418,7 +4445,7 @@ Deno.test("the surfaces: the prefix names them, the anchor lists the ones that a
 
 Deno.test("the anchor's `today` and `tomorrow`: the calendar and the dated lines of every doc it reads (§5)", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   let last: Anthropic.MessageCreateParamsNonStreaming | undefined;
   const transport: ModelTransport = (params) => {
     last = params;
@@ -4492,7 +4519,7 @@ Deno.test("the anchor's `today` and `tomorrow`: the calendar and the dated lines
 
 Deno.test("xi returns what it decided, and discloses it the moment it decides", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   const { transport } = scripted([ok([{ kind: "assistant", text: "hola" }])]);
   const seen: [string, string | undefined][] = [];
   const ports: XiPorts = {
@@ -4521,7 +4548,7 @@ Deno.test("xi returns what it decided, and discloses it the moment it decides", 
 
 Deno.test("a turn that ends in a terminal error discloses the idle it leaves", async () => {
   const dir = await Deno.makeTempDir();
-  const log = await openLog(dir);
+  const log = await orgLog(dir);
   // a 401 is not weather: nu writes it as the turn's terminal row without a retry
   const { transport } = scripted([Object.assign(new Error("401 invalid key"), { status: 401 })]);
   const seen: [string, string | undefined][] = [];

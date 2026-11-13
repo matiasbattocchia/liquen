@@ -1,8 +1,9 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { declared, requireEdge, requireIngest } from "./declare.ts";
 import { serveIngest, serveSocket } from "./serve.ts";
-import { runSocket } from "../reload.ts";
+import { applied, runSocket } from "../reload.ts";
 import { type ConnectorSpec, materialize, starterConfig } from "../config.ts";
+import { readConfig } from "../org.ts";
 
 const spec: ConnectorSpec = {
   name: "acme",
@@ -17,21 +18,19 @@ async function org(edgePort?: number): Promise<string> {
   const root = await Deno.makeTempDir();
   const cfg = starterConfig();
   if (edgePort !== undefined) cfg.edge.port = edgePort;
-  await Deno.writeTextFile(`${root}/config.jsonc`, materialize(cfg));
+  await Deno.writeTextFile(`${root}/config.yaml`, materialize(cfg));
   return root;
 }
 
-Deno.test("declared: what the door earned lands in config.jsonc; a section the file has is left as found", async () => {
+Deno.test("declared: what the door earned lands in the store, never the file; a connection already declared is left as found", async () => {
   const root = await org();
   try {
+    const file = await Deno.readTextFile(`${root}/config.yaml`);
     await declared(root, spec, { organizationId: "acme" });
-    const raw = await Deno.readTextFile(`${root}/config.jsonc`);
-    assertStringIncludes(raw, `"acme": {"organizationId":"acme"}`);
+    assertEquals((await readConfig(root)).connections, { acme: { organizationId: "acme" } });
     await declared(root, spec, { organizationId: "other" });
-    assertStringIncludes(
-      await Deno.readTextFile(`${root}/config.jsonc`),
-      `"organizationId":"acme"`,
-    );
+    assertEquals((await readConfig(root)).connections, { acme: { organizationId: "acme" } });
+    assertEquals(await Deno.readTextFile(`${root}/config.yaml`), file);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -46,8 +45,8 @@ Deno.test("requireIngest: a fresh org gets the declaration, then the refusal —
       `nothing is listening at ${root}/data/run/acme.sock`,
     );
     assertStringIncludes((err as Error).message, "liquen start");
-    // the file now says the org has acme — `liquen start` runs it from here on
-    assertStringIncludes(await Deno.readTextFile(`${root}/config.jsonc`), '"acme": {}');
+    // the store now says the org has acme — `liquen start` runs it from here on
+    assertEquals((await readConfig(root)).connections, { acme: {} });
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -91,6 +90,7 @@ Deno.test("requireEdge: nobody on edge.port is the refusal, the edge up is the g
   probe.close();
   const root = await org(port);
   try {
+    await applied(root); // the port is the file's word, taken at a boot
     const err = await assertRejects(() => requireEdge(root, 30));
     assertStringIncludes((err as Error).message, `nothing is listening on :${port}`);
     const edge = Deno.listen({ hostname: "127.0.0.1", port });

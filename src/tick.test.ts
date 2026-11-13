@@ -6,6 +6,7 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { type Clock, lapseGates, tick } from "./tick.ts";
 import { openLog } from "./store/log.ts";
+import { members } from "./testing.ts";
 import type { DocEntry, DocScope } from "./store/docs.ts";
 import { RETRY_BACKOFF_MS } from "./store/sweep.ts";
 import type {
@@ -72,6 +73,7 @@ const textOf = (e: Event) => e.parts?.[0].type === "text" ? e.parts[0].text : un
 Deno.test("a beat: the lines due remind as one alarm in the mind's room, the old ask lapses, and the next beat is quiet", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
+  await members(log, "a1");
   try {
     const now = Date.parse("2026-11-06T13:00:00Z"); // 6 Nov 10:00 on the agent's clock
     const board = (jana: string) =>
@@ -125,6 +127,7 @@ Deno.test("a beat: the lines due remind as one alarm in the mind's room, the old
 Deno.test("a clock that was down fires a repeat once, at the latest step it missed", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
+  await members(log, "a1");
   try {
     const docs = {
       "agent:wakes":
@@ -151,6 +154,7 @@ Deno.test("a clock that was down fires a repeat once, at the latest step it miss
 Deno.test("a reminder fires within the backlog and not past it", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
+  await members(log, "a1");
   try {
     const docs = { "agent:x": "- @6 Nov 2026 9:00 remind Llamar a Ana." };
     const zone = "America/Argentina/Buenos_Aires";
@@ -200,6 +204,7 @@ const sent = (text: string, turn?: string, use?: Event["id"]): Draft<MessageEven
 Deno.test("a send that failed for good is told against the call that sent it, once", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
+  await members(log, "a1");
   try {
     const now = Date.now();
     await log.upsertConnections([{ service: "whatsapp", address: "5491100000000", agentId: "a1" }]);
@@ -258,6 +263,7 @@ Deno.test("a send that failed for good is told against the call that sent it, on
 Deno.test("a send not out past the stall is told so, still tried, and told again when it goes out after all", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
+  await members(log, "a1");
   try {
     const now = Date.now();
     const after = (minutes: number) => new Date(now + minutes * 60_000).toISOString();
@@ -318,6 +324,7 @@ Deno.test("a send not out past the stall is told so, still tried, and told again
 Deno.test("a withdrawn send is told to the session that sent it, final, naming who took it back", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
+  await members(log, "a1");
   try {
     const now = Date.now();
     const stamp = new Date(now).toISOString();
@@ -369,6 +376,7 @@ Deno.test("a withdrawn send is told to the session that sent it, final, naming w
 Deno.test("a failing pass is reported in the beat, and the passes after it still run", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
+  await members(log, "a1");
   try {
     const now = Date.now();
     await log.publish([card("old", at(30, now))]);
@@ -392,6 +400,7 @@ Deno.test("a failing pass is reported in the beat, and the passes after it still
 Deno.test("an ask nobody answers lapses (§9): a day on, the harness settles it as lapsed", async () => {
   const dir = await Deno.makeTempDir();
   const log = await openLog(`${dir}/log`);
+  await members(log, "a1");
   try {
     await log.publish([card("old", at(30)), card("fresh", at(1)), card("peer's", at(30), "a2")]);
     assertEquals(await lapseGates(log), 2);

@@ -27,22 +27,27 @@
  * is brought up to the scaffold's: a task the package ships and the org lacks is added the
  * way the scaffold spells it, so `liquen` names every command of the release the org runs.
  * A task the org has is its own — one whose command differs from the package's is named
- * with the package's, never rewritten. Its tool docs are brought too (`bringToolDocs`): one
- * missing is laid, one still word for word the release it moved from takes the new words,
- * one the org edited is kept and named. The scaffold and the templates read are the NEW
- * release's: once the lock moves, the sync runs as `update --sync <from>` through the org's
- * own import map, which now resolves to it. `--tasks` is the sync as a release without
- * `--sync` calls it, with no release to weigh an edit against.
+ * with the package's, never rewritten. The docs under `data/system/` are brought too, by
+ * the function boot runs (`bringSystemDocs`, store/seed.ts), against the manifest the
+ * store keeps: one new in this release is laid, one the org left as the last release had
+ * it takes the new words, one the release dropped goes. What boot leaves alone this
+ * command settles: a doc the org edited or deleted and this release changed is asked
+ * about at a terminal, or answered by a flag — `--restore`, `--replace`, `--beside`,
+ * `--keep`, each naming docs or, bare, every doc it fits — and without either is left as
+ * it is, named with the flags that settle it. The scaffold and the templates read are the
+ * NEW release's: once the lock moves, the sync runs as `update --sync` through the org's
+ * own import map, which now resolves to it.
  */
 
 import { parse } from "@std/jsonc";
-import { findRoot, orgFlag, withMember, withoutMember } from "./config.ts";
+import { findRoot, orgFlag } from "./config.ts";
+import { withMember, withoutMember } from "./jsonc.ts";
 import { entry } from "./entry.ts";
 import { helpFlag } from "./connect/help.ts";
 import { running } from "./stop.ts";
 import { packageManifest } from "./package.ts";
 import { openStore } from "./store/mod.ts";
-import { bringToolDocs } from "./store/seed.ts";
+import { bringSystemDocs, type Choice, choicesFor, type Pending } from "./store/seed.ts";
 
 /** The package an org runs on — the one dependency this command is about. */
 export const PACKAGE = "@liquen/liquen";
@@ -187,54 +192,87 @@ async function tasks(root: string): Promise<void> {
   }
 }
 
-/** A template as `version` published it, or null where that release had none. */
-export async function released(version: string, template: string): Promise<string | null> {
-  const res = await fetch(`https://jsr.io/${PACKAGE}/${version}/src/seed/${template}`);
-  if (res.status === 404) {
-    await res.body?.cancel();
-    return null;
-  }
-  if (!res.ok) throw new Error(`${PACKAGE}@${version} ${template}: HTTP ${res.status}`);
-  return await res.text();
+/** The choices a person gave on the command line, each with the docs it names; a choice
+ *  with no name is for every doc it fits. */
+export type Chosen = Partial<Record<Choice, string[]>>;
+
+/** What a pending doc is, in a sentence. */
+function described(p: Pending): string {
+  const doc = `system/${p.doc}.md`;
+  if (p.state === "deleted") return `${doc} is deleted here, and this release changed it`;
+  if (p.state === "dropped") return `${doc} is edited here, and this release no longer ships it`;
+  return `${doc} is edited here, and this release changed it`;
 }
 
-/** The tool docs brought to this release, said: weighed against `from`'s words, the
- *  release the org ran before, or against none, when that is not known. */
-async function toolDocs(root: string, from: string | null): Promise<void> {
-  const docs = await (await openStore(root)).docs();
+/** What each choice does to a pending doc, as the question names it. */
+const MEANS: Record<Choice, string> = {
+  replace: "take the release's word",
+  restore: "lay it again",
+  beside: "lay the release's beside it as .md.new",
+  keep: "keep the org's",
+};
+
+/** The system docs brought to this release (`bringSystemDocs`), said. Each doc only a
+ *  person can settle is settled by `chosen`, else asked at a terminal, else left as the
+ *  org has it and named with the flags that settle it. */
+async function systemDocs(root: string, chosen: Chosen): Promise<void> {
+  const store = await openStore(root);
+  const docs = await store.docs();
+  const log = await store.log();
   try {
-    const brought = await bringToolDocs(
-      docs.bed,
-      (template) => from === null ? Promise.resolve(null) : released(from, template),
-    );
-    if (brought === null) return;
-    if (brought.laid.length > 0) console.log(`tool docs laid: ${brought.laid.join(" · ")}`);
-    if (brought.updated.length > 0) {
-      console.log(`tool docs brought to this release: ${brought.updated.join(" · ")}`);
+    const decide = (p: Pending): Promise<Choice | undefined> => {
+      const fits = choicesFor(p, docs.bed);
+      for (const choice of fits) {
+        const named = chosen[choice];
+        if (named && (named.length === 0 || named.includes(p.doc))) return Promise.resolve(choice);
+      }
+      if (!Deno.stdin.isTerminal()) return Promise.resolve(undefined);
+      const menu = fits.map((c) => `${c} (${MEANS[c]})`).join(", ");
+      const said = prompt(`${described(p)} — ${menu}, or nothing to leave it:`)?.trim();
+      return Promise.resolve(fits.find((c) => c === said));
+    };
+    const b = await bringSystemDocs(docs.bed, log, decide);
+    if (b.laid.length > 0) console.log(`system docs laid: ${b.laid.join(" · ")}`);
+    if (b.replaced.length > 0) {
+      console.log(`system docs brought to this release: ${b.replaced.join(" · ")}`);
     }
-    for (const tool of brought.kept) {
+    if (b.deleted.length > 0) {
+      console.log(`system docs this release no longer ships, removed: ${b.deleted.join(" · ")}`);
+    }
+    if (b.beside.length > 0) {
       console.log(
-        `system/tools/${tool}.md is your own and this release words it otherwise — kept; ` +
-          "delete it and run `liquen update` to take the release's",
+        `the release's words laid beside yours: ${
+          b.beside.map((d) => `system/${d}.md.new`).join(" · ")
+        } — \`liquen update --keep <doc>\` once yours holds what you want of them`,
       );
     }
+    for (const p of b.pending.filter((p) => !b.beside.includes(p.doc))) {
+      const flags = choicesFor(p, docs.bed).map((c) => `--${c} ${p.doc}`).join(" | ");
+      console.log(`${described(p)} — left as it is; \`liquen update ${flags}\` settles it`);
+    }
   } finally {
+    await log.close();
     await docs.close();
   }
 }
 
-/** The org synced to the release it runs: its tasks, then its tool docs. */
-async function sync(root: string, from: string | null): Promise<void> {
+/** The org synced to the release it runs: its tasks, then its system docs. */
+async function sync(root: string, chosen: Chosen): Promise<void> {
   await tasks(root);
-  await toolDocs(root, from);
+  await systemDocs(root, chosen);
+}
+
+/** The choices as the arguments that say them. */
+function flagsOf(chosen: Chosen): string[] {
+  return Object.entries(chosen).flatMap(([choice, docs]) => [`--${choice}`, ...docs]);
 }
 
 /** The sync, run as the release the org's import map resolves to, with the org's `.env`
  *  where it has one: a docs table is reached with PGPASSWORD. */
-async function synced(root: string, from: string | null): Promise<void> {
+async function synced(root: string, chosen: Chosen): Promise<void> {
   const env = await Deno.stat(`${root}/.env`).then(() => ["--env-file=.env"], () => []);
   const status = await new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", ...env, `${PACKAGE}/update`, "--sync", ...(from ? [from] : [])],
+    args: ["run", "-A", ...env, `${PACKAGE}/update`, "--sync", ...flagsOf(chosen)],
     cwd: root,
     stdin: "inherit",
     stdout: "inherit",
@@ -256,31 +294,57 @@ export function linked(root: string): string | null {
   return null;
 }
 
-export const USAGE = `usage: liquen update [--dir <org>]
+export const USAGE =
+  `usage: liquen update [--restore [<doc>…]] [--replace [<doc>…]] [--beside [<doc>…]]
+                     [--keep [<doc>…]] [--dir <org>]
 
-  Move the org onto the newest release of liquen, then bring its tasks and tool docs up to
-  that release's.`;
+  Move the org onto the newest release of liquen, then bring its tasks and the docs under
+  data/system/ up to that release's. A doc you left as the last release had it takes the
+  new words; one you edited or deleted, and this release changed, is yours to settle — at
+  the prompt, or with a flag (a doc is named as it lies under data/system/, tools/bash;
+  no name means every doc the flag fits):
+
+  --restore   lay again a doc you deleted
+  --replace   take the release's words over yours, and delete a doc it no longer ships
+  --beside    lay the release's words beside yours, as <doc>.md.new
+  --keep      keep yours: the doc is quiet until a release changes it again`;
+
+const CHOICES: readonly Choice[] = ["restore", "replace", "beside", "keep"];
+
+/** The command line, `--dir` taken out: whether this is the release's own second half
+ *  (`--sync`), and the choices given, each flag followed by the docs it names. */
+export function parseUpdateArgs(args: string[]): { sync: boolean; chosen: Chosen } {
+  const chosen: Chosen = {};
+  let sync = false;
+  let into: string[] | undefined;
+  for (const arg of args) {
+    if (arg === "--sync") {
+      sync = true;
+      into = undefined;
+    } else if (arg.startsWith("--") && (CHOICES as readonly string[]).includes(arg.slice(2))) {
+      into = chosen[arg.slice(2) as Choice] ??= [];
+    } else if (arg.startsWith("-") || into === undefined) {
+      throw new Error(`unknown argument ${arg}\n${USAGE}`);
+    } else into.push(arg.replace(/^system\//, "").replace(/\.md$/, ""));
+  }
+  return { sync, chosen };
+}
 
 if (import.meta.main) {
   await entry(async () => {
     const org = orgFlag();
     helpFlag(org.args, USAGE);
-    // --sync and --tasks are the release's own second half, not a person's words
-    const stray = org.args.find((a, i) =>
-      a !== "--sync" && a !== "--tasks" && org.args[i - 1] !== "--sync"
-    );
-    if (stray !== undefined) throw new Error(`unknown argument ${stray}\n${USAGE}`);
+    // --sync is the release's own second half, not a person's word
+    const { sync: second, chosen } = parseUpdateArgs(org.args);
     const root = findRoot(org);
-    const at = org.args.indexOf("--sync");
-    if (at >= 0) return await sync(root, org.args[at + 1] ?? null);
-    if (org.args.includes("--tasks")) return await sync(root, null);
+    if (second) return await sync(root, chosen);
     const checkout = linked(root);
     if (checkout !== null) {
       console.log(
         `${checkout} is linked into this org — every task already runs that checkout, ` +
           `and no release can update it`,
       );
-      return await synced(root, null);
+      return await synced(root, chosen);
     }
     const before = pinned(root);
     const child = new Deno.Command(Deno.execPath(), {
@@ -303,9 +367,7 @@ if (import.meta.main) {
         ? `${PACKAGE} ${shown(after)} — already the newest release`
         : `${PACKAGE} ${shown(before)} → ${shown(after)}`,
     );
-    // weighed against the release the org ran before: the same one, already the newest,
-    // lays only a missing doc
-    await synced(root, before);
+    await synced(root, chosen);
     const live = await running(`${root}/data`);
     if (live.size > 0) {
       const who = [...live].map(([role, pid]) => `${role} (${pid})`).join(" · ");

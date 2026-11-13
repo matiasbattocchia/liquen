@@ -30,7 +30,7 @@ import { logSuite } from "./suite/log.ts";
 import { rosterSuite } from "./suite/roster.ts";
 import { rulesSuite } from "./suite/rules.ts";
 import { sweepSuite } from "./suite/sweep.ts";
-import { postgres, postgresDocs } from "./suite/mod.ts";
+import { cast, postgres, postgresDocs } from "./suite/mod.ts";
 
 const url = Deno.env.get("LIQUEN_TEST_PG");
 
@@ -165,7 +165,7 @@ if (url === undefined) {
     const store = await pg.fresh();
     const sql = connect(url, store.schema);
     const version = async () =>
-      await one<number>(sql, "SELECT version AS v FROM schema_version", []);
+      await one<number>(sql, "SELECT value::integer AS v FROM manifest WHERE key = 'schema'", []);
     try {
       const log = await store.open();
       // mail rows as a store before v4 filed them: by the other party, the subject in
@@ -201,9 +201,33 @@ if (url === undefined) {
       assertEquals(await version(), VERSION);
       await sql.unsafe("ALTER TABLE events ADD COLUMN conversation_thread text");
       await sql.unsafe("UPDATE events SET conversation_thread = 'Invoice 42'");
-      await sql.unsafe("UPDATE schema_version SET version = 0");
+      // …and as a store before v9 kept its roster and its version: settings on the row, no
+      // key from any table to it, the version in a table of its own
+      await sql.unsafe(`
+        ALTER TABLE agents ADD COLUMN provider text, ADD COLUMN model text,
+          ADD COLUMN effort text, ADD COLUMN runs integer NOT NULL DEFAULT 1,
+          ADD COLUMN settings jsonb;
+        ALTER TABLE connections DROP CONSTRAINT connections_agent_id_fkey;
+        ALTER TABLE memberships DROP CONSTRAINT memberships_agent_id_fkey;
+        ALTER TABLE rules DROP CONSTRAINT rules_agent_id_fkey;
+        ALTER TABLE credentials DROP CONSTRAINT credentials_agent_id_fkey;
+        INSERT INTO agents (agent_id, mind, model, settings, created_at, updated_at)
+          VALUES ('ana', 'mind@ana', 'claude-x', '{"since":"2026-11-01T00:00:00.000Z"}', 't', 't');
+        INSERT INTO rules (agent_id, tool, action, updated_at)
+          VALUES ('ana', 'send', 'allow', 't'), ('gone', 'send', 'allow', 't');
+        CREATE TABLE schema_version (version integer NOT NULL);
+        INSERT INTO schema_version (version) VALUES (0);
+        DELETE FROM manifest WHERE key = 'schema';`);
       await (await store.vault()).close(); // either opener raises the store
       assertEquals(await version(), VERSION);
+      assertEquals(
+        await one<number>(
+          sql,
+          "SELECT count(*)::integer AS v FROM pg_tables WHERE schemaname = $1::text AND tablename = 'schema_version'",
+          [store.schema],
+        ),
+        0,
+      );
       // the raise to v4 filed the thread at its root, the raise to v5 at the Gmail thread its
       // rows kept — a row that kept none follows its thread — keyed per mailbox, the raise
       // to v6 made the thread a `group`, and the raise to v7 took the subject's old column off
@@ -228,8 +252,20 @@ if (url === undefined) {
         "mail:me@org.com:m1@x.com",
       ]);
       assertEquals(rows[1].payload?.ref_external_id, "mail:me@org.com:m0@org.com");
+      // the raise to v9: the roster keeps who and the floor its settings held, and what
+      // named a gone agent went before the keys were laid
+      assertEquals(await raised.agents(), [
+        { agentId: "ana", mind: "mind@ana", since: "2026-11-01T00:00:00.000Z" },
+      ]);
+      assertEquals((await raised.remembered("ana")).length, 1);
+      assertEquals((await raised.remembered("gone")).length, 0);
+      await assertRejects(async () => {
+        await raised.remember({ agentId: "ghost", tool: "send", action: "allow" });
+      });
       await raised.close();
-      await sql.unsafe("UPDATE schema_version SET version = $1::integer", [VERSION + 1]);
+      await sql.unsafe("UPDATE manifest SET value = $1::text WHERE key = 'schema'", [
+        String(VERSION + 1),
+      ]);
       await assertRejects(() => store.open(), Error, `schema version ${VERSION + 1}`);
     } finally {
       await sql.end();
@@ -322,6 +358,7 @@ if (url === undefined) {
            ('org', 'media/a.png'), ('org', 'media/b.png'), ('org', 'media/loose.png'),
            ('elsewhere', 'media/a.png')`,
       );
+      await cast(log);
       await log.upsertMemberships([
         { service: "local", connection: "default", conversation: "c1", agentId: "ana" },
         { service: "local", connection: "default", conversation: "c2", agentId: "bo" },

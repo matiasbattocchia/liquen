@@ -104,15 +104,12 @@ export async function openPgDocs(url: string, opts: { schema?: string } = {}): P
       };
     },
 
-    async laid(scope, owner, folder) {
-      const [r] = await rows<{ v: boolean }>(
+    drop: (scope, owner, name) =>
+      count(
         sql,
-        `SELECT EXISTS (SELECT 1 FROM docs WHERE scope = $1::text AND owner = $2::text
-           AND name LIKE $3::text || '/%') AS v`,
-        [scope, owner, folder],
-      );
-      return r.v;
-    },
+        "DELETE FROM docs WHERE scope = $1::text AND owner = $2::text AND name = $3::text",
+        [scope, owner, name],
+      ).then((n) => n > 0),
 
     lay: (scope, owner, name, text) =>
       count(

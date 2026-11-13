@@ -59,7 +59,8 @@ import { reportSends, resumeUnended, shellUpdate, updateDraft } from "./late.ts"
 import { enroll, route } from "./route.ts";
 import type { ConnectionRow } from "./store/connections.ts";
 import type { AgentRow } from "./store/agents.ts";
-import { seedAgent, seedOrg } from "./store/seed.ts";
+import { bringSystemDocs, type Brought, seedAgent, seedOrg } from "./store/seed.ts";
+import { packageManifest } from "./package.ts";
 import {
   checkProvider,
   leaveOwed,
@@ -102,12 +103,18 @@ import {
   DEFAULT_DEBOUNCE_MS,
   DEFAULT_PRESENCE,
   findRoot,
-  type OrgConfig,
   orgFlag,
-  readConfig,
+  orgOf,
+  parseDeclared,
+  readFile,
+  settingsOf,
   STOP_TIMEOUT_MS,
   TICK_MS,
 } from "./config.ts";
+import { applyFile } from "./org.ts";
+import { IDLE_DAYS, idleAgents } from "./roster.ts";
+import { serveSocket } from "./connect/serve.ts";
+import { classifyFloors, ensureUser, requireTools, sealSystem } from "./users.ts";
 
 /** How many rows of a session's room the turn's line reads back at a time: a turn is a
  *  few rows per step, and the walk pages further when one runs longer. */
@@ -117,21 +124,17 @@ const TURN_PAGE = 500;
 const COLLECT_MS = 3_600_000;
 
 export interface MainConfig {
-  dir: string; // the org's data root (§9): log/ · system/ · org/ · agents/
-  /** One agent per principal. The `Policy` half (using/check, §6) never reaches xi:
-   *  main lifts it into the agent's scoped log — locally a wrapper, on Postgres a credential.
-   *  OMIT to create agents "the framework way": the catalog's `agents` roster declares
-   *  them — agentId = the entry's name, the session's conversation = `mind@<name>`,
-   *  model/effort/maxTokens from the defaults below. */
+  dir: string; // the org's data root (§9): log/ · system/ · shared/ · agents/
+  /** The org's root. Its `config.yaml` is applied to the store at start, and the org is
+   *  what the store then holds: the roster's rows, each agent's settings resolved over
+   *  the org's — agentId = the row's name, the session's conversation = `mind@<name>`. */
+  root?: string;
+  /** One agent per principal, given in code and run as given (tests). The `Policy` half
+   *  (using/check, §6) never reaches xi: main lifts it into the agent's scoped log —
+   *  locally a wrapper, on Postgres a credential. */
   principals?: (AgentConfig & Policy)[];
-  /** The resolved catalog (readConfig at the entry point) — the roster and every funneled
-   *  knob when `principals` is omitted; ignored when it is given. */
-  catalog?: OrgConfig;
-  model?: string; // defaults for roster-declared agents (ignored when `principals` is given)
-  effort?: AgentConfig["effort"];
-  maxTokens?: number;
-  /** The backlog an agent INHERITS when it comes up, in hours (§5); default 24. Read once,
-   *  at start: it becomes a fixed floor (`since`), not a distance that follows the clock. */
+  /** How far back the clock's passes look for what is owed, in hours (§5); the org's
+   *  `backlogHours` when omitted. */
   backlogHours?: number;
   /** Dev/test seam: connection rows UPSERTED at boot (never deleted — connections are
    *  runtime data, §4: an OAuth callback or pairing flow binds them while the org runs;
@@ -166,43 +169,57 @@ export async function start(
   // workspace, doc pull paths) must survive a cwd change — the data root is a relative path
   await Deno.mkdir(config.dir, { recursive: true });
   const dir = await Deno.realPath(config.dir);
-  // the store is where the catalog says (§9); a process with explicit principals (tests)
-  // brings no catalog and runs on the local engine under its data root
-  const store = storeAt(databaseOf(
-    dir,
-    config.catalog?.deployment.database ?? "sqlite",
-    config.catalog?.deployment.docs ?? "filesystem",
-    config.catalog?.deployment.storage ?? "filesystem",
-  ));
+  // the store is where the file's `deployment` says (§9); a process with no root (tests)
+  // runs on the local engine under its data root
+  const declared = config.root ? await readFile(config.root) : parseDeclared("", dir);
+  const { deployment } = declared;
+  const store = storeAt(
+    databaseOf(dir, deployment.database, deployment.docs, deployment.storage),
+  );
+  // a harness running as root gives Linux to its agents (users.ts): the floors get their
+  // owners before anything is laid on them
+  await requireTools();
+  await classifyFloors(dir);
   const log = await store.log();
   const docs = await store.docs(); // the doc cascade, files or the table (§8, §9)
   // the media port (§5): the object store's bytes, and a local file's, remembered across
   // every agent this process renders
   const storage = store.storage();
   const media = memoizedLoader((uri) => loadMediaBlock(uri, storage));
-  // the framework way (§9): no explicit principals ⇒ the catalog's roster IS the org
+  // the store IS the org (§9): no explicit principals ⇒ the roster's rows are the agents
   const derived = config.principals === undefined; // …and gets the connections-map policy (§6)
-  // the catalog: the entry point read the file once (readConfig) and hands main the VALUE —
-  // main funnels the resolved values down the chain. Explicit principals (tests) carry
-  // their own settings and need no catalog at all.
-  const catalog = derived ? config.catalog ?? null : null;
-  // config → tables → folders (§9): the declaration compiles into the registry — the table
-  // exists because policy derives from rows (RLS later, §6), the ingest classifier scans
-  // the declared handles (email/phone → member), and render names members by it (§5).
-  // Every entry is a row, a person alone included: they steer, they are named, no session
-  // of theirs ever runs (`mind: false`, §4). Explicit principals (tests) compile the same
-  // way, from what they carry.
-  await log.syncAgents(
-    derived
-      ? await compileRoster(dir, config, catalog!, Date.now())
-      : config.principals!.map(rowOf),
-  );
-  // an agent IS its row (§9): what runs is built from the table, so a host with nothing
-  // but the store rebuilds the same agent. What a caller passes in code rides beside it —
-  // a policy, a compiled gate, a retry pace: seams, and no row carries a function.
+  // boot is a reload at start: the file is applied to the store — a key it declares
+  // overwrites, a key it leaves out keeps the store's value, an agent it does not name is
+  // left alone — and from here the org is what the store holds. Explicit principals
+  // (tests) are rows too: policy derives from rows (§6), the ingest classifier scans the
+  // handles (email/phone → member), and render names members by them (§5).
+  if (derived && config.root) await applyFile(config.root, log);
+  else if (!derived) await log.putAgents(config.principals!.map(rowOf));
+  const readOrg = async () => orgOf(deployment, await log.config(), await log.agents());
+  // the org as it stands, read again whenever an agent is reconciled: an agent's settings
+  // resolve its own scope over the org's when they are read
+  let org = await readOrg();
+  // what is read once, at start: where the org's parts live, its clock and locale, the
+  // machinery's knobs. Explicit principals (tests) carry their own settings and need none.
+  const catalog = derived ? org : null;
+  // what a caller passes in code rides beside the row — a policy, a compiled gate, a
+  // retry pace: seams, and no row carries a function.
   const inCode = new Map((config.principals ?? []).map((p) => [p.agentId, p]));
-  const roster = await log.agents();
-  const principals = roster.filter((p) => p.runs !== false);
+  // the config a session of the agent runs with, and the provider it thinks through: a
+  // principal given in code runs as given, a row runs on what the store resolves
+  const configFor = (row: AgentRow, sessionId: string): AgentConfig => {
+    const given = inCode.get(row.agentId);
+    if (!given) return configOf(row, org, sessionId);
+    const { using: _using, check: _check, ...own } = given;
+    return { ...own, sessionId, cache: providerOf(undefined).cache };
+  };
+  const providerFor = (agentId: string) =>
+    inCode.has(agentId) ? undefined : settingsOf(org, agentId).provider;
+  // every row main has met, running or paused, and each running agent's part, held by
+  // agent so one comes up, goes down or changes while the others run on
+  const rows = new Map<string, AgentRow>();
+  const minds = new Map<string, Runner>();
+  const subs = new Map<string, () => void>();
   const seamsOf = (agentId: string): Seams => {
     const p = inCode.get(agentId);
     return {
@@ -218,30 +235,34 @@ export async function start(
     const p = inCode.get(agentId);
     return { using: p?.using, check: p?.check };
   };
-  // the provider can run the model at the effort declared (§9): refused here, not mid-turn
-  for (const p of principals) checkProvider({ ...configOf(p, MIND), provider: p.provider });
   // the mind is a ONE-MEMBER conversation (§6): seeding it as membership is what makes
   // "own mind readable, others' invisible" plain branch-3 policy, no special case. EVERY
-  // roster entry has the room — a paused agent's is what its door still reads (§4)
-  await log.upsertMemberships(roster.map((p) => (
-    {
+  // row has the room — a paused agent's is what its door still reads (§4)
+  const enlist = (agentId: string) =>
+    log.upsertMemberships([{
       service: "local",
       connection: LOCAL_CONNECTION,
-      conversation: sessionAddress(p.agentId, MIND),
-      agentId: p.agentId,
+      conversation: sessionAddress(agentId, MIND),
+      agentId,
       sessionId: MIND,
-    }
-  )));
-  if (config.connections) await log.upsertConnections(config.connections);
-  // the doors lay these when they declare; boot lays them for a roster entry typed by hand
-  await seedOrg(docs.bed);
-  for (const agent of principals) {
-    if (agent.runs !== false) await seedAgent(docs.bed, agent.agentId);
+    }]);
+  for (const row of await log.agents()) {
+    rows.set(row.agentId, row);
+    await enlist(row.agentId);
   }
+  const running = () => [...rows.values()].filter((row) => row.runs !== false);
+  if (config.connections) await log.upsertConnections(config.connections);
+  // the org's docs: its scaffolds laid where missing, the release's words brought (§9).
+  // What only a person can settle is left as the org has it, and named at every boot
+  await seedOrg(docs.bed);
+  const brought = await bringSystemDocs(docs.bed, log);
+  sayBrought(brought);
+  const release = (await packageManifest()).version;
+  if (release) await log.setManifest({ release });
   // every builtin tool's words are a doc the org may edit (tooldoc.ts): one that disagrees
   // with its schema stops the start here, named, before any turn reads it
-  if (principals.length > 0) {
-    const ctx = { agent: principals[0].agentId };
+  if (running().length > 0) {
+    const ctx = { agent: running()[0].agentId };
     await checkToolDocs(
       [
         ...OWN_TOOLS,
@@ -257,8 +278,8 @@ export async function start(
   // own before the org's, the environment's when it holds none); a test's scripted edge
   // stands in for all of them
   const transportOf = transports({ anthropic: config.apiKey, keyOf: vaultKeys(creds) });
-  const transportFor = (p: AgentRow): ModelTransport =>
-    overrides.transport ?? transportOf(providerOf(p.provider), p.agentId);
+  const transportFor = (agentId: string): ModelTransport =>
+    overrides.transport ?? transportOf(providerOf(providerFor(agentId)), agentId);
   // the exec plane (§9): one provider owns the proxy, the grounds and the shells; main
   // holds only the provider, and every session's exec, ambient and files come from it —
   // this machine's, bare or in bubbles, or the sandbox gateway's the catalog names
@@ -266,7 +287,6 @@ export async function start(
   const remote = bubble ? null : catalog?.deployment.sandbox ?? null;
   const updating = new Set<Promise<void>>();
   const planeOptions = {
-    agents: principals.map((p) => p.agentId),
     locale: catalog?.shared.locale,
     timezone: catalog?.shared.timezone,
     bashWaitMs: catalog?.system.bashWaitMs,
@@ -292,10 +312,26 @@ export async function start(
       store,
       bubble,
       mounts: catalog?.deployment.mounts,
-      exports: Object.fromEntries(principals.map((p) => [p.agentId, p.settings?.export ?? []])),
+      // read at each call, so a change of `export` reaches the next command
+      exports: (agentId) => inCode.has(agentId) ? [] : settingsOf(org, agentId).export,
       ...planeOptions,
     });
-  if (!remote && !bubble && Deno.build.os === "linux" && principals.length) {
+  // an agent's ground: the writes that converge, each safe to make again. The provider
+  // can run the model at the effort it is set (§9), refused here, not mid-turn; its docs
+  // are laid where missing; root gives it its Linux user and its folder; the sandbox
+  // prepares where its shells run
+  const ground = async (row: AgentRow) => {
+    const { agentId } = row;
+    checkProvider({ ...configFor(row, MIND), provider: providerFor(agentId) });
+    await enlist(agentId);
+    await seedAgent(docs.bed, agentId);
+    await ensureUser(dir, agentId);
+    await sandbox.add(agentId);
+  };
+  for (const row of running()) await ground(row);
+  // everything boot lays in `system/` is laid: the harness's docs are read-only to all
+  await sealSystem(dir);
+  if (!remote && !bubble && Deno.build.os === "linux" && running().length) {
     console.error(
       '[exec] the agents\' shells run bare, as you: deployment.sandbox "bwrap" gives each a ' +
         "bubble of its own that sees its folder, the shared floor and the system",
@@ -311,7 +347,7 @@ export async function start(
   // its shell runs (late.ts), before any turn of this run looks at the log
   const unended = await resumeUnended(log, (use) => {
     const agentId = use.agent!.id;
-    if (!principals.some((p) => p.agentId === agentId)) return Promise.resolve(false);
+    if (rows.get(agentId)?.runs === false || !rows.has(agentId)) return Promise.resolve(false);
     return sandbox.forAgent(agentId).session(use.agent!.session_id ?? MIND).resume(
       { id: use.id, turn_id: use.payload.turn_id },
       use.parts[0].data.input as unknown as BashInput,
@@ -329,7 +365,7 @@ export async function start(
   // the address book (§9): one port per service that keeps one — whatsapp's rides the
   // bridge the dispatcher already talks to, on the same token, and carries both legs:
   // `contact` writes through it, `search` reads through it
-  const bridge = config.catalog?.connections?.whatsapp?.bridgeUrl;
+  const bridge = catalog?.connections?.whatsapp?.bridgeUrl;
   const bridgeUrl = typeof bridge === "string" ? bridge : DEFAULT_BRIDGE_URL;
   const bridgeToken = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
   const contact: XiPorts["contact"] = { whatsapp: whatsappContact(bridgeUrl, bridgeToken) };
@@ -385,9 +421,7 @@ export async function start(
   const told = new Map<string, string>();
   const sayTurn = (agentId: string, sessionId: string) => {
     const who = sessionAddress(agentId, sessionId);
-    const port = sessionId === MIND
-      ? agents.find((a) => a.config.agentId === agentId)?.log
-      : named.get(who)?.log;
+    const port = sessionId === MIND ? minds.get(agentId)?.log : named.get(who)?.log;
     if (!port) return;
     readTurns(port, { agentId, id: sessionId }, 1, TURN_PAGE, {
       prices: catalog?.system.prices ?? [],
@@ -414,7 +448,7 @@ export async function start(
       },
       agentId,
     );
-  const stock = new Map(principals.map((p) => [p.agentId, meter(p.agentId, transportFor(p))]));
+  const stock = new Map<string, ModelTransport>();
   // each mind's keeper (§5), every one of them stopped with the org. The ping a keeper
   // still owes waits in a file of its agent's for the next boot's keeper to take up
   const keepers = new Map<string, Warmth>();
@@ -446,9 +480,8 @@ export async function start(
       castDecision(agentId, sessionId, v, cause);
     },
   };
-  const build = (p: AgentRow, sessionId: string): Runner =>
-    runnerFor(host, p, sessionId, seamsOf(p.agentId));
-  const agents = principals.map((p) => build(p, MIND));
+  const build = (row: AgentRow, sessionId: string): Runner =>
+    runnerFor(host, configFor(row, sessionId), providerFor(row.agentId), seamsOf(row.agentId));
 
   // The whole fan-out: each agent tails ITS OWN view of the log — the scoped subscription
   // only delivers what the agent may see (Realtime-on-RLS, §6), and xi's `relevant` keeps
@@ -468,7 +501,8 @@ export async function start(
   const invoke = (a: { config: AgentConfig; ports: XiPorts }) => {
     const key = sessionAddress(a.config.agentId, a.config.sessionId);
     const fire = (trigger?: Event) => {
-      if (stopped) return; // teardown, not routing — main takes no other decision
+      // teardown, the org's or the agent's own, not routing — main takes no other decision
+      if (stopped || !minds.has(a.config.agentId)) return;
       const mine = inflight.get(key) ?? new Set<Promise<unknown>>();
       inflight.set(key, mine);
       const run = xi(a.config, a.ports, trigger)
@@ -509,7 +543,7 @@ export async function start(
   // put the debounce between every step of a single piece of work.
   const debounceMs = config.debounceMs ?? catalog?.system.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const settling = new Map<string, ReturnType<typeof setTimeout>>();
-  const wake = (a: (typeof agents)[number]) => {
+  const wake = (a: Runner) => {
     const fire = invoke(a);
     return (trigger?: Event) => {
       const own = trigger !== undefined &&
@@ -538,8 +572,9 @@ export async function start(
     const key = sessionAddress(agentId, sessionId);
     const hit = named.get(key);
     if (hit) return hit;
-    const p = principals.find((x) => x.agentId === agentId);
-    if (!p) return undefined; // an address wearing a name the roster doesn't
+    const p = rows.get(agentId);
+    // an address wearing a name the roster doesn't, or an agent that is not up
+    if (!p || !minds.has(agentId)) return undefined;
     await enroll(log, { agentId, sessionId });
     const r = build(p, sessionId);
     named.set(key, r);
@@ -553,13 +588,12 @@ export async function start(
   // never a turn. The runner's config and transport are read at every invocation, so the
   // next turn thinks with the new ones; a turn already running finishes as it began.
   const tune = async (agentId: string, sessionId: string, t: Tune | undefined) => {
-    const p = principals.find((x) => x.agentId === agentId);
-    const r = sessionId === MIND
-      ? agents.find((a) => a.config.agentId === agentId)
-      : await runnerOf(agentId, sessionId);
+    const p = rows.get(agentId);
+    const r = sessionId === MIND ? minds.get(agentId) : await runnerOf(agentId, sessionId);
     if (!p || !r) return;
-    const stated = configOf(p, MIND); // the roster's word, what the hang-up puts back
-    const provider = t?.provider ?? p.provider;
+    const stated = configFor(p, MIND); // the roster's word, what the hang-up puts back
+    const own = providerFor(agentId);
+    const provider = t?.provider ?? own;
     const model = t?.model ?? stated.model;
     const effort = t?.effort ?? stated.effort;
     checkProvider({ agentId, provider, model, effort });
@@ -568,7 +602,7 @@ export async function start(
     r.ports.transport = thinkingThrough(
       r,
       provider,
-      provider === p.provider
+      provider === own
         ? stock.get(agentId)!
         : meter(agentId, overrides.transport ?? transportOf(providerOf(provider), agentId)),
     );
@@ -579,48 +613,42 @@ export async function start(
   // serves its agent's scoped ports, so even the door writes under §6 visibility. A
   // request that names a session speaks through THAT session's port, and a call is answered
   // with that session's runner — asking for one is what births it.
-  const doors = await installDoors(
-    dir,
-    roster.map((p): DoorAgent => {
-      const a = agents.find((x) => x.config.agentId === p.agentId);
-      if (a) {
-        return {
-          agentId: a.config.agentId,
-          sessionId: a.config.sessionId,
-          port: async (sessionId: string) =>
-            sessionId === a.config.sessionId
-              ? a.log
-              : (await runnerOf(a.config.agentId, sessionId))!.log,
-          answer: async (sessionId, use, signal) => {
-            const r = sessionId === a.config.sessionId
-              ? a
-              : (await runnerOf(a.config.agentId, sessionId))!;
-            return answerCall(use, r.config, r.ports, signal);
-          },
-          // where the principal stands is where the session's shell starts (§9)
-          stand: (session, path) => sandbox.forAgent(a.config.agentId).session(session).stand(path),
-          tune: (session, settings) => tune(a.config.agentId, session, settings),
-          spend: (turns) => log.spend({ agentId: a.config.agentId, turns }),
-          storage,
-        };
-      }
-      // a PAUSED agent (`mind: false`, §4): the door still opens on its rooms — a tail reads
-      // what landed, an order is refused — and no runner, no shell, stands behind it
+  const doors = await installDoors(dir);
+  const doorOf = (agentId: string): DoorAgent => {
+    const a = minds.get(agentId);
+    if (a) {
       return {
-        agentId: p.agentId,
-        sessionId: MIND,
-        paused: true,
-        port: (sessionId: string) => Promise.resolve(scoped(log, policyOf(p.agentId, sessionId))),
-        spend: (turns) => log.spend({ agentId: p.agentId, turns }),
+        agentId,
+        sessionId: a.config.sessionId,
+        port: async (sessionId: string) =>
+          sessionId === a.config.sessionId ? a.log : (await runnerOf(agentId, sessionId))!.log,
+        answer: async (sessionId, use, signal) => {
+          const r = sessionId === a.config.sessionId ? a : (await runnerOf(agentId, sessionId))!;
+          return answerCall(use, r.config, r.ports, signal);
+        },
+        // where the principal stands is where the session's shell starts (§9)
+        stand: (session, path) => sandbox.forAgent(agentId).session(session).stand(path),
+        tune: (session, settings) => tune(agentId, session, settings),
+        spend: (turns) => log.spend({ agentId, turns }),
         storage,
       };
-    }),
-  );
+    }
+    // a PAUSED agent (`mind: false`, §4): the door still opens on its rooms — a tail reads
+    // what landed, an order is refused — and no runner, no shell, stands behind it
+    return {
+      agentId,
+      sessionId: MIND,
+      paused: true,
+      port: (sessionId: string) => Promise.resolve(scoped(log, policyOf(agentId, sessionId))),
+      spend: (turns) => log.spend({ agentId, turns }),
+      storage,
+    };
+  };
   // presence (§9): the same two facts the doors serve, written as a `delta` event in the
   // mind's room — the mirror is what carries it to every surface, tagged. Inert until a
   // surface is bound. Each agent's level is its entry's, else the org's
   const presenceOf = (agentId: string): PresenceLevel =>
-    catalog?.agents[agentId]?.presence ?? catalog?.shared.agents.presence ?? DEFAULT_PRESENCE;
+    derived ? settingsOf(org, agentId).presence : DEFAULT_PRESENCE;
   const presence = createPresence({
     aliases: () => log.aliases(),
     publish: (draft) => log.publish(draft),
@@ -636,12 +664,127 @@ export async function start(
   castDecision = (agentId, sessionId, v, cause) =>
     presence.status(agentId, sessionId, v === "ignore" ? "idle" : "busy", cause);
 
-  const unsubs = agents.map((a) => a.log.subscribe(wake(a)));
+  // UP (§9): an agent's entries and its subscription, over the ground laid for it. Its
+  // metered transport, its mind's runner, its door; then its own view of the log tailed,
+  // and the trigger-less look at whatever the log owes it
+  const run = async (row: AgentRow, look = true) => {
+    const { agentId } = row;
+    stock.set(agentId, meter(agentId, transportFor(agentId)));
+    const a = build(row, MIND);
+    minds.set(agentId, a);
+    await doors.open(doorOf(agentId));
+    subs.set(agentId, a.log.subscribe(wake(a)));
+    if (look) invoke(a)();
+  };
+  // DOWN: the same, undone. The agent leaves the maps first, so nothing new starts for it;
+  // its subscription and its burst's timer go, its turns in flight are waited out, its
+  // keeper stops, and the sandbox ends its shells and no one else's
+  const down = async (agentId: string) => {
+    if (!minds.delete(agentId)) return;
+    subs.get(agentId)?.();
+    subs.delete(agentId);
+    clearTimeout(settling.get(agentId));
+    settling.delete(agentId);
+    const mine = (key: string) => key.endsWith(`@${agentId}`);
+    await withTimeout(
+      Promise.all([...inflight].filter(([key]) => mine(key)).flatMap(([, runs]) => [...runs])),
+      config.stopTimeoutMs ?? STOP_TIMEOUT_MS,
+    );
+    const keeper = keepers.get(agentId);
+    if (keeper) leaveOwed(owedAt(agentId), keeper.stop());
+    keepers.delete(agentId);
+    stock.delete(agentId);
+    for (const key of [...named.keys()].filter(mine)) named.delete(key);
+    for (const key of [...reported.keys(), ...told.keys()].filter(mine)) {
+      reported.delete(key);
+      told.delete(key);
+    }
+    await sandbox.remove(agentId);
+  };
+  // a change of settings is neither: the runner's config and transport are read at every
+  // invocation, so each of the agent's runners takes the new ones and its next turn runs
+  // on them, while one already running finishes as it began
+  const retune = (row: AgentRow) => {
+    const { agentId } = row;
+    checkProvider({ ...configFor(row, MIND), provider: providerFor(agentId) });
+    stock.set(agentId, meter(agentId, transportFor(agentId)));
+    const mine = [
+      minds.get(agentId)!,
+      ...[...named].filter(([key]) => key.endsWith(`@${agentId}`)).map(([, r]) => r),
+    ];
+    for (const r of mine) {
+      const { home, gate, retryDelaysMs } = r.config;
+      r.config = {
+        ...configFor(row, r.config.sessionId),
+        ...(home !== undefined ? { home } : {}),
+        ...(gate ? { gate } : {}),
+        ...(retryDelaysMs ? { retryDelaysMs } : {}),
+      };
+      r.ports.transport = thinkingThrough(r, providerFor(agentId), stock.get(agentId)!);
+    }
+  };
+  // one agent brought in line with its row, the others running on: up when it should run
+  // and does not, down when it runs and should not (paused, or its row gone), retuned
+  // when it runs and stays. One at a time: a second change waits for the first
+  let reconciling: Promise<unknown> = Promise.resolve();
+  const reconcile = (agentId: string, force?: "down"): Promise<string> => {
+    const turn = reconciling.then(async () => {
+      org = await readOrg();
+      const row = (await log.agents()).find((a) => a.agentId === agentId);
+      const was = minds.has(agentId);
+      if (!row || force === "down") {
+        await down(agentId);
+        await doors.shut(agentId);
+        rows.delete(agentId);
+        return was ? `${agentId} down` : `${agentId} is not running`;
+      }
+      rows.set(agentId, row);
+      await enlist(agentId);
+      if (row.runs === false) {
+        await down(agentId);
+        await doors.open(doorOf(agentId));
+        return was ? `${agentId} paused` : `${agentId} stays paused`;
+      }
+      if (!was) {
+        await ground(row);
+        await run(row);
+        return `${agentId} up`;
+      }
+      retune(row);
+      return `${agentId} changed`;
+    });
+    reconciling = turn.catch(() => {});
+    return turn;
+  };
+  // main's socket (roster.ts): a caller that wrote the roster pokes here, and is answered
+  // with what main did. The harness's own user's alone: an agent's user cannot connect
+  const asked = await serveSocket(`${dir}/run/main.sock`, async (req) => {
+    try {
+      const body = req.method === "POST" ? await req.json() : {};
+      const names = typeof body.agent === "string"
+        ? [body.agent]
+        : [...new Set([...rows.keys(), ...(await log.agents()).map((a) => a.agentId)])];
+      const said: string[] = [];
+      for (const name of names) said.push(await reconcile(name, body.down ? "down" : undefined));
+      return new Response(said.join(" · ") || "no agents");
+    } catch (err) {
+      return new Response(err instanceof Error ? err.message : String(err), { status: 409 });
+    }
+  });
+  await Deno.chmod(`${dir}/run/main.sock`, 0o600);
+
+  // boot is up for each row, its first look held until every tail below is listening; a
+  // paused agent's door opens on its rooms alone
+  for (const row of rows.values()) {
+    if (row.runs === false) await doors.open(doorOf(row.agentId));
+    else await run(row, false);
+  }
+  const unsubs: (() => void)[] = [];
   // the principal's word in the mind's room, the moment it lands: a stretch they did not
   // ask for becomes theirs, and presence says what is running (§9)
   unsubs.push(log.subscribe((e) => {
     if (e.type !== "message" || silenced(e)) return;
-    for (const a of agents) {
+    for (const a of minds.values()) {
       const home = sessionAddress(a.config.agentId, MIND);
       const session = { agentId: a.config.agentId, id: MIND, conversation: home };
       if (e.envelope.conversation.address === home && !ownVoice(e, session)) {
@@ -705,7 +848,11 @@ export async function start(
     gates: (scope) => log.gates(scope),
     aliases: () => log.aliases(),
     nameOf: async (id) => (await log.agents()).find((a) => a.agentId === id)?.name ?? id,
-    principalsOf: (id) => log.principalsOf(id),
+    // `"*"` is the row's own word: the view derives no principal from it
+    principalsOf: async (id) =>
+      (await log.agents()).find((a) => a.agentId === id)?.principals === "*"
+        ? "*"
+        : await log.principalsOf(id),
     locale: catalog?.shared.locale,
     presence: presenceOf,
     asked: (id) => presence.asked(id),
@@ -727,7 +874,7 @@ export async function start(
         console.error(`transcriber FAILED on ${e.envelope.conversation.address}:`, err),
     }));
   }
-  for (const a of agents) invoke(a)(); // boot: no trigger ⇒ look at whatever the log owes
+  for (const a of minds.values()) invoke(a)(); // boot: no trigger ⇒ look at whatever the log owes
   // …and every enrolled named session gets the same look (§4): the backlog rule applies
   // to it as to the mind, and its enrollments are the only record it leaves
   for (const p of await log.enrolled()) {
@@ -746,7 +893,8 @@ export async function start(
   // that pass is the clock's statement. One beat at a time: a tick that lands while a
   // beat is still publishing joins it instead of opening a second.
   const clock: Clock = {
-    agents: () => agents.map((a) => ({ agentId: a.config.agentId, timezone: a.config.timezone })),
+    agents: () =>
+      [...minds.values()].map((a) => ({ agentId: a.config.agentId, timezone: a.config.timezone })),
     docs,
     backlogHours: config.backlogHours ?? catalog?.shared.backlogHours ??
       DEFAULT_BACKLOG_HOURS,
@@ -762,7 +910,7 @@ export async function start(
         (err) => console.error("the tick failed:", err),
       )
       .finally(() => beating = undefined);
-    agents.forEach((a) => invoke(a)());
+    for (const a of minds.values()) invoke(a)();
   }, TICK_MS);
   // references keep an object (§8): the store is swept of what no event references, at a
   // pace of its own, since a sweep lists the whole store
@@ -786,7 +934,9 @@ export async function start(
       for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
       settling.clear();
       for (const [agentId, w] of keepers) leaveOwed(owedAt(agentId), w.stop());
-      for (const unsub of unsubs) unsub();
+      for (const unsub of [...unsubs, ...subs.values()]) unsub();
+      await asked.shutdown(); // no change to the roster is taken from here on
+      await Deno.remove(`${dir}/run/main.sock`).catch(() => {});
       await doors.close(); // stop taking syscalls before the log goes away
       // Bound the settle. A turn wedged on a hung model connection (e.g. a network
       // outage during shutdown) must not block teardown forever — the sandbox's close
@@ -806,102 +956,33 @@ export async function start(
   };
 }
 
-/** An explicit principal (tests) as the row it compiles to. What no row carries stays in
- *  code: `home` is the sandbox's, `gate` and `retryDelaysMs` are a test's. */
+/** What bringing the release's docs did, said once at boot. */
+function sayBrought(b: Brought): void {
+  const said = [
+    ...(b.laid.length ? [`laid ${b.laid.join(" · ")}`] : []),
+    ...(b.replaced.length ? [`brought to this release ${b.replaced.join(" · ")}`] : []),
+    ...(b.deleted.length ? [`removed with this release ${b.deleted.join(" · ")}`] : []),
+  ];
+  if (said.length > 0) console.error(`[docs] system: ${said.join("; ")}`);
+  if (b.pending.length > 0) {
+    console.error(
+      `[docs] this release words ${b.pending.map((p) => `${p.doc} (${p.state})`).join(" · ")} ` +
+        "otherwise than the org has it — `liquen update` settles each",
+    );
+  }
+}
+
+/** A principal given in code (tests) as its row: who it is, and its backlog floor. What
+ *  it runs with stays in code, as it was given. */
 function rowOf(p: AgentConfig & Policy): AgentRow {
   return {
     agentId: p.agentId,
     mind: sessionAddress(p.agentId, MIND),
-    model: p.model,
-    effort: p.effort,
-    name: p.name,
-    email: p.email,
-    phone: p.phone,
-    settings: {
-      maxTokens: p.maxTokens,
-      timezone: p.timezone,
-      locale: p.locale,
-      tools: p.tools,
-      rules: p.rules,
-      since: p.since,
-      engagedMinutes: p.engagedMinutes,
-      digestAfterMessages: p.digestAfterMessages,
-      digestMinutes: p.digestMinutes,
-      sleepHours: p.sleepHours,
-      processors: p.processors,
-      compactAt: p.compactAt,
-      keepRecent: p.keepRecent,
-    },
+    ...(p.name ? { name: p.name } : {}),
+    ...(p.email ? { email: p.email } : {}),
+    ...(p.phone ? { phone: p.phone } : {}),
+    ...(p.since ? { since: p.since } : {}),
   };
-}
-
-/** The framework way (§9): the catalog's `agents` roster declares the org — each entry
- *  becomes a registry row and a home folder, config → tables → folders. agentId = the
- *  entry's name, sessionId = `mind` (the pair is the identity, §4), the session's
- *  conversation = `mind@<name>`: the mind session is the one world traffic routes to,
- *  where the agent is steered; the principal talks straight into it (the REPL needs no
- *  identity map — principal name = agent name), and platform DMs alias onto it at ingest
- *  ("principal handle → principal-DM alias", the special wiring).
- *
- *  Resolution, most specific wins: agents.<name> → MainConfig (the process: tests) →
- *  shared.agents — every key has a default, so nothing falls through. The clock and locale
- *  are the ORG's alone: one deployment, one wall time. */
-async function compileRoster(
-  dir: string,
-  defaults: Pick<MainConfig, "model" | "effort" | "maxTokens" | "backlogHours">,
-  catalog: OrgConfig,
-  startedAt: number,
-): Promise<AgentRow[]> {
-  // the backlog is resolved ONCE, into an instant: every agent in this org comes up owing
-  // the same stretch of history, and no later read re-decides where that stretch begins
-  const hours = defaults.backlogHours ?? catalog.shared.backlogHours;
-  const since = new Date(startedAt - hours * 3_600_000).toISOString();
-  const org = catalog.shared.agents;
-  // the media kinds a processor makes readable — org-wide, one fact for every agent (§5)
-  const processors = Object.entries(catalog.processors).filter(([, cmd]) => !!cmd)
-    .map(([kind]) => kind);
-  const found: AgentRow[] = [];
-  for (const [name, entry] of Object.entries(catalog.agents)) {
-    const { identity = {}, principals, mind, ...cfg } = entry;
-    // a session runs unless the entry — or `shared.agents.mind`, for all of them — says not
-    // (§4). The workspace is derived, for an agent: a person alone gets none (the door's
-    // socket is all its folder holds), a paused agent keeps the one it has and takes no turn
-    const runs = mind ?? org.mind;
-    if (runs) await Deno.mkdir(`${dir}/agents/${name}`, { recursive: true });
-    found.push({
-      agentId: name,
-      mind: sessionAddress(name, MIND),
-      principals,
-      ...(runs ? {} : { runs: false }),
-      model: cfg.model ?? defaults.model ?? org.model,
-      effort: cfg.effort ?? defaults.effort ?? org.effort ?? undefined,
-      provider: cfg.provider ?? org.provider ?? undefined,
-      name: identity.name ?? undefined,
-      email: identity.email ?? undefined,
-      phone: identity.phone ?? undefined,
-      settings: {
-        maxTokens: cfg.maxTokens ?? defaults.maxTokens ?? org.maxTokens,
-        // null survives the funnel: it means "every tool", not "unset"
-        tools: (cfg.tools !== undefined ? cfg.tools : org.tools) ?? undefined,
-        rules: cfg.rules ?? org.rules,
-        export: cfg.export ?? org.export,
-        since,
-        timezone: catalog.shared.timezone || undefined,
-        locale: catalog.shared.locale ?? undefined,
-        // attention (§2): the wake policy is the agent's — hot, summoned, or on the digest
-        engagedMinutes: cfg.engagedMinutes ?? org.engagedMinutes,
-        digestAfterMessages: cfg.digestAfterMessages ?? org.digestAfterMessages,
-        digestMinutes: cfg.digestMinutes ?? org.digestMinutes,
-        // null survives the funnel: it means "never sleeps", not "unset" (Wake, §2)
-        sleepHours: cfg.sleepHours !== undefined ? cfg.sleepHours : org.sleepHours,
-        processors,
-        // the window (§5): what the agent holds in view is its work's shape
-        compactAt: cfg.compactAt ?? org.compactAt,
-        keepRecent: cfg.keepRecent ?? org.keepRecent,
-      },
-    });
-  }
-  return found;
 }
 
 /** Resolve when `p` settles or `ms` elapses, whichever comes first — and never leave the
@@ -946,17 +1027,25 @@ if (import.meta.main) {
     // raised alone, main has no supervisor pumping its lines: it writes the run log itself
     const alone = org.args.includes("--ephemeral");
     if (alone) sayConsole(openRunLog(dir, false), MAIN);
-    const catalog = await readConfig(root);
     // ONE MIND PER ORG (stop.ts): a second main over one log is two tails, two fan-outs and
-    // two mirrors of every line the agent speaks — the duplicate a REPL's ephemeral daemon
-    // and a `liquen start` used to make between them
+    // two mirrors of every line the agent speaks
     const lock = claim(dir, MAIN);
     if ("taken" in lock) {
       const who = lock.taken === null ? "" : ` (pid ${lock.taken})`;
       throw new Error(`a main already runs ${root}${who} — \`liquen stop\` first`);
     }
-    const main = await start({ dir, catalog });
-    console.error(`agents: ${Object.keys(catalog.agents).join(", ")} · log: ${dir}/log`);
+    const main = await start({ dir, root });
+    const roster = await main.log.agents();
+    console.error(`agents: ${roster.map((a) => a.agentId).join(", ")} · log: ${dir}/log`);
+    // an agent the file does not declare and no turn has run for in a while is named: it
+    // stays until `liquen agent --remove` takes it out
+    const idle = await idleAgents(root, main.log);
+    if (idle.length > 0) {
+      console.error(
+        `idle for ${IDLE_DAYS} days and declared nowhere: ${idle.join(", ")} — ` +
+          "`liquen agent --remove <name>` removes one",
+      );
+    }
     // the signal says whether the org stops or main restarts (§9): SIGINT is a stop — a
     // ctrl-c, `liquen stop`, the supervisor's own stop — and kills what the agents' commands
     // left running; SIGTERM is a restart — a reload, a deploy — and leaves it for the next

@@ -7,7 +7,22 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import type { DocScope } from "../docs.ts";
 import { applyEdits, parseEdits } from "../../exec/edit.ts";
-import { bringToolDocs, seedAgent, seedOrg, seedSkill } from "../seed.ts";
+import { bringSystemDocs, hashOf, seedAgent, seedOrg, seedSkill } from "../seed.ts";
+
+/** A manifest kept in memory, its rows in view. */
+function memory(rows: Record<string, string> = {}) {
+  return {
+    rows,
+    manifest: () => Promise.resolve({ ...rows }),
+    setManifest(entries: Record<string, string | null>) {
+      for (const [key, value] of Object.entries(entries)) {
+        if (value === null) delete rows[key];
+        else rows[key] = value;
+      }
+      return Promise.resolve();
+    },
+  };
+}
 import type { DocsBench, DocsSubstrate } from "./mod.ts";
 
 /** A doc's text: frontmatter (with `kind`) + body. */
@@ -178,11 +193,16 @@ export function docsSuite(s: DocsSubstrate): void {
     });
   });
 
-  Deno.test("docs: the cascade seeds into the table by folder, a root doc by itself — never twice, and a deleted folder's doc stays deleted", async () => {
+  Deno.test("docs: the scaffolds are laid once and are the org's; the system docs are brought by the manifest", async () => {
     await withDocs([], async ({ docs, set, store }) => {
-      const bed = { laid: docs.laid, lay: docs.lay };
+      const bed = { lay: docs.lay, text: docs.text, swap: docs.swap, drop: docs.drop };
+      const manifest = memory();
       await seedOrg(bed);
       await seedAgent(bed, "alter");
+      // a store with no doc and no manifest takes every system doc, and records each
+      const first = await bringSystemDocs(bed, manifest);
+      assertEquals(first.laid.length, 21);
+      assertEquals(Object.keys(manifest.rows).length, 21);
       const listed = await docs.list({ agent: "alter" });
       assertEquals(refs(listed).sort(), [
         "agent/instruction/instructions",
@@ -231,41 +251,89 @@ export function docsSuite(s: DocsSubstrate): void {
         }))!,
         "archived",
       );
-      // an edit is kept, a deletion in a folder is kept: the folder's rows are the org's own;
-      // a root doc deleted is laid again, since its folder is the scope itself
+      // a scaffold is the org's: an edit is kept, and one deleted is laid again by nothing
+      // but the call that makes its owner
       await set("shared", "", "instructions", "EDITED");
-      await set("system", "", "skills/workflows", null);
-      await set("agent", "alter", "memories", null);
       await seedOrg(bed);
-      await seedAgent(bed, "alter");
-      const again = await docs.list({ agent: "alter" });
-      assertEquals(again.some((d) => d.header.name === "skills/workflows"), false);
       assertEquals(await docs.text("shared", "", "instructions"), "EDITED");
-      assertEquals(again.some((d) => d.header.handle === "agent/memories"), true);
-      // a connector's skill is laid by the file's rule, once
-      assertEquals(await seedSkill(bed, "microsoft-graph"), true);
-      assertEquals(await seedSkill(bed, "microsoft-graph"), false);
+      // the release did not change a doc: an edit and a deletion are the org's, and quiet
+      await set("system", "", "skills/workflows", null);
+      await set("system", "", "tools/send", "the org's own");
+      assertEquals(await bringSystemDocs(bed, manifest), {
+        laid: [],
+        replaced: [],
+        deleted: [],
+        beside: [],
+        kept: [],
+        pending: [],
+      });
+      // a release that changed them: an unedited doc takes the new words; an edited one
+      // and a deleted one wait for a decision, and stay as the org has them
+      const older = await hashOf("older");
+      await set("system", "", "tools/bash", "older");
+      for (const doc of ["tools/bash", "tools/send", "skills/workflows"]) {
+        manifest.rows[`doc:system/${doc}`] = older;
+      }
+      const boot = await bringSystemDocs(bed, manifest);
+      assertEquals(boot.replaced, ["tools/bash"]);
+      assertEquals(boot.pending, [
+        { doc: "tools/send", state: "edited" },
+        { doc: "skills/workflows", state: "deleted" },
+      ]);
+      assertStringIncludes((await docs.text("system", "", "tools/bash"))!, "kind: tool");
+      assertEquals(await docs.text("system", "", "tools/send"), "the org's own");
+      // `liquen update` decides: the org's kept, acknowledged; the deleted one laid again
+      const update = await bringSystemDocs(
+        bed,
+        manifest,
+        (p) => Promise.resolve(p.state === "deleted" ? "restore" : "keep"),
+      );
+      assertEquals([update.kept, update.laid, update.pending], [
+        ["tools/send"],
+        ["skills/workflows"],
+        [],
+      ]);
+      assertEquals(await docs.text("system", "", "tools/send"), "the org's own");
+      assertEquals((await bringSystemDocs(bed, manifest)).pending, []); // quiet from here on
+      // a doc the release dropped: unedited it goes, edited it waits
+      await set("system", "", "tools/gone", "was shipped");
+      await set("system", "", "tools/mine", "edited since");
+      manifest.rows["doc:system/tools/gone"] = await hashOf("was shipped");
+      manifest.rows["doc:system/tools/mine"] = await hashOf("as shipped");
+      const dropped = await bringSystemDocs(bed, manifest);
+      assertEquals(dropped.deleted, ["tools/gone"]);
+      assertEquals(dropped.pending, [{ doc: "tools/mine", state: "dropped" }]);
+      assertEquals(await docs.text("system", "", "tools/gone"), null);
+      // a connector's skill is its door's to lay, once, and recorded; nothing else lays it
+      assertEquals(await docs.text("system", "", "skills/microsoft-graph"), null);
+      assertEquals(await seedSkill(bed, manifest, "microsoft-graph"), true);
+      assertEquals(await seedSkill(bed, manifest, "microsoft-graph"), false);
+      assertEquals("doc:system/skills/microsoft-graph" in manifest.rows, true);
       // and the store hands the same bed out where the catalog puts the docs in the table
       const opened = await store();
       try {
         assertEquals(opened.on, "database");
         assertEquals(typeof opened.as, "function");
-        assertEquals(await opened.bed.laid("system", "", "skills"), true);
-        // a folder is a whole segment: `skill` is not `skills`
-        assertEquals(await opened.bed.laid("system", "", "skill"), false);
-        // a release's tool docs reach the rows as they reach files: an older release's words
-        // are brought, an edit is kept
-        await set("system", "", "tools/bash", "older");
-        await set("system", "", "tools/send", "the org's own");
-        assertEquals(
-          await bringToolDocs(opened.bed, () => Promise.resolve("older")),
-          { laid: [], updated: ["bash"], kept: ["send"] },
-        );
-        assertStringIncludes((await opened.bed.text("system", "", "tools/bash"))!, "kind: tool");
         assertEquals(await opened.bed.text("system", "", "tools/send"), "the org's own");
       } finally {
         await opened.close();
       }
+    });
+  });
+
+  Deno.test("docs: an org with docs and no manifest adopts it — what matches is taken, the rest is its choice", async () => {
+    await withDocs([], async ({ docs, set }) => {
+      const bed = { lay: docs.lay, text: docs.text, swap: docs.swap, drop: docs.drop };
+      await bringSystemDocs(bed); // as `liquen init` lays them: no manifest
+      await set("system", "", "skills/workflows", null); // the org wants none
+      await set("system", "", "tools/send", "the org's own");
+      const manifest = memory();
+      const adopted = await bringSystemDocs(bed, manifest);
+      assertEquals(adopted.laid, []);
+      assertEquals(adopted.kept.sort(), ["skills/workflows", "tools/send"]);
+      assertEquals(await docs.text("system", "", "skills/workflows"), null);
+      assertEquals(Object.keys(manifest.rows).length, 21);
+      assertEquals((await bringSystemDocs(bed, manifest)).kept, []);
     });
   });
 

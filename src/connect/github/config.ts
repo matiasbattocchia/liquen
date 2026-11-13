@@ -1,7 +1,7 @@
 /**
  * src/connect/github/config.ts — the github connector's catalog (the config rules, §4):
  * its DEFAULT_s live here and nowhere else, used as argument defaults; the values heal
- * into `data/config.jsonc` under `connections.github` and are validated at boot.
+ * under `connections.github` (`config.yaml`, or the store) and are validated at boot.
  * Secrets live in the vault, written by `liquen connect github`: `github:app:<app_id>` (the
  * webhook secret + private key), `github:org` / `github:<principal>` (the identities).
  */
@@ -39,7 +39,7 @@ export const SPEC: ConnectorSpec = {
   ],
 };
 
-/** Read (and heal) `connections.github` from the org's config.jsonc. */
+/** Read `connections.github` as the org's store holds it. */
 export function githubConfig(root: string): Promise<GithubConfig> {
   return connectorConfig<GithubConfig>(root, SPEC);
 }

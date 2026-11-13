@@ -7,7 +7,8 @@
  * shared inbox (the acl table refines this later; until then absence is the config). A
  * Slack user grant is its own connection `<team>:<user>`; the org bot is the bare
  * `<team>`. `credential_key` points at the grant's secret in the vault; `extra` carries
- * discovered account facts (JSON, shallow-merged on upsert).
+ * discovered account facts (JSON, merged on upsert by RFC 7396 at every depth: a key
+ * given replaces or joins, a key given `null` goes).
  *
  * Registration is the LOG's frontier gate (§4): an event on a connection with no live
  * row is refused at publish — only `local` (the substrate's own service) is exempt.
@@ -30,7 +31,7 @@
  * Both are RUNTIME data (a connect flow or the wire mirror binds them while the org
  * runs), so there is no mirror-sync: upserts only, the table is primary. A door writes
  * what it knows — an upsert with `agentId`/`credentialKey` absent PRESERVES what
- * another door bound, and `extra` merges field-wise. Policy reads THROUGH prepared
+ * another door bound, and `extra` merges by RFC 7396. Policy reads THROUGH prepared
  * statements (`connection`/`isMember`) — live by construction, like the RLS join it
  * emulates (§6); a mid-run bind, delete, or revival is visible on the next event.
  *
@@ -255,7 +256,7 @@ export interface EnrollmentRow extends MembershipRow {
 export const CONNECTIONS_DDL = `CREATE TABLE IF NOT EXISTS connections (
   service        TEXT NOT NULL,
   address        TEXT NOT NULL,
-  agent_id       TEXT,
+  agent_id       TEXT REFERENCES agents(agent_id) ON DELETE CASCADE,
   credential_key TEXT,
   extra          TEXT,
   created_at     TEXT NOT NULL,
@@ -267,7 +268,7 @@ CREATE TABLE IF NOT EXISTS memberships (
   service              TEXT NOT NULL,
   connection_address   TEXT NOT NULL,
   conversation_address TEXT NOT NULL,
-  agent_id             TEXT NOT NULL,
+  agent_id             TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
   session_id           TEXT NOT NULL,
   created_at           TEXT NOT NULL,
   deleted_at           TEXT,

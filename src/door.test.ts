@@ -26,7 +26,7 @@ import { kindOf, saveMedia } from "./store/media.ts";
 import { installExecGround } from "./exec/bash.ts";
 import { NOTHING, scoped } from "./policy.ts";
 import { type AgentConfig, answerCall, type Gate, relevant } from "./xi.ts";
-import { scripted } from "./testing.ts";
+import { members, scripted } from "./testing.ts";
 import { textOf } from "./render.ts";
 import { lineOf } from "./describe.ts";
 import { answerLine } from "./verdict.ts";
@@ -67,6 +67,7 @@ function cardFor(use: string): Draft<PermissionRequestEvent> {
 async function up(policy?: Parameters<typeof scoped>[1], gate: Gate = () => "allow") {
   const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
   const log = await openLog(`${dir}/log`);
+  await members(log, "ana");
   const slog = policy ? scoped(log, policy) : log;
   const config: AgentConfig = {
     ...AGENT,
@@ -511,6 +512,7 @@ Deno.test({
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
+    await members(log, "ana");
     const storage = fileStorage(dir);
     const mine = { sql: "events.conversation_address = $c", params: { c: "wa:mine" } };
     const doors = await installDoors(dir, [{
@@ -583,8 +585,9 @@ Deno.test({
   async fn() {
     const org = await Deno.realPath(await Deno.makeTempDir({ prefix: "mu-door-" }));
     const dir = `${org}/data`;
-    await Deno.writeTextFile(`${org}/config.jsonc`, "{}\n");
+    await Deno.writeTextFile(`${org}/config.yaml`, "{}\n");
     const log = await openLog(`${dir}/log`);
+    await members(log, "ana");
     const storage = fileStorage(dir);
     const doors = await installDoors(dir, [{
       ...AGENT,
@@ -635,6 +638,7 @@ Deno.test({
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
+    await members(log, "ana");
     const doors = await installDoors(dir, [{ ...AGENT, port: () => Promise.resolve(log) }]);
     const wait = async (cond: () => boolean, ms = 10_000) => {
       const t0 = Date.now();
@@ -673,6 +677,7 @@ Deno.test({
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
+    await members(log, "ana");
     const asked: string[] = [];
     const doors = await installDoors(dir, [{
       ...AGENT,
@@ -719,6 +724,7 @@ Deno.test({
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
+    await members(log, "ana");
     const doors = await installDoors(dir, [{ ...AGENT, port: () => Promise.resolve(log) }]);
     try {
       assertEquals(doors.attachments(), 0);
@@ -819,6 +825,7 @@ Deno.test({
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
+    await members(log, "ana");
     const seen: [string, string | undefined][] = [];
     const doors = await installDoors(dir, [{
       ...AGENT,
@@ -875,6 +882,7 @@ Deno.test({
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
+    await members(log, "ana");
     const seen: [string, Tune | undefined][] = [];
     const doors = await installDoors(dir, [{
       ...AGENT,
@@ -958,6 +966,7 @@ Deno.test({
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
+    await members(log, "ana");
     const doors = await installDoors(dir, [{
       ...AGENT,
       paused: true,
@@ -1209,6 +1218,7 @@ Deno.test({
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "mu-door-" });
     const log = await openLog(`${dir}/log`);
+    await members(log, "ana");
     const doors = await installDoors(dir, [{
       ...AGENT,
       port: () => Promise.resolve(log),

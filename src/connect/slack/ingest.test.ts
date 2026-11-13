@@ -13,6 +13,7 @@ import { SignedOut } from "../errors.ts";
 import type { Draft, Event, MessageEvent } from "../../types.ts";
 import { newId } from "../../store/id.ts";
 import { type Appender, type Log, openLog } from "../../store/log.ts";
+import { members } from "../../testing.ts";
 import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
 
 const SECRET = "sl-s3cret";
@@ -1601,6 +1602,7 @@ async function withRows(fn: (log: Log) => Promise<void>): Promise<void> {
   const dir = await Deno.makeTempDir();
   const log = await openLog(dir);
   try {
+    await members(log, "ana");
     await log.upsertConnections([
       { service: "slack", address: "T1:UBOT", credentialKey: "slack:T1:org" },
       { service: "slack", address: "T1:U7", agentId: "ana", credentialKey: "slack:T1:ana" },

@@ -2,7 +2,7 @@
  * runner.ts — what a session of an agent runs with (DESIGN §4, §9).
  *
  * One builder serves the mind and every named session, from three things no process
- * owns: the store, the agent's row, and the host's ports. The identity is shared — one
+ * owns: the store, the agent's row with the org's configuration, and the host's ports. The identity is shared — one
  * metered transport, one address book, one history, one ground — and the log view, the
  * lease, the stream and the shell (where it stands, what it left running) are the
  * session's. A runner is built once per session and kept: an attachment's `tune` writes
@@ -19,7 +19,8 @@ import { ANTHROPIC, type ModelTransport, providerOf, type Warmth } from "./trans
 import type { Sandbox } from "./sandbox.ts";
 import { MIND } from "./session.ts";
 import type { AgentRow } from "./store/agents.ts";
-import type { Cause, Delta, Effort } from "./types.ts";
+import { type OrgConfig, settingsOf } from "./config.ts";
+import type { Cause, Delta } from "./types.ts";
 
 /** What a host wires once, for every runner it builds. */
 export interface Host {
@@ -75,38 +76,54 @@ export function thinkingThrough(
 }
 
 /** What rides in code beside the row (§9): a compiled gate, a retry pace — a function and
- *  a pace, which no row holds. Tests pass them; a deployment's row is enough. */
+ *  a pace, which no row holds. Tests pass them; a deployment's rows are enough. */
 export type Seams = Pick<AgentConfig, "gate" | "retryDelaysMs">;
 
-/** The config a session of the agent runs with, from its row (§9): the identity columns
- *  and the row's `settings`, whole. A row with no settings or no model is one no session
- *  can run on. */
-export function configOf(row: AgentRow, sessionId: string): AgentConfig {
-  if (!row.settings || row.model === undefined) {
-    throw new Error(`agent ${row.agentId}: its row carries no settings`);
-  }
+/** The config a session of the agent runs with (§9): its row's identity and backlog
+ *  floor, and its settings as they resolve when this is read — its own scope over the
+ *  org's, over the catalog's constants — beside what every agent of the org shares: the
+ *  clock, the locale, the media a processor makes readable. */
+export function configOf(row: AgentRow, org: OrgConfig, sessionId: string): AgentConfig {
+  const s = settingsOf(org, row.agentId);
   return {
     agentId: row.agentId,
     sessionId,
-    model: row.model,
-    ...(row.effort ? { effort: row.effort as Effort } : {}),
+    model: s.model,
+    ...(s.effort ? { effort: s.effort } : {}),
     ...(row.name ? { name: row.name } : {}),
     ...(row.email ? { email: row.email } : {}),
     ...(row.phone ? { phone: row.phone } : {}),
-    ...row.settings,
-    cache: providerOf(row.provider).cache,
+    maxTokens: s.maxTokens,
+    // null is "every tool": the offer is left unnamed
+    ...(s.tools !== null ? { tools: s.tools } : {}),
+    rules: s.rules,
+    ...(row.since ? { since: row.since } : {}),
+    ...(org.shared.timezone ? { timezone: org.shared.timezone } : {}),
+    ...(org.shared.locale ? { locale: org.shared.locale } : {}),
+    // attention (§2): the wake policy is the agent's — hot, summoned, or on the digest
+    engagedMinutes: s.engagedMinutes,
+    digestAfterMessages: s.digestAfterMessages,
+    digestMinutes: s.digestMinutes,
+    sleepHours: s.sleepHours, // null is "never sleeps" (Wake, §2)
+    // the media kinds a processor makes readable — org-wide, one fact for every agent (§5)
+    processors: Object.entries(org.processors).filter(([, cmd]) => !!cmd).map(([kind]) => kind),
+    // the window (§5): what the agent holds in view is its work's shape
+    compactAt: s.compactAt,
+    keepRecent: s.keepRecent,
+    cache: providerOf(s.provider).cache,
   };
 }
 
-/** The runner (§4): a session of the agent its row describes, on the host's ports. `home`
- *  is the sandbox's fact — where the agent's folder is on the ground it stands on. */
+/** The runner (§4): a session of an agent on the host's ports, running with `config` and
+ *  thinking through `provider`'s transport. `home` is the sandbox's fact — where the
+ *  agent's folder is on the ground it stands on. */
 export function runnerFor(
   host: Host,
-  row: AgentRow,
-  sessionId: string,
+  config: AgentConfig,
+  provider: string | null | undefined,
   seams: Seams = {},
 ): Runner {
-  const { agentId } = row;
+  const { agentId, sessionId } = config;
   const box = host.sandbox?.forAgent(agentId).session(sessionId);
   const slog = scoped(host.log, host.policy(agentId, sessionId));
   // the session's docs tools, where the docs are the table's
@@ -115,14 +132,14 @@ export function runnerFor(
   // the mind's next turn is always coming; a named session's work ends, and its cache with it
   const warmth = sessionId === MIND ? host.warmth?.(agentId) : undefined;
   return {
-    config: { ...configOf(row, sessionId), ...(box ? { home: box.home } : {}), ...seams },
+    config: { ...config, ...(box ? { home: box.home } : {}), ...seams },
     log: slog,
     ...(warmth ? { warmth } : {}),
     ports: {
       log: slog,
       ...(host.history ? { history: scoped(host.log, host.history(agentId)) } : {}),
       docs: host.docs,
-      transport: thinkingThrough({ warmth }, row.provider, host.transport(agentId)),
+      transport: thinkingThrough({ warmth }, provider, host.transport(agentId)),
       ...exec,
       ...(box ? { files: box.files, ambient: box.ambient } : {}),
       ...(box?.bins ? { bins: box.bins } : {}),

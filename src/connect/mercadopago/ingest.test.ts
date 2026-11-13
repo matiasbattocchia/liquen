@@ -2,6 +2,7 @@ import { assertEquals } from "@std/assert";
 import { createMercadopagoWebhook } from "./ingest.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
+import { membersAt } from "../../testing.ts";
 import type { Appender, Draft, Event, MessageEvent } from "../../connector.ts";
 
 const SELF = "78777806";
@@ -45,6 +46,7 @@ async function withHandler(
   answer: () => Response = () => Response.json(PAYMENT),
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
+  await membersAt(dir, "ana", "bo");
   const creds = await openCredentials(dir);
   try {
     await creds.put({ key: KEY, value: { token: "APP_USR-x" }, agentId: "ana" });

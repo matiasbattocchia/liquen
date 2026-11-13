@@ -1,6 +1,5 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { start } from "./main.ts";
-import { readConfig } from "./config.ts";
 import { canned, scripted } from "./testing.ts";
 
 Deno.test({
@@ -10,8 +9,10 @@ Deno.test({
   sanitizeOps: false,
   async fn() {
     const root = await Deno.makeTempDir();
-    await Deno.writeTextFile(`${root}/config.jsonc`, JSON.stringify({ agents: { ana: {} } }));
-    const catalog = await readConfig(root);
+    await Deno.writeTextFile(
+      `${root}/config.yaml`,
+      "shared:\n  agents:\n    model: claude-x\n    maxTokens: 1024\nagents:\n  ana: {}\n",
+    );
     // each instruction: a call to a tool nobody has (an error result), then the closing
     const turn = () => [
       canned([{ kind: "tool_use", name: "nope", input: {} }], "tool_use"),
@@ -20,7 +21,7 @@ Deno.test({
     const fine = canned([{ kind: "assistant", text: "listo" }], "end_turn");
     const { transport } = scripted([...turn(), fine, ...turn()]);
     const main = await start(
-      { dir: `${root}/data`, catalog, debounceMs: 0, model: "claude-x", maxTokens: 1024 },
+      { dir: `${root}/data`, root, debounceMs: 0 },
       { transport },
     );
     const cli = async (...args: string[]) => {

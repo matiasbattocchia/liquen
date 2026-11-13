@@ -31,7 +31,7 @@ async function withOrg(
 ): Promise<void> {
   const org = await Deno.realPath(await Deno.makeTempDir());
   const dir = `${org}/data`;
-  await Deno.writeTextFile(`${org}/config.jsonc`, "{}\n");
+  await Deno.writeTextFile(`${org}/config.yaml`, "{}\n");
   await Deno.writeTextFile(`${org}/.env`, "ANTHROPIC_API_KEY=sk-secret");
   await Deno.mkdir(`${dir}/log`, { recursive: true });
   const ground = () =>
@@ -330,7 +330,7 @@ Deno.test({
       await shell.stand(org);
       assertEquals(await run("pwd"), org);
       assertEquals(
-        await run("cat config.jsonc && echo '{ }' > config.jsonc && cat config.jsonc"),
+        await run("cat config.yaml && echo '{ }' > config.yaml && cat config.yaml"),
         "{}\n{ }",
       );
       assertEquals(await run("cat .env 2>/dev/null || echo refused"), "refused");

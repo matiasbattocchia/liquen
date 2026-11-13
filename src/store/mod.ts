@@ -2,9 +2,10 @@
  * store/mod.ts — the org's store, opened where the catalog says it is (DESIGN §9).
  *
  * Every process of an org — main, the scheduler, each connector, the setup doors — reaches
- * the log, the vault and the docs through `openStore(root)`: the catalog's `deployment.database`
+ * the log, the vault and the docs through `openStore(root)`: the file's `deployment.database`
  * names the engine, `deployment.docs` where the docs live, and the rest of the process never
- * learns which it got. `sqlite` is SQLite in `data/log`, the embedded engine every
+ * learns which it got. `deployment` is the one section read off `config.yaml` itself: the
+ * rest of the org's configuration is rows of this store. `sqlite` is SQLite in `data/log`, the embedded engine every
  * deployment starts on; a Postgres URL is a schema of that database, the same ports over a
  * server (`src/store/pg/`). The docs are files under the data root unless the catalog puts
  * them in the database's docs table, on either engine — a switch of its own, so an org whose log
@@ -26,7 +27,7 @@ import { openPgDocs } from "./pg/docs.ts";
 import { onFiles, type Relaybed } from "./seed.ts";
 import { fileStorage, type Storage } from "./storage.ts";
 import { bucketOf, s3AddressOf, s3Storage } from "./s3.ts";
-import { readConfig } from "../config.ts";
+import { readFile } from "../config.ts";
 
 /** The docs as a process opens them: the read port, the bed the seeds go in, and — where
  *  the docs live in the table — the agent's own reach, the substrate tool (§9). */
@@ -81,7 +82,7 @@ export function storeAt(at: Database): Store {
   });
   const table = (docs: DocTable): DocStore => ({
     ...docs,
-    bed: { laid: docs.laid, lay: docs.lay, text: docs.text, swap: docs.swap },
+    bed: { lay: docs.lay, text: docs.text, swap: docs.swap, drop: docs.drop },
   });
   // the object store, opened once and on first need: a bucket's keys are read then, so a
   // process that keeps no file never asks for them
@@ -112,15 +113,10 @@ export function storeAt(at: Database): Store {
   };
 }
 
-/** The store of the org at `root`: its catalog read, the address resolved. */
+/** The store of the org at `root`: its file's `deployment` read, the address resolved. */
 export async function openStore(root: string): Promise<Store> {
-  const catalog = await readConfig(root);
+  const { deployment } = await readFile(root);
   return storeAt(
-    databaseOf(
-      `${root}/data`,
-      catalog.deployment.database,
-      catalog.deployment.docs,
-      catalog.deployment.storage,
-    ),
+    databaseOf(`${root}/data`, deployment.database, deployment.docs, deployment.storage),
   );
 }

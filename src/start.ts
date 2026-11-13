@@ -1,12 +1,12 @@
 /**
  * start.ts — `liquen start`: the org as one command (DESIGN §9).
  *
- * A keep-alive loop and nothing more: read the catalog, spawn one child per process the
- * org declares — main (the tail + fan-out, hosting the egress proxy), one per
- * `connections.<name>`, the edge (edge.ts) and the tunnel the org runs itself
- * (`edge.tunnel`, any argv) — and respawn whatever exits, with
+ * A keep-alive loop and little more: apply config.yaml to the store, read the org off it,
+ * spawn one child per process the org declares — main (the tail + fan-out, hosting the
+ * egress proxy), one per `connections.<name>`, the edge (edge.ts) and the tunnel the org
+ * runs itself (`edge.tunnel`, any argv) — and respawn whatever exits, with
  * backoff. The log is the bus, so there is no dependency order, no readiness probe, no
- * IPC: a child finds the org the way every process does (cwd walks up to config.jsonc),
+ * IPC: a child finds the org the way every process does (cwd walks up to config.yaml),
  * and env rides through untouched (secrets only).
  *
  * A child that CRASHES comes back; a child that REFUSES does not. The two are told apart
@@ -15,24 +15,25 @@
  * org runs on with whatever is left instead of reprinting one complaint every minute
  * forever. When nothing is left, `liquen start` refuses too, naming who gave up.
  *
- * The file is read at boot and again on a reload — asked over the run's socket,
+ * The file is applied at boot and again on a reload — asked over the run's socket,
  * `data/run/liquen.sock` (reload.ts), by `liquen reload` and by every setup door that
- * writes the file: the run is brought in line with the file as it is now. Each process
- * restarts when the part of the file it reads changed (`reads`), a connection declared
- * since starts, one no longer declared stops, one that refused gets another go — the
- * world it refused may be what the edit changed — and each process the request NAMES
- * restarts whatever the file says of it, for what it reads once at boot from somewhere
- * else (a connection's carrier, picked off the vault). The request is answered with what
- * moved. A file boot would reject changes nothing: the supervisor says why, to the asker
- * and in its own lines, and runs on as it was.
+ * wrote the store: the run is brought in line with the store as it is now. Each process
+ * restarts when the part of the configuration it reads at its start changed (`reads`), a
+ * connection declared since starts, one no longer declared stops, one that refused gets
+ * another go — the world it refused may be what the edit changed — and each process the
+ * request NAMES restarts whatever the store says of it, for what it reads once at boot
+ * from somewhere else (a connection's carrier, picked off the vault). An agent added,
+ * changed or paused restarts nothing: main is told, and reconciles each from its row. The
+ * request is answered with what moved. A file boot would reject changes nothing: the
+ * supervisor says why, to the asker and in its own lines, and runs on as it was.
  *
  * One of each role. A run holds `data/run/liquen.pid` for its life and its main holds
  * `data/run/main.pid` (stop.ts) — the locks that make them findable, so `liquen stop` has
  * pids to signal, and a second supervisor, or a start over a mind an interface already
  * raised, refuses instead of doubling every tail, fan-out and mirror over one log.
  *
- * Death is loud on stderr and nowhere else — the supervisor never opens the log; the
- * outer layer (docker restart, systemd, the terminal) supervises `liquen start` itself.
+ * Death is loud on stderr and nowhere else — the supervisor holds no handle on the
+ * store between a boot and a reload; the outer layer (docker restart, systemd, the terminal) supervises `liquen start` itself.
  * SIGTERM fans out to the children, waits `STOP_TIMEOUT_MS`, then SIGKILLs. Main is asked
  * with SIGINT then, the signal that ends what the agents' commands left running; a reload
  * restarts it with SIGTERM, which leaves that running for the next main to adopt (§9).
@@ -53,10 +54,12 @@
  */
 
 import { TextLineStream } from "@std/streams";
-import { findRoot, type OrgConfig, orgFlag, readConfig, STOP_TIMEOUT_MS } from "./config.ts";
+import { findRoot, type OrgConfig, orgFlag, readFile, STOP_TIMEOUT_MS } from "./config.ts";
+import { readConfig } from "./org.ts";
+import { poke } from "./roster.ts";
 import { entry, REFUSAL } from "./entry.ts";
 import { claim, holder, MAIN, SUPERVISOR } from "./stop.ts";
-import { moved, type Moves, runSocket } from "./reload.ts";
+import { applied, moved, type Moves, runSocket } from "./reload.ts";
 import { RUNNING, SHIPPED } from "./connect/connect.ts";
 import { helpFlag } from "./connect/help.ts";
 import { serveSocket } from "./connect/serve.ts";
@@ -75,7 +78,7 @@ export const USAGE = `usage: liquen start [-D | --detach] [--dir <org>]
 const DETACH_WAIT_MS = 15_000;
 
 /** What a start over a running org is told. */
-const RUNNING_HINT = "`liquen reload` takes up an edit to config.jsonc; `liquen stop` ends it";
+const RUNNING_HINT = "`liquen reload` applies an edit to config.yaml; `liquen stop` ends it";
 
 const RESTART_BASE_MS = 1_000;
 const RESTART_CAP_MS = 60_000;
@@ -210,7 +213,7 @@ export function roster(root: string, cfg: Pick<OrgConfig, "connections" | "edge"
     else if (has(local)) procs.push(module(name, local));
     else {
       throw new Error(
-        `connection "${name}" is declared in config.jsonc but has no process: ` +
+        `connection "${name}" is declared but has no process: ` +
           `no run.ts under src/connect/${name}/ or ${root}/connectors/${name}/`,
       );
     }
@@ -220,19 +223,22 @@ export function roster(root: string, cfg: Pick<OrgConfig, "connections" | "edge"
   return procs;
 }
 
-/** The part of the file a process reads, as a reload compares it. Every liquen process
- *  reads the shared sections (where the store is, the org's clock); main reads the roster
- *  too, and the WhatsApp bridge's address, because it speaks to the bridge itself (the
- *  address book, the rooms); a connection reads the edge and its own section; the edge its
- *  section; the tunnel is its argv. */
+/** The part of the org's configuration a process reads once, at its start, as a reload
+ *  compares it. Every liquen process reads where the store is, the machinery's knobs and
+ *  the org's clock; main reads the WhatsApp bridge's address too, because it speaks to the
+ *  bridge itself (the address book, the rooms); a connection reads the edge and its own
+ *  scope; the edge its section; the tunnel is its argv. The roster and every agent's
+ *  settings are in none of them: main reconciles an agent from its row while it runs. */
 export function reads(name: string, cfg: OrgConfig): string {
-  const { agents, connections, edge, ...shared } = cfg;
+  const { agents: _agents, connections, edge, shared, ...rest } = cfg;
+  const { agents: _defaults, ...clock } = shared;
+  const common = { ...rest, shared: clock };
   if (name === "main") {
-    return JSON.stringify({ ...shared, agents, bridge: connections.whatsapp?.bridgeUrl });
+    return JSON.stringify({ ...common, bridge: connections.whatsapp?.bridgeUrl });
   }
   if (name === "edge") return JSON.stringify(edge);
   if (name === "tunnel") return JSON.stringify(edge.tunnel);
-  return JSON.stringify({ ...shared, edge, own: connections[name] });
+  return JSON.stringify({ ...common, edge, own: connections[name] });
 }
 
 /** What a process of the run is to a reload: what it read of the file when it started, and
@@ -277,6 +283,10 @@ if (import.meta.main) {
     // a refusal included; a detached start says its piece at the terminal and hands over
     let run: RunLog | undefined;
     if (!background) sayConsole(run = openRunLog(dir, true), SUPERVISOR);
+    // boot is a reload at start: the file applied to the store, the run made from what
+    // the store then holds. A detached start leaves both to the child it spawns
+    await readFile(root);
+    if (!background) await applied(root);
     const cfg = await readConfig(root);
     const procs = roster(root, cfg);
     // ONE OF EACH ROLE (stop.ts). The locks are taken after the catalog is read, so a
@@ -430,6 +440,7 @@ if (import.meta.main) {
         if (halting) throw new Error("the run is stopping");
         reloading = true;
         try {
+          await applied(root);
           const cfg = await readConfig(root);
           const next = roster(root, cfg);
           const stray = named.filter((name) => !next.some((p) => p.name === name));
@@ -451,11 +462,22 @@ if (import.meta.main) {
             restart: moves.restart.map((p) => p.name),
             start: moves.start.map((p) => p.name),
           };
-          lines.say(SUPERVISOR, `config.jsonc taken up — ${moved(made)}`);
+          // a main that runs on reconciles each agent from its row; one that restarted
+          // does so at its boot
+          if (!made.restart.includes(MAIN) && !made.start.includes(MAIN)) {
+            const said = await poke(root).catch((err) =>
+              err instanceof Error ? err.message : String(err)
+            );
+            if (said !== null) made.agents = said;
+          }
+          lines.say(
+            SUPERVISOR,
+            `config.yaml applied — ${moved(made)}${made.agents ? ` · ${made.agents}` : ""}`,
+          );
           return made;
         } catch (err) {
           const why = err instanceof Error ? err.message : String(err);
-          lines.say(SUPERVISOR, `config.jsonc not taken up — ${why}; running on as it was`, {
+          lines.say(SUPERVISOR, `config.yaml not applied — ${why}; running on as it was`, {
             failure: true,
           });
           throw err;

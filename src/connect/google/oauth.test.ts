@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { createGoogleOAuth, type GoogleTokens, missingScopes } from "./oauth.ts";
 import { openCredentials } from "../../store/credentials.ts";
+import { membersAt } from "../../testing.ts";
 import type { Draft, Event } from "../../types.ts";
 import { newId } from "../../store/id.ts";
 import type { Appender } from "../../store/log.ts";
@@ -44,6 +45,7 @@ async function withOAuth(
   opts: { defaultExchange?: boolean } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
+  await membersAt(dir, "ana", "bo");
   const creds = await openCredentials(dir);
   const published: Event[] = [];
   const exchanged: string[] = [];
