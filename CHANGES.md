@@ -1,7 +1,7 @@
 # Next batch: the org's configuration lives in the store
 
 Decided 12 Nov 2026. Driven by turtle-agents' requirements for agents made at runtime;
-1 to 5 below are settled, 6 to 8 are still to discuss.
+1 to 6 below are settled, 7 and 8 are still to discuss.
 
 1. Runtime roster: the roster lives in the org's registry on the volume, so agents added
    at runtime survive restarts and rolls.
@@ -259,6 +259,14 @@ deleted skills stay deleted.
 Tool docs carry no `load`. Linked checkouts (`data/system/` folders symlinked at a liquen
 checkout) go: an org takes the harness's words from a release, so ~/new and vibes take
 this batch by a release and `liquen update`.
+
+## 11. An agent's own credential wins over the org's
+
+`frontedFor` (`src/proxy/grants.ts`) picks, per env var, the agent's own row when it holds
+exactly one, and the org's when the agent holds none and the org exactly one; a var
+several rows contend for at the winning level stays unset. That is the order the model
+keys already take (`vaultKeys`, `src/transport/mod.ts`): a member who connects a key of
+their own spends it, and one who has not spends the org's.
 
 ## Docs
 
