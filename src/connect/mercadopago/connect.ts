@@ -33,7 +33,7 @@ import {
 } from "../../connector.ts";
 import { SPEC } from "./config.ts";
 import { GRANT_ENV, GRANT_HOSTS, GRANT_PREFIX, SERVICE } from "./payments.ts";
-import { contention } from "../token/connect.ts";
+import { contention } from "../token/grant.ts";
 import { entry } from "../../entry.ts";
 
 export interface Account {

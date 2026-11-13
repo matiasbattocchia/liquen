@@ -120,7 +120,11 @@ from the shipped `token` door (`liquen connect token <name> --env <VAR> --hosts 
 [--paths <list>]`,
 `src/connect/token/connect.ts`): a pasted bearer under `token:<name>` (the org's) or
 `token:<name>:<agent>` (an agent's own), and nothing else — no connection, no membership,
-no event, because a tool credential is capability, not identity. A handle a tool base64s
+no event, because a tool credential is capability, not identity. A connector that
+provisions such tokens (an agent's own, minted by the service it fronts) writes them by
+the door's own path: `connectToken(store, args, token)` from `@liquen/liquen/connector`
+checks the declaration and the roster, probes when asked, writes the row and says what
+`frontedFor` will make of it; `src/connect/token/grant.ts`. A handle a tool base64s
 or signs over (Basic, SigV4) can't ride this path; such schemes belong broker-side.
 The model key is not a tool credential and is never fronted: `liquen connect ai <provider>
 [--agent <id>]` (`src/connect/ai/connect.ts`) writes `ai:<provider>` or

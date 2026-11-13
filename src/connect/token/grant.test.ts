@@ -1,17 +1,20 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { connectToken, contention, parseTokenArgs, tokenKey } from "./connect.ts";
+import { connectToken, contention, parseTokenArgs, tokenKey } from "./grant.ts";
 import { openCredentials } from "../../store/credentials.ts";
+import { databaseOf, type Store, storeAt } from "../../store/mod.ts";
 import { membersAt } from "../../testing.ts";
 import { frontedFor } from "../../proxy/grants.ts";
 
+/** An org's store with agents ana and bo, and a vault handle of the test's own to read
+ *  what `connectToken` wrote through the store. */
 async function withVault(
-  fn: (creds: Awaited<ReturnType<typeof openCredentials>>) => Promise<void>,
+  fn: (store: Store, creds: Awaited<ReturnType<typeof openCredentials>>) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   await membersAt(dir, "ana", "bo");
   const creds = await openCredentials(dir);
   try {
-    await fn(creds);
+    await fn(storeAt(databaseOf(dir, "sqlite")), creds);
   } finally {
     await creds.close();
     await Deno.remove(dir, { recursive: true });
@@ -90,8 +93,8 @@ Deno.test("parseTokenArgs: a local service by its port, over plain HTTP", () => 
 });
 
 Deno.test("connectToken: one vault row — static token, env + hosts on the sidecar", async () => {
-  await withVault(async (creds) => {
-    const { key, contention } = await connectToken(parseTokenArgs(BASE), " tok-1 \n", { creds });
+  await withVault(async (store, creds) => {
+    const { key, contention } = await connectToken(store, parseTokenArgs(BASE), " tok-1 \n");
     assertEquals(key, "token:crm");
     assertEquals(contention, undefined);
     const row = await creds.get("token:crm");
@@ -105,8 +108,8 @@ Deno.test("connectToken: one vault row — static token, env + hosts on the side
 });
 
 Deno.test("connectToken: --paths lands on the sidecar beside the hosts", async () => {
-  await withVault(async (creds) => {
-    await connectToken(parseTokenArgs([...BASE, "--paths", "/organization/42/"]), "tok", { creds });
+  await withVault(async (store, creds) => {
+    await connectToken(store, parseTokenArgs([...BASE, "--paths", "/organization/42/"]), "tok");
     assertEquals((await creds.get("token:crm"))?.extra, {
       env: "CRM_TOKEN",
       hosts: ["api.crm.io", "*.crm.io"],
@@ -115,11 +118,54 @@ Deno.test("connectToken: --paths lands on the sidecar beside the hosts", async (
   });
 });
 
+Deno.test("connectToken: a connector's args, built by hand, are checked as the door's", async () => {
+  await withVault(async (store, creds) => {
+    const args = { name: "sonar-api", env: "SONAR_TOKEN", hosts: ["localhost:8080"] };
+    await assertRejects(
+      () => connectToken(store, { ...args, env: "sonar-token" }, "tok"),
+      Error,
+      "environment variable name",
+    );
+    await assertRejects(
+      () => connectToken(store, { ...args, hosts: [] }, "tok"),
+      Error,
+      "--hosts is required",
+    );
+    await assertRejects(
+      () => connectToken(store, { ...args, probe: "http://elsewhere:9/x" }, "tok"),
+      Error,
+      "outside --hosts",
+    );
+    assertEquals(await creds.list(""), []);
+    const { key } = await connectToken(store, { ...args, agentId: "bo" }, "tok-b");
+    assertEquals(key, "token:sonar-api:bo");
+    assertEquals((await creds.get(key))?.extra, { env: "SONAR_TOKEN", hosts: ["localhost:8080"] });
+  });
+});
+
+Deno.test("connectToken: an agent off the roster refuses before the token is asked for", async () => {
+  await withVault(async (store, creds) => {
+    let asked = false;
+    const paste = () => {
+      asked = true;
+      return Promise.resolve("t");
+    };
+    await assertRejects(
+      () => connectToken(store, parseTokenArgs([...BASE, "--agent", "zoe"]), paste),
+      Error,
+      'no agent "zoe" on the roster — have: ana · bo',
+    );
+    assertEquals(asked, false);
+    assertEquals(await creds.list(""), []);
+    await connectToken(store, parseTokenArgs([...BASE, "--agent", "bo"]), paste);
+    assertEquals(asked, true);
+    assertEquals((await creds.get("token:crm:bo"))?.value.token, "t");
+  });
+});
+
 Deno.test("connectToken: an agent's own is fronted in its pocket alone", async () => {
-  await withVault(async (creds) => {
-    const { key } = await connectToken(parseTokenArgs([...BASE, "--agent", "ana"]), "tok-a", {
-      creds,
-    });
+  await withVault(async (store, creds) => {
+    const { key } = await connectToken(store, parseTokenArgs([...BASE, "--agent", "ana"]), "tok-a");
     assertEquals(key, "token:crm:ana");
     const row = await creds.get(key);
     assertEquals(row?.agentId, "ana");
@@ -129,13 +175,12 @@ Deno.test("connectToken: an agent's own is fronted in its pocket alone", async (
 });
 
 Deno.test("connectToken: the probe spends the token first, and a refusal writes nothing", async () => {
-  await withVault(async (creds) => {
+  await withVault(async (store, creds) => {
     const seen: [string, string][] = [];
     const args = parseTokenArgs([...BASE, "--probe", "https://api.crm.io/me"]);
     await assertRejects(
       () =>
-        connectToken(args, "bad", {
-          creds,
+        connectToken(store, args, "bad", {
           probe: (url, token) => {
             seen.push([url, token]);
             return Promise.resolve({ status: 401 });
@@ -146,14 +191,19 @@ Deno.test("connectToken: the probe spends the token first, and a refusal writes 
     );
     assertEquals(seen, [["https://api.crm.io/me", "bad"]]);
     assertEquals(await creds.get("token:crm"), null);
-    await connectToken(args, "good", { creds, probe: () => Promise.resolve({ status: 200 }) });
+    await connectToken(store, args, "good", { probe: () => Promise.resolve({ status: 200 }) });
     assertEquals((await creds.get("token:crm"))?.value.token, "good");
   });
 });
 
 Deno.test("connectToken: an empty token writes nothing", async () => {
-  await withVault(async (creds) => {
-    await assertRejects(() => connectToken(parseTokenArgs(BASE), "  ", { creds }), Error, "empty");
+  await withVault(async (store, creds) => {
+    await assertRejects(() => connectToken(store, parseTokenArgs(BASE), "  "), Error, "empty");
+    await assertRejects(
+      () => connectToken(store, parseTokenArgs(BASE), () => Promise.resolve(undefined)),
+      Error,
+      "empty",
+    );
     assertEquals(await creds.list("token:"), []);
   });
 });
@@ -173,16 +223,16 @@ Deno.test("contention: says what frontedFor will do with the var", () => {
 });
 
 Deno.test("connectToken: names the contention on the row it wrote", async () => {
-  await withVault(async (creds) => {
+  await withVault(async (store, creds) => {
     await creds.put({
       key: "github:org",
       value: { token: "g" },
       extra: { env: "GH_TOKEN", hosts: [] },
     });
     const { contention } = await connectToken(
+      store,
       parseTokenArgs(["gh", "--env", "GH_TOKEN", "--hosts", "api.github.com", "--agent", "ana"]),
       "t",
-      { creds },
     );
     assert(contention?.includes("github:org"), contention);
   });

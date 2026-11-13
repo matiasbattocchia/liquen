@@ -23,6 +23,8 @@ export { newId } from "./store/id.ts";
 export { checkStrings, findRoot, orgFlag } from "./config.ts";
 export { connectorConfig, readConfig } from "./org.ts";
 export { ensureRoute, poke, removeAgent, upsertAgent } from "./roster.ts";
+export { checkTokenArgs, connectToken, tokenKey } from "./connect/token/grant.ts";
+export type { TokenArgs, TokenDeps } from "./connect/token/grant.ts";
 export type { AgentChange } from "./roster.ts";
 export { callbackAddress, ingestAddress, localBase, reachLine } from "./edge.ts";
 export { entry, report } from "./entry.ts";
