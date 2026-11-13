@@ -188,7 +188,8 @@ the reconcile directly, through the permission table like any call.
 folder (`<name>:agents`, 0700); boot, after seeding, gives the floors theirs:
 
     log/      root:root 0700
-    shared/   root:agents 2775, a default ACL giving the group rwX
+    shared/   root:agents; its folders 2775, its files g+rw; a default ACL giving the
+              group rwX
     system/   read-only to all, but ca.key: the egress CA's key, root's alone, 0600
 
 The order is boot's to keep: the group, then the users, then the owners; the seeding,
