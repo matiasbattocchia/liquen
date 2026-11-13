@@ -12,7 +12,7 @@ shared ground.
 | | |
 | --- | --- |
 | **One agent per person** | It speaks in your name and knows the org you work in. |
-| **It meets you where you talk** | The terminal, Slack, WhatsApp, Teams, mail and calendar. |
+| **It meets you where you talk** | The terminal, Slack, WhatsApp, Telegram, Teams, mail and calendar. |
 | **Agents work together** | Yours can ask a teammate's agent, and theirs can ask yours. |
 | **You stay in charge** | A risky step waits for your yes, given from any of those apps. |
 | **Your keys stay out of reach** | The agent never holds a token. A proxy adds it on the way out. |
@@ -54,8 +54,8 @@ In the REPL you type to your agent. `/y` and `/n` answer its approval cards, `/c
 stops a turn and `/quit` leaves.
 
 Each service guides its own setup, and `--help` on any of them explains the rest. Slack,
-WhatsApp, Teams, Google and Microsoft mail and calendar, GitHub, and any HTTP API by token
-come in the box.
+WhatsApp, Telegram, Teams, Google and Microsoft mail and calendar, GitHub, and any HTTP
+API by token come in the box.
 
 Your org is a folder. `config.yaml` declares what you want pinned, `.env` holds the
 secrets, `data/` the living state: `liquen agent` and `liquen connect` write there, and

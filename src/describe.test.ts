@@ -258,7 +258,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   );
   // a first contact: the name its wire shows heads the row like any other; with none
   // shown, the number stands alone
-  const first = (profile: { exists: boolean; name?: string }) =>
+  const first = (profile: { exists: boolean; name?: string; about?: string }) =>
     describeSendCard(
       {
         conversation: { address: "5492615550103" },
@@ -273,6 +273,12 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
     "**Conversación**: Clinica Andina (5492615550103)\n\n**Respuesta**:\nhola",
   );
   assertEquals(first({ exists: true }), "**Conversación**: 5492615550103\n\n**Respuesta**:\nhola");
+  // what they wrote about themselves there stands under their name
+  assertEquals(
+    first({ exists: true, name: "Sol Ruiz", about: "Arquitecta. Obras en Mendoza." }),
+    "**Conversación**: Sol Ruiz (5492615550103)\n_Arquitecta. Obras en Mendoza._\n\n" +
+      "**Respuesta**:\nhola",
+  );
   // contact cards: whose numbers go out, and which, counted beside the rest
   assertEquals(
     describeSendCard(

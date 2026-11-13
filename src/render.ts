@@ -14,7 +14,7 @@
  *       shape (§5), never tracked by nu.
  */
 
-import { SENDER_EMAIL, senderEmail, senderSaved } from "./sender.ts";
+import { SENDER_ABOUT, SENDER_EMAIL, senderEmail, senderSaved } from "./sender.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import { INLINE_CAP, inlineable, isExternal, type MediaBlock, pathOf } from "./store/media.ts"; // pure helpers — no I/O
 import { MIND, routedSession } from "./session.ts";
@@ -1864,16 +1864,17 @@ export function bookEl(
 
 /** Who an address nobody here knows reaches, as an account's wire answers it (§6): the
  *  account's own `<conn>` holding one `<profile>` per address — `exists` whether the
- *  address is an account on that wire at all, and `name` the one it shows when it has
- *  one. Untrusted strings attribute-escaped. */
+ *  address is an account on that wire at all, `name` the one it shows when it has one,
+ *  and `about` what the person wrote of themselves there. Untrusted strings
+ *  attribute-escaped. */
 export function profileEl(
   account: { service: string; address: string; name?: string },
-  entries: { address: string; exists: boolean; name?: string }[],
+  entries: { address: string; exists: boolean; name?: string; about?: string }[],
 ): string {
   const lines = entries.map((e) =>
     `<profile address="${escAttr(e.address)}" exists="${e.exists}"${
       e.name ? ` name="${escAttr(e.name)}"` : ""
-    }/>`
+    }${e.about ? ` about="${escAttr(e.about)}"` : ""}/>`
   );
   return connWith(account, lines);
 }
@@ -2050,7 +2051,9 @@ export function renderHits(
  *  stored name); `self` and `org` carry none, the key is the whole fact. An outsider's
  *  line is the only one whose name is not the roster's — the principal's, when they saved
  *  it (`sender_saved`), else the sender's own to choose — so it is the only one that also
- *  wears the address: the stable handle, and what `send` takes back. The key set is
+ *  wears the address: the stable handle, and what `send` takes back, with the `email` the
+ *  wire knows them by and what they wrote `about` themselves there (`sender_about`) on the
+ *  line that carries either. The key set is
  *  closed and every line wears exactly one, so an unclassified sender lands on `external`:
  *  unknown reads as untrusted, never as one of us. */
 function authorOf(e: MessageEvent, session: SessionRef, roster: Roster): string {
@@ -2064,7 +2067,10 @@ function authorOf(e: MessageEvent, session: SessionRef, roster: Roster): string 
     // a wire that knows their email says it (Slack, Teams); a mailbox's address is one
     const mail = e.extra?.[SENDER_EMAIL];
     const email = typeof mail === "string" ? ` email="${escAttr(mail)}"` : "";
-    return `${name}${address}${email}`;
+    // what they wrote about themselves on the wire, on the line that brought it
+    const bio = e.extra?.[SENDER_ABOUT];
+    const about = typeof bio === "string" && bio !== "" ? ` about="${escAttr(bio)}"` : "";
+    return `${name}${address}${email}${about}`;
   }
   if (key === "self") return " self";
   let value = roster.names[id] ?? id;

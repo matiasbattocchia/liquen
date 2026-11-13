@@ -64,6 +64,8 @@
     "connect:google": "deno run -A --env-file=.env src/connect/google/connect.ts",
     "run:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp/run.ts",
     "connect:whatsapp": "deno run -A --env-file=.env src/connect/whatsapp/connect.ts",
+    "run:telegram": "deno run -A --env-file=.env src/connect/telegram/run.ts",
+    "connect:telegram": "deno run -A --env-file=.env src/connect/telegram/connect.ts",
     "run:github": "deno run -A --env-file=.env src/connect/github/run.ts",
     "connect:github": "deno run -A --env-file=.env src/connect/github/connect.ts",
     "run:microsoft": "deno run -A --env-file=.env src/connect/microsoft/run.ts",
@@ -75,6 +77,7 @@
   "imports": {
     "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.112.0",
     "@google/genai": "npm:@google/genai@2.22.0",
+    "@mtcute/deno": "jsr:@mtcute/deno@^0.32.8",
     "@slack/types": "npm:@slack/types@^2",
     "@slack/web-api": "npm:@slack/web-api@^7",
     "@std/assert": "jsr:@std/assert@^1",

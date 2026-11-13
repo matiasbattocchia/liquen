@@ -28,6 +28,7 @@ const REVOKE_AT: Record<string, string> = {
   microsoft: "in the account's app permissions (myapps.microsoft.com for a work account, " +
     "account.microsoft.com/privacy/app-access for a personal one)",
   whatsapp: "in the phone's linked devices (WhatsApp → Linked devices)",
+  telegram: "in the account's devices (Telegram → Settings → Devices)",
   github: "in the installed GitHub Apps of the org or account, and a member's leg in " +
     "github.com/settings/apps/authorizations",
   mercadopago: "by renewing the application's Access Token on its Credentials page " +

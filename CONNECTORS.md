@@ -3,7 +3,8 @@
 *Companion to [DESIGN.md](DESIGN.md) (§3 ingest-as-classifier, §4 identity/credentials, §9
 deployment tiers) and [PROJECT.md](PROJECT.md) (the arc). This file is the per-service map:
 what each connector costs, what it reuses, and where it breaks the mould. Status
-2026-09-29. Landed: GitHub (v0.1 preview), Slack, WhatsApp (the bridge), Google (Gmail in
+2026-11-13. Landed: GitHub (v0.1 preview), Slack, WhatsApp (the bridge), Telegram (an
+account's MTProto session), Google (Gmail in
 and out, the calendar poll, the `gws` grant), Microsoft (Outlook mail in and out, the
 calendar poll, Teams pushed both ways, the Graph skill).*
 
@@ -201,7 +202,8 @@ Where a conversation on your wire is a face of an agent's mind (DESIGN §4), the
 records it on the connection row under `extra.mirrors`, and the alias view reads it there:
 
 - `self` — the account's self-conversation, on a row an agent owns (the Slack self-DM;
-  WhatsApp derives its own and needs none).
+  Telegram's Saved Messages, the account's own id, written by its door; WhatsApp derives
+  its own and needs none).
 - `dms` — principal → conversation: a principal's DM with an account an agent owns, written
   by the ingest the first time that principal writes there, when the DM's id is opaque.
 - `rooms` — agent → conversation: an agent's **steering room** on an org account (no
@@ -338,8 +340,8 @@ who minted a path, never that the path is innocent.
 Two homes, one shape (role-named files, each optional — `ingest.ts` · `dispatch.ts` ·
 `oauth.ts` · `connect.ts`):
 
-- **Shipped** — `src/connect/<service>/` (slack, google, whatsapp, github, microsoft,
-  mercadopago).
+- **Shipped** — `src/connect/<service>/` (slack, google, whatsapp, telegram, github,
+  microsoft, mercadopago).
   Cross-service helpers (`flavor.ts`, `mentions.ts`, `mirror.ts`, `errors.ts`, `status.ts`)
   and the grammars a kind of connector shares (`poll.ts`, `calendar.ts`, `mail.ts`) live at
   `src/connect/` root.
@@ -858,3 +860,112 @@ across all apps.
 - CLI for Microsoft 365 — https://github.com/pnp/cli-microsoft365 (`src/Auth.ts`, `src/request.ts`)
 - Graph notifications via Event Grid — https://learn.microsoft.com/en-us/azure/event-grid/subscribe-to-graph-api-events
 - `open-bsp-whatsmeow` README + source (`~/open-bsp-whatsmeow`)
+
+## 10. Telegram: an account's session, over MTProto
+
+`src/connect/telegram/` connects a Telegram account, a person's or the org's, as the
+account itself: what its phone sees, the connector sees. The wire is MTProto, through
+mtcute (`jsr:@mtcute/deno`), and the session is the account's own, shown under Telegram →
+Settings → Devices.
+
+**Where it breaks the mould: nothing is served.** Telegram pushes over the session's own
+connection, so there is no ingest address, no carrier and no edge. The session is the
+carrier, and the first of the five pieces is a handler of its events. The other four
+stand as they are.
+
+**One process holds each session.** A second client on the same session costs the account
+the session, so `run.ts` opens every account's once and shares it: the ingest listens on
+it, the dispatcher posts through it, and main's ports ask it across
+`data/run/telegram.port.sock` (`port.ts`). A service's name takes no dot, so the edge
+never forwards there, and the file opens for its owner alone.
+
+**The SDK stops at `client.ts`.** It fills the plain shapes of `wire.ts` (a peer, a
+message, an entity, a service message) and one interface, `TgWire`. Every other file
+reads those, pure over data.
+
+| File | What it is |
+|---|---|
+| `connect.ts` | the door: `app` stores the api id and hash; an account signs in by QR or by code |
+| `client.ts` | the session through mtcute: events in, calls out, refusals in the dispatch contract |
+| `ingest.ts` | events mapped and published, the classifier, a channel's gap |
+| `dispatch.ts` | the agents' sends: text as entities, files, replies, edits, deletes, reactions |
+| `port.ts` | the address book and the rooms, across the socket |
+| `bio.ts` | a stranger's about text, read sparingly |
+| `text.ts` | common markdown to Telegram's entities and back |
+
+**The door.** `liquen connect telegram app` asks for the application's api id and hash
+(my.telegram.org → API development tools) and stores them as `telegram:app`; every session
+of the org signs in as that application. `liquen connect telegram [agent]`, or `--org`,
+signs an account in: a QR code to scan (Settings → Devices → Link Desktop Device), or with
+`--phone` the code Telegram sends, then the two-step password when the account has one.
+It writes the session string to the vault as `telegram:<user id>`, one connection row at
+the user id, and the grant's note; an owned account's Saved Messages is its
+`mirrors.self`. The process reads its sessions at boot, so the door restarts it.
+
+**The credential and the cache.** The vault holds the session string. mtcute keeps a
+SQLite file per account under `data/telegram/`: the peers it has met, with the access
+hashes a call names them by, and the update cursors. A sign-in starts a new cache.
+
+**Addresses.** The connection is the account's user id. A conversation is its marked id,
+as Telegram's own clients spell it: a user's id, `-<id>` for a basic group, `-100<id>`
+for a supergroup or a channel. `conversation.kind` comes from the chat's type: a user is
+`direct`, a basic group or a supergroup a `group`, a supergroup with a public handle a
+`channel`, and a channel the account posts in a `broadcast`. A channel the account only
+follows is a newsletter, and nothing of it is published.
+
+**`external_id`** is `telegram:<account>.<message id>` in a direct chat or a basic group,
+whose ids the account's inbox shares, and `telegram:<account>.<chat>.<message id>` where
+the chat numbers its own. An edit is its own event keyed on the edit's time; a delete is
+the delete event plus a `deleted` stamp on the original; a read receipt stamps the newest
+message the other side saw. The account's line typed on a phone is the same shape on a
+new id.
+
+**Room lines.** A service message is the room's line (§1), one `room` part from whoever
+made the change: created, added, joined (by link, by approval), left, removed, the title,
+the photo, a pin (pointing at its message), the disappearing timer, a call, a move to a
+supergroup (`moved`). A topic made, renamed or closed, and any service message with no
+word in the vocabulary, ride `changed` under Telegram's own name. A person joining
+Telegram is no room's change and makes no line.
+
+**The gap is replayed.** With its cursors kept, the session asks Telegram for what the
+account received while the process was away, and each replayed line merges on its id. A
+supergroup that fell further behind than Telegram replays is read from its history
+instead, from the newest row the log holds of it. A room the log never heard is left
+alone. A publish that fails is tried again until it lands, since the cursor moves on
+either way.
+
+**The account's view.** A chat the account muted or archived marks its rows `muted` or
+`archived`, read from the dialog list at boot and kept current from the settings updates.
+
+**The address book** (`XiPorts.contact`) is the account's contact list. `lookup` reads it
+by name, handle or number; `write` saves a person under a name or takes them out; a name
+from the book marks a line `sender_saved`. `profile` asks who an address reaches, a
+handle, a phone or an id, and answers the name they go by and their about text.
+
+**A stranger's about text.** For a sender the book does not hold, in a direct chat or a
+private group, the ingest reads what they wrote about themselves and stamps it on the
+first line they write in each conversation (`sender_about`, the line's `about`). The read
+is rationed on the account's own session: one at a time, three seconds apart, a week
+remembered, a flood wait obeyed. A direct chat's first line waits up to four seconds for
+it; a group's does not wait. `connections.telegram.bios: false` reads none.
+
+**The rooms** (`XiPorts.rooms`). One person unnamed is their own chat, resolved to the id
+their lines arrive under. A list named by `subject` is a group made with those people;
+`#name` is a supergroup, private until someone gives it a handle, so the port answers
+`group` for both. `members` reads the roster, up to a thousand seats; `join` enters a
+public room by its handle; `leave`, `add`, `remove` and `rename` are Telegram's own. A
+seat Telegram would not fill, for the person's privacy settings, fails `add` naming it.
+
+**First contact is by handle.** `@name` is a shape `send` takes, and Telegram is the wire
+that takes it. The dispatcher sends to the handle, and the row moves to the chat the
+message landed in.
+
+**Text.** Telegram carries plain text beside its entities, counted in UTF-16 units. Bold,
+italic, strike, code, a fence and a link cross both ways; a heading goes out as a bold
+line; an `@Name` the room's directory claims goes out as a mention by id.
+
+**Refusals.** A flood wait is a 429, offered again. A session Telegram ended is
+`SignedOut`: the row reads `signed_out` and the door brings it back. Anything else
+Telegram says of a request is permanent.
+
+Open: PROJECT.md, "Telegram: an account's own session, over MTProto".

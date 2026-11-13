@@ -25,6 +25,7 @@ export const SHIPPED = [
   "slack",
   "google",
   "whatsapp",
+  "telegram",
   "github",
   "microsoft",
   "mercadopago",
@@ -33,7 +34,15 @@ export const SHIPPED = [
 ];
 /** The shipped services with a run.ts — the ones that ingest or deliver, so `liquen start`
  *  runs one process each. `token` grants a bearer and `ai` a model key, and neither runs. */
-export const RUNNING = ["slack", "google", "whatsapp", "github", "microsoft", "mercadopago"];
+export const RUNNING = [
+  "slack",
+  "google",
+  "whatsapp",
+  "telegram",
+  "github",
+  "microsoft",
+  "mercadopago",
+];
 
 /** The connect door for `name`, as something `deno run` takes: a shipped door by its URL
  *  beside this module (a checkout's `file:`, the registry's `https:`), the org's own by
