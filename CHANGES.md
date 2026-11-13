@@ -1,7 +1,7 @@
 # Next batch: the org's configuration lives in the store
 
 Decided 12 Nov 2026. Driven by turtle-agents' requirements for agents made at runtime;
-1 to 7 below are settled, 8 is still to discuss.
+All eight are settled.
 
 1. Runtime roster: the roster lives in the org's registry on the volume, so agents added
    at runtime survive restarts and rolls.
@@ -27,7 +27,8 @@ Decided 12 Nov 2026. Driven by turtle-agents' requirements for agents made at ru
 `agent_id`, the mind session, `name`, `email`, `phone`, `principals`, and the backlog
 floor (5), a fact of the agent rather than a setting. `principals` stays a JSON column
 (`jsonb` on Postgres), since its absence says something a list cannot: absent, who steers
-is derived from ownership (§4); `[]`, nobody does. Most are the columns SQL joins: the
+is derived from ownership (§4); `[]`, nobody does; `"*"`, anyone writing in its steering
+room does (13). Most are the columns SQL joins: the
 roster views (`principals`, `aliases`) and the ingest classifier read them, and policy and
 routing stand on those views. It carries no settings: `model`, `effort` and `provider`
 leave it for `config`, `runs` becomes `config`'s `mind`, and the resolved `settings`
@@ -131,7 +132,8 @@ engines (SQLite's `PRAGMA foreign_keys = ON` on every connection `openLog` opens
 - a trigger on deleting from `agents`, one per engine, raises when another row's
   `principals` names the agent: it is refused removal, and the refusal names who. A key
   cannot point into a JSON array, so the trigger is the `RESTRICT`; that a principal
-  named exists is the store function's check (8);
+  named exists is the store function's check (8). An agent naming itself, and `"*"`,
+  name no one it waits on;
 - `memberships`, `connections`, `credentials`, `rules` and `locks` reference `agents`
   `ON DELETE CASCADE`: what the agent owns goes with its row, its keys and its grants
   included;
@@ -276,6 +278,38 @@ reminds the org, one in an agent's folder reminds that agent. turtle's `sync.ts 
 lays sonar's poll and report wakes in `data/agents/sonar/wakes.md`, so only sonar wakes on
 them.
 
+## 13. A connector routes a room to an agent, making it on the room's first line
+
+A room is routed to an agent by what exists: `extra.mirrors.rooms.<agent>` on an org
+account's connection row, which main's mirror reads through `aliases` on every event and
+copies the room's lines by into the agent's mind. `extra` merges by RFC 7396 on both
+engines (SQLite's `json_patch`, Postgres's own), at every depth: a route is one upsert,
+`{mirrors: {rooms: {ana: "<room>"}}}`, every other agent's left as it was, and
+`{mirrors: {rooms: {ana: null}}}` takes it out. One room per agent per connection.
+
+**`ensureRoute(service, connection, room, agent, entry)`**, exported from
+`src/connector.ts` beside the store function and the poke (8), takes the steps in the
+order the first line needs: the agent made if missing (`entry` its identity and settings,
+`principals: []` unless the connector names someone), the route, the poke. The connector
+then publishes the line: `aliases` joins `agents`, so the route holds once the row does,
+and the mirror's copy into `mind@<agent>` is owed to the agent from its backlog floor, its
+creation, whether main has brought it up yet or not. When a room earns an agent and what
+it is called are the connector's; the name passes the store function's rule.
+
+**The person behind it.** The connector gives every handle it knows (`name`, `email`,
+`phone`): the agent is its person in the roster, as `matias` is in ~/new, and the person
+has no Unix login: they reach the agent through its room. A line in the room the
+classifier stamps as the agent itself is its person's, which steers, and whose `/y`
+settles a card (`src/connect/mirror.ts`, the writer check).
+
+**`"principals": "*"`.** Everyone writing in the agent's steering room steers, a roster
+member the classifier stamped included: the mirror's check on who steers takes `"*"`, and
+a writer it lets steer that way is recorded as a person, with no `via.agent`. A list keeps
+the rule as it stands: a stamped member not on it is another agent among us. `"*"` lives
+in the mirror alone: the `principals` view gives it no rows, so the aliases and the policy
+built on the view are as a list of none leaves them. turtle declares it on sonar, so a
+member with an agent of their own still steers sonar as a person.
+
 ## Docs
 
 `CLAUDE.md`'s configuration section and DESIGN §9 (the file as the declaration the setup
@@ -283,4 +317,6 @@ doors write, boot compiling it into the registry, the registry as a mirror that 
 what the file does not name) are rewritten to the above. `config.jsonc` is renamed
 everywhere it is named. `CLAUDE.md`'s note on live copies (seeded write-if-absent, verified
 with `diff -q`, or symlinked at the checkout) is rewritten to 10, and the seed's folder
-rule leaves `src/store/seed.ts`.
+rule leaves `src/store/seed.ts`. `src/store/connections.ts`'s header says `extra` merges
+by RFC 7396 at every depth, where it says shallow and field-wise. DESIGN §4's steering
+room takes `"*"` beside `[]`.
