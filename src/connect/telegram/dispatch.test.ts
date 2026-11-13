@@ -164,7 +164,7 @@ Deno.test("telegram dispatch: each file is a message, the first wearing the capt
   assertEquals(log.patches[0].patch.external_id, "telegram:700100.501");
 });
 
-Deno.test("telegram dispatch: an edit, a delete and a reaction act on the message the row points at", async () => {
+Deno.test("telegram dispatch: an edit and a delete act on the message the row points at", async () => {
   const { log, wire } = harness();
   const ref = { ref_external_id: "telegram:700100.77" };
   log.push(outbound({
@@ -172,14 +172,6 @@ Deno.test("telegram dispatch: an edit, a delete and a reaction act on the messag
     parts: [{ type: "text", kind: "text", text: "mejor *así*" }],
   }));
   log.push(outbound({ payload: { action: "delete", ...ref }, parts: [] }));
-  log.push(outbound({
-    payload: { action: "add", ...ref },
-    parts: [{ type: "data", kind: "reaction", data: { name: "👍", unicode: "👍" } }],
-  }));
-  log.push(outbound({
-    payload: { action: "remove", ...ref },
-    parts: [{ type: "data", kind: "reaction", data: { name: "👍" } }],
-  }));
   await settle();
   assertEquals(wire.calls, [
     {
@@ -187,12 +179,101 @@ Deno.test("telegram dispatch: an edit, a delete and a reaction act on the messag
       args: ["700200", 77, "mejor así", [{ type: "italic", offset: 6, length: 3 }]],
     },
     { op: "delete", args: ["700200", [77]] },
-    { op: "react", args: ["700200", 77, "👍"] },
-    { op: "react", args: ["700200", 77, null] },
   ]);
   // a mutation mints no artifact of its own
   assert(log.patches.every((p) => p.patch.external_id === undefined));
   assert(log.patches.every((p) => p.patch.status?.state === "dispatched"));
+});
+
+/** A reaction row as the log holds it. */
+const reactionRow = (
+  over: {
+    id?: string;
+    by?: string;
+    emoji: string;
+    action: "add" | "remove";
+    ext?: string;
+    ts?: string;
+  },
+): Event => ({
+  id: over.id ?? newId(),
+  ts: over.ts ?? "2026-11-13T11:00:00Z",
+  type: "message",
+  payload: { action: over.action, ref_external_id: "telegram:700100.77" },
+  envelope: {
+    service: "telegram",
+    connection_address: "700100",
+    conversation: { address: "700200", kind: "direct" },
+    ...(over.by ? { sender: { address: over.by } } : {}),
+    ...(over.ext ? { external_id: over.ext } : {}),
+  },
+  parts: [{ type: "data", kind: "reaction", data: { name: over.emoji, unicode: over.emoji } }],
+} as Event);
+
+Deno.test("telegram dispatch: a reaction replaces the account's own, is stamped as the ingest spells it, and says the one it replaced", async () => {
+  const prior = reactionRow({
+    by: "700100",
+    emoji: "❤️",
+    action: "add",
+    ext: "telegram:700100.77.react.700100.❤️.1794570000",
+  });
+  const theirs = reactionRow({ by: "700200", emoji: "😂", action: "add", ext: "x" });
+  const published: Draft<MessageEvent>[] = [];
+  const { log, wire } = harness(fakeWire(), {
+    read: (q) => Promise.resolve([prior, theirs].filter((e) => !q?.filter || q.filter(e))),
+    publish: ((drafts: Draft<MessageEvent>[]) => {
+      published.push(...drafts);
+      return Promise.resolve([]);
+    }) as unknown as TelegramDispatchDeps["publish"],
+  });
+  log.push(outbound({
+    payload: { action: "add", ref_external_id: "telegram:700100.77" },
+    parts: [{ type: "data", kind: "reaction", data: { name: "👍", unicode: "👍" } }],
+  }));
+  await settle();
+  assertEquals(wire.calls, [{ op: "react", args: ["700200", 77, ["👍"]] }]);
+  assertEquals(
+    log.patches[0].patch.external_id,
+    "telegram:700100.77.react.700100.👍.1794582600",
+  );
+  // Telegram says nothing of the glyph the account's own replaced: the dispatcher does
+  assertEquals(published.length, 1);
+  assertEquals(published[0].payload, { action: "remove", ref_external_id: "telegram:700100.77" });
+  assertEquals(
+    published[0].envelope.external_id,
+    "telegram:700100.77.react.700100.❤️.1794570000.removed",
+  );
+  assertEquals(published[0].agent, { id: "ana" });
+});
+
+Deno.test("telegram dispatch: a reaction taken off leaves the rest and is the add's remove", async () => {
+  const mine = [
+    reactionRow({
+      by: "700100",
+      emoji: "👍",
+      action: "add",
+      ext: "telegram:700100.77.react.700100.👍.1",
+    }),
+    reactionRow({
+      by: "700100",
+      emoji: "🔥",
+      action: "add",
+      ext: "telegram:700100.77.react.700100.🔥.2",
+    }),
+  ];
+  const { log, wire } = harness(fakeWire(), {
+    read: (q) => Promise.resolve(mine.filter((e) => !q?.filter || q.filter(e))),
+  });
+  log.push(outbound({
+    payload: { action: "remove", ref_external_id: "telegram:700100.77" },
+    parts: [{ type: "data", kind: "reaction", data: { name: "👍" } }],
+  }));
+  await settle();
+  assertEquals(wire.calls, [{ op: "react", args: ["700200", 77, ["🔥"]] }]);
+  assertEquals(
+    log.patches[0].patch.external_id,
+    "telegram:700100.77.react.700100.👍.1.removed",
+  );
 });
 
 Deno.test("telegram dispatch: Telegram's refusal stamps the row with its class; no session is a 503", async () => {

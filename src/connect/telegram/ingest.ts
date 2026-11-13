@@ -6,7 +6,8 @@
  * turns the SDK's updates into `TgEvent`s and this file maps each to drafts, in arrival
  * order, one publish per event. A publish that fails is tried again until it lands: the
  * session's own cursor moves on whether or not the handler did, so a line let go here is
- * gone.
+ * gone. The one refusal that is final is the log's for an account whose row was removed:
+ * nothing of it lands any more, and its drafts are let go.
  *
  * Mapping (§3, §4). The connection is the account's user id. A conversation's address is
  * its marked id and its kind the chat's own type: a user is `direct`, a basic group a
@@ -24,7 +25,9 @@
  * the edit's time. A delete is the delete event plus a merge-only `deleted` stamp on the
  * original, whose content stays. A read receipt is a merge-only `read` stamp on the
  * newest message the other side has seen. A service message is the room's own line (§3):
- * one `room` data part in the shared vocabulary, from whoever made the change.
+ * one `room` data part in the shared vocabulary, from whoever made the change. A message's
+ * reactions arrive as the whole set it wears, and become an add or a remove per person
+ * and glyph against what the log holds (`reactions.ts`).
  *
  * A sender resolves by point lookup of their own connection row, else by a roster
  * member's declared phone when Telegram shows the number. The name is Telegram's display
@@ -54,7 +57,11 @@ import { roomPart } from "../../room.ts";
 import { setState } from "../health.ts";
 import type { Bios } from "./bio.ts";
 import { fromTelegram } from "./text.ts";
+import { reactionDiff, standingOn } from "./reactions.ts";
 import {
+  externalId,
+  messageIdOf,
+  ownNumbering,
   SERVICE,
   type TgAction,
   type TgEvent,
@@ -93,20 +100,6 @@ export interface TelegramIngestDeps {
   now?: () => string;
   sleep?: (ms: number) => Promise<void>;
   onError?: (what: string, err: unknown) => void;
-}
-
-/** Whether a chat numbers its own messages: a supergroup or a channel. */
-const own = (chat: string) => chat.startsWith("-100");
-
-/** `telegram:<account>.<id>`, with the chat between them where it numbers its own. */
-export function externalId(account: string, chat: string, id: number | string): string {
-  return own(chat) ? `${SERVICE}:${account}.${chat}.${id}` : `${SERVICE}:${account}.${id}`;
-}
-
-/** The message id an external id ends with. */
-export function messageIdOf(external: string): number | undefined {
-  const m = /^telegram:.*?\.(\d+)$/.exec(external);
-  return m ? Number(m[1]) : undefined;
 }
 
 /** The conversation a chat is (§3), from its type alone. */
@@ -207,7 +200,7 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
   let stopped = false;
 
   const remember = (m: TgMessage) => {
-    if (own(m.chat.id)) return;
+    if (ownNumbering(m.chat.id)) return;
     recent.set(m.id, m.chat.id);
     if (recent.size > RECENT) recent.delete(recent.keys().next().value!);
   };
@@ -419,6 +412,12 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
   };
 
   /** Publish, again and again until it lands or the ingest stops. */
+  /** Whether the account's row still stands: once it is removed, the log takes nothing
+   *  more of it, and a publish it refuses is refused for good. */
+  const standing = async () =>
+    !deps.store ||
+    (await deps.store.connections()).some((r) => r.service === SERVICE && r.address === connection);
+
   const publish = async (drafts: Draft<MessageEvent>[]) => {
     if (!drafts.length) return;
     for (let wait = RETRY_MS; !stopped; wait = Math.min(wait * 2, RETRY_CAP_MS)) {
@@ -427,9 +426,30 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
         return;
       } catch (err) {
         deps.onError?.("publishing", err);
+        if (!(await standing().catch(() => true))) return;
         await sleep(wait);
       }
     }
+  };
+
+  /** A message's whole set of reactions, against what the log holds of it. */
+  const mapReactions = async (
+    event: Extract<TgEvent, { type: "reactions" }>,
+  ): Promise<Draft<MessageEvent>[]> => {
+    if (followed(event.chat) || !deps.read) return [];
+    const target = externalId(connection, event.chat.id, event.id);
+    const drafts = reactionDiff({
+      account,
+      chat: conversationOf(event.chat),
+      id: event.id,
+      set: event.reactions,
+      standing: await standingOn(deps.read, connection, event.chat.id, target),
+      now: now(),
+    });
+    const phones = new Map<string, string>();
+    for (const r of event.reactions) if (r.by.phone) phones.set(r.by.id, r.by.phone);
+    await classify(drafts, phones);
+    return drafts;
   };
 
   const phonesOf = (ms: TgMessage[]) => {
@@ -449,16 +469,11 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
       connection,
       conversation: chat,
       types: ["message"],
+      // a message's own row: an edit, a delete or a reaction names an older one
+      filter: (e) => messageIdOf(e.envelope.external_id ?? "") !== undefined,
       limit: 20,
     });
-    const since = Math.max(
-      0,
-      ...rows.map((r) => {
-        const ext = r.envelope.external_id ?? "";
-        // a line's own id: an edit's and a delete's end in a word, and name an older one
-        return /\.(edit\.\d+|deleted)$/.test(ext) ? 0 : messageIdOf(ext) ?? 0;
-      }),
-    );
+    const since = Math.max(0, ...rows.map((r) => messageIdOf(r.envelope.external_id!)!));
     if (since === 0) return [];
     const missed = await deps.wire.history(chat, since);
     const drafts: Draft<MessageEvent>[] = [];
@@ -492,6 +507,13 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
         }
         case "delete":
           return publish(mapDelete(event.ids, event.chat));
+        case "reactions":
+          try {
+            return await publish(await mapReactions(event));
+          } catch (err) {
+            deps.onError?.(`the reactions on ${event.chat.id}/${event.id}`, err);
+            return;
+          }
         case "read":
           return publish([
             mergeOnly(event.chat, event.id, { state: "read", read_at: now() }),

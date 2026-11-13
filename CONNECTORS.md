@@ -890,6 +890,8 @@ reads those, pure over data.
 | `ingest.ts` | events mapped and published, the classifier, a channel's gap |
 | `dispatch.ts` | the agents' sends: text as entities, files, replies, edits, deletes, reactions |
 | `port.ts` | the address book and the rooms, across the socket |
+| `reactions.ts` | a message's set of reactions, against what the log holds |
+| `accounts.ts` | the sessions held open, in line with the store |
 | `bio.ts` | a stranger's about text, read sparingly |
 | `text.ts` | common markdown to Telegram's entities and back |
 
@@ -900,11 +902,19 @@ signs an account in: a QR code to scan (Settings → Devices → Link Desktop De
 `--phone` the code Telegram sends, then the two-step password when the account has one.
 It writes the session string to the vault as `telegram:<user id>`, one connection row at
 the user id, and the grant's note; an owned account's Saved Messages is its
-`mirrors.self`. The process reads its sessions at boot, so the door restarts it.
+`mirrors.self`. A running process takes the account up when that note lands, and leaves
+every other account's session as it was.
+
+**The accounts follow the store** (`accounts.ts`). The sessions the process holds are the
+live rows with a session in the vault, brought in line at boot, on a door's note, and
+every minute: an account signed in opens, one signed in again swaps its session and ends
+the old one on Telegram, one removed closes. A removed account's session stays on
+Telegram, where the account ends it under Devices.
 
 **The credential and the cache.** The vault holds the session string. mtcute keeps a
 SQLite file per account under `data/telegram/`: the peers it has met, with the access
-hashes a call names them by, and the update cursors. A sign-in starts a new cache.
+hashes a call names them by, and the update cursors. The credential is taken in at every
+opening, so a new sign-in replaces the key and keeps the rest, the account's own.
 
 **Addresses.** The connection is the account's user id. A conversation is its marked id,
 as Telegram's own clients spell it: a user's id, `-<id>` for a basic group, `-100<id>`
@@ -936,6 +946,17 @@ either way.
 
 **The account's view.** A chat the account muted or archived marks its rows `muted` or
 `archived`, read from the dialog list at boot and kept current from the settings updates.
+
+**Reactions** (`reactions.ts`). Telegram says the whole set a message wears, never a
+change, so the set is compared with what the log holds of the message: a glyph with no
+standing add is an add from its person, at the time Telegram gave it, and a standing add
+the set dropped is a remove. A set cut short, as a larger room's is, is read whole from
+the message's reaction list where the account may see it, and said not at all where it
+may not. The agent's own reaction is stamped with the id the ingest would give it, so the
+next set finds it standing; Telegram keeps one glyph per person, more on a premium
+account, so the agent's glyph replaces the account's own, and the dispatcher writes the
+replaced one's remove line, which Telegram never says. A standing add younger than ten
+seconds is not taken back by a set that may predate it.
 
 **The address book** (`XiPorts.contact`) is the account's contact list. `lookup` reads it
 by name, handle or number; `write` saves a person under a name or takes them out; a name

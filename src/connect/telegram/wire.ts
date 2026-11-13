@@ -17,6 +17,23 @@ import type { MediaKind } from "../../types.ts";
 
 export const SERVICE = "telegram" as const;
 
+/** Whether a chat numbers its own messages: a supergroup or a channel. A direct chat and
+ *  a basic group number theirs in the account's one inbox. */
+export const ownNumbering = (chat: string): boolean => chat.startsWith("-100");
+
+/** A message's `external_id`: `telegram:<account>.<id>`, with the chat between them where
+ *  the chat numbers its own. */
+export function externalId(account: string, chat: string, id: number | string): string {
+  return ownNumbering(chat) ? `${SERVICE}:${account}.${chat}.${id}` : `${SERVICE}:${account}.${id}`;
+}
+
+/** The message an external id names: a message's own, and nothing for a line about one
+ *  (an edit, a delete, a reaction). */
+export function messageIdOf(external: string): number | undefined {
+  const m = /^telegram:\d+\.(?:-100\d+\.)?(\d+)$/.exec(external);
+  return m ? Number(m[1]) : undefined;
+}
+
 /** Someone or somewhere on Telegram. `kind` is the platform's own: a `user`, a basic
  *  `group`, a `supergroup` (a group that scales, a forum among them) or a `channel` (one
  *  to many). */
@@ -129,11 +146,21 @@ export type TgEvent =
   /** `chat` is known only for a channel's or a supergroup's: Telegram names a deleted
    *  message of a direct chat or a basic group by its id alone. */
   | { type: "delete"; ids: number[]; chat?: string }
+  /** Every reaction message `id` of `chat` wears now, by person: the whole set, never a
+   *  change. Said only when the set is whole: a set Telegram cut short says nothing. */
+  | { type: "reactions"; chat: TgPeer; id: number; reactions: TgReaction[] }
   /** The other side read the account's messages up to `id`. */
   | { type: "read"; chat: string; id: number }
   /** A channel fell further behind than Telegram replays: its history is the record. */
   | { type: "gap"; chat: string }
   | { type: "state"; state: ConnectionState; error?: string };
+
+/** One person's reaction: a glyph, or `custom:<id>` for a custom emoji, and when. */
+export interface TgReaction {
+  by: TgPeer;
+  emoji: string;
+  date: string;
+}
 
 /** What a send carries: one message's worth. */
 export interface TgOutbound {
@@ -156,8 +183,9 @@ export interface TgWire {
   send(chat: string, out: TgOutbound): Promise<{ id: number; chat: TgPeer }>;
   edit(chat: string, id: number, text: string, entities: TgEntity[]): Promise<void>;
   delete(chat: string, ids: number[]): Promise<void>;
-  /** Put `emoji` on a message, or take the account's reaction off it. */
-  react(chat: string, id: number, emoji: string | null): Promise<void>;
+  /** Set the account's reactions on a message to `emojis`, none taking them all off.
+   *  Answers when Telegram says the account reacted, if the set is not empty. */
+  react(chat: string, id: number, emojis: string[]): Promise<string | undefined>;
   /** Who a handle or an id reaches: `@name`, a phone as `+digits`, a marked id. */
   resolve(handle: string): Promise<TgPeer | null>;
   /** A person's about text, as their profile shows it. */

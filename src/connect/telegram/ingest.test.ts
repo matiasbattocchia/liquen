@@ -1,13 +1,12 @@
 import { assert, assertEquals } from "@std/assert";
 import {
   createTelegramIngest,
-  externalId,
   followed,
   kindOf,
-  messageIdOf,
   roomChange,
   type TelegramIngestDeps,
 } from "./ingest.ts";
+import { externalId, messageIdOf } from "./wire.ts";
 import { fakeWire, FORUM, message, SELF, SOL, TEAM } from "./testing.ts";
 import type { ConnectionRow } from "../../store/connections.ts";
 import type { Storage } from "../../store/storage.ts";
@@ -67,6 +66,8 @@ Deno.test("telegram ingest: an id is scoped by its chat only where the chat numb
   assertEquals(messageIdOf("telegram:700100.-1009000.41"), 41);
   assertEquals(messageIdOf("telegram:700100.41"), 41);
   assertEquals(messageIdOf("telegram:700100.41.deleted"), undefined);
+  assertEquals(messageIdOf("telegram:700100.41.edit.1794582300"), undefined);
+  assertEquals(messageIdOf("telegram:700100.41.react.700200.👍.1794582300"), undefined);
 });
 
 Deno.test("telegram ingest: a direct message maps to one row, named and addressed", async () => {
@@ -424,6 +425,7 @@ Deno.test("telegram ingest: a gap is read from the room's newest row on, and a r
     { envelope: { external_id: "telegram:700100.-1009000.90" } },
     { envelope: { external_id: "telegram:700100.-1009000.95.edit.1794582300" } },
     { envelope: { external_id: "telegram:700100.-1009000.93" } },
+    { envelope: { external_id: "telegram:700100.-1009000.91.react.700200.👍.1794582300" } },
   ] as unknown as Event[];
   const wire = fakeWire({
     history: (chat: string, since: number) =>
@@ -434,7 +436,10 @@ Deno.test("telegram ingest: a gap is read from the room's newest row on, and a r
   });
   const { ingest, published } = harness({
     wire,
-    read: (q) => Promise.resolve(q?.conversation === FORUM.id ? stored : []),
+    read: (q) =>
+      Promise.resolve(
+        q?.conversation === FORUM.id ? stored.filter(q.filter ?? (() => true)) : [],
+      ),
   });
   await ingest.handle({ type: "gap", chat: FORUM.id });
   assertEquals(wire.calls.at(-1), { op: "history", args: ["-1009000", 93] });
@@ -460,6 +465,67 @@ Deno.test("telegram ingest: a publish that fails is tried again until it lands",
   await ingest.handle({ type: "message", message: message() });
   assertEquals(tries, 3);
   assertEquals(errors, ["publishing", "publishing"]);
+});
+
+Deno.test("telegram ingest: a refusal for an account whose row was removed is final", async () => {
+  let tries = 0;
+  const live: ConnectionRow[] = [];
+  const { ingest } = harness({
+    publish: (() => {
+      tries++;
+      return Promise.reject(new Error("connection not registered: telegram:700100"));
+    }) as unknown as TelegramIngestDeps["publish"],
+    store: {
+      connection: () => Promise.resolve(null),
+      connections: () => Promise.resolve(live),
+      upsertConnections: () => Promise.resolve(),
+    },
+  });
+  await ingest.handle({ type: "message", message: message() });
+  assertEquals(tries, 1);
+});
+
+Deno.test("telegram ingest: a message's reactions become adds and removes against the log", async () => {
+  const stood = {
+    id: "0190a",
+    ts: "2026-11-13T15:00:00.000Z",
+    type: "message",
+    payload: { action: "add", ref_external_id: "telegram:700100.41" },
+    envelope: {
+      service: "telegram",
+      connection_address: "700100",
+      conversation: { address: "700200" },
+      sender: { address: "700200", name: "Sol Ruiz" },
+      external_id: "telegram:700100.41.react.700200.❤️.1794580000",
+    },
+    parts: [{ type: "data", kind: "reaction", data: { name: "❤️", unicode: "❤️" } }],
+  } as unknown as Event;
+  const { ingest, published } = harness({
+    read: (q) => Promise.resolve([stood].filter((e) => !q?.filter || q.filter(e))),
+  });
+  await ingest.handle({
+    type: "reactions",
+    chat: SOL,
+    id: 41,
+    reactions: [{ by: SOL, emoji: "👍", date: "2026-11-13T15:05:00.000Z" }],
+  });
+  assertEquals(published.map((d) => [d.payload?.action, d.envelope.external_id]), [
+    ["add", "telegram:700100.41.react.700200.👍.1794582300"],
+    ["remove", "telegram:700100.41.react.700200.❤️.1794580000.removed"],
+  ]);
+  assertEquals(published[0].envelope.conversation, {
+    address: "700200",
+    kind: "direct",
+    name: "Sol Ruiz",
+  });
+  // a followed channel's reactions are nobody's lines
+  await ingest.handle({
+    type: "reactions",
+    chat: { id: "-1007000", kind: "channel", name: "Noticias" },
+    id: 9,
+    reactions: [{ by: SOL, emoji: "👍", date: NOW }],
+  });
+  assertEquals(published.length, 2);
 });
 
 Deno.test("telegram ingest: the session's state lands on the account's row", async () => {

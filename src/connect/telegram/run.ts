@@ -4,26 +4,29 @@
  * this for `connections.telegram`.
  *
  * The process is the only holder of each session, which is what lets the ports and the
- * dispatcher share the connection the ingest listens on. An account Telegram signed out
- * is said on its row and left; the others run. SIGTERM stops the way main stops: no new
- * work, what is in flight settled, the sessions closed with their cursors kept.
+ * dispatcher share the connection the ingest listens on. The accounts it holds follow the
+ * store while it runs (`accounts.ts`): at boot, when a door's grant note lands in the log,
+ * and every `RECONCILE_MS`, so a sign-in, a new sign-in of an account and a removal each
+ * touch that one account and leave the others' sessions as they are. An account Telegram
+ * signed out is said on its row and left. SIGTERM stops the way main stops: no new work,
+ * what is in flight settled, the sessions closed with their cursors kept.
  *
  * The body runs under `entry` (§9): a boot that cannot go on is a refusal in a sentence.
  */
 
 import { findRoot, orgFlag } from "../../config.ts";
 import { entry } from "../../entry.ts";
-import { SignedOut } from "../errors.ts";
 import { heartbeat, setState } from "../health.ts";
 import { logDirectory } from "../mentions.ts";
 import { exitOnStop } from "../stop.ts";
+import { createAccounts, type Opened, RECONCILE_MS } from "./accounts.ts";
 import { createBios } from "./bio.ts";
-import { openTelegram } from "./client.ts";
-import { APP_KEY, cachePath, sessionKey, telegramConfig } from "./config.ts";
+import { logOutSession, openTelegram } from "./client.ts";
+import { APP_KEY, cachePath, GRANT_SENDER, telegramConfig } from "./config.ts";
 import { createTelegramDispatch } from "./dispatch.ts";
 import { createTelegramIngest } from "./ingest.ts";
 import { servePort } from "./port.ts";
-import { SERVICE, type TgEvent, type TgWire } from "./wire.ts";
+import { SERVICE, type TgEvent } from "./wire.ts";
 
 /** Bring the connection up: resident once it returns. Returns stop. */
 export async function runTelegram(): Promise<() => Promise<void>> {
@@ -42,76 +45,83 @@ export async function runTelegram(): Promise<() => Promise<void>> {
         "id and hash",
     );
   }
+  const apiId = Number(app.value.api_id);
+  const apiHash = app.value.api_hash;
   await Deno.mkdir(`${root}/data/telegram`, { recursive: true, mode: 0o700 });
 
-  const wires = new Map<string, TgWire>();
-  const stops: (() => Promise<void> | void)[] = [];
-  const accounts = (await log.connections()).filter((r) => r.service === SERVICE);
-  for (const row of accounts) {
-    const account = row.address;
-    const said = (what: string, err: unknown) =>
-      console.error(`[telegram ${account}] ${what} FAILED:`, err);
-    const held = await creds.get(row.credentialKey ?? sessionKey(account));
-    if (!held?.value.session) {
-      console.error(`[telegram ${account}] no session in the vault: sign in again`);
-      await setState(log, row, "signed_out", { error: "no session in the vault" });
-      continue;
-    }
+  const said = (account: string, what: string, err: unknown) =>
+    console.error(`[telegram ${account}] ${what} FAILED:`, err);
+
+  /** One account's session with its ingest over it. */
+  const open = async (account: string, session: string): Promise<Opened> => {
+    const fail = (what: string, err: unknown) => said(account, what, err);
     // events arrive before the ingest exists (the opening's own state line): they wait
-    let handle: ((event: TgEvent) => Promise<void>) | undefined;
+    const route: { handle?: (event: TgEvent) => Promise<void> } = {};
     let chain: Promise<void> = Promise.resolve();
     const early: TgEvent[] = [];
-    try {
-      const session = await openTelegram({
-        apiId: Number(app.value.api_id),
-        apiHash: app.value.api_hash,
-        session: held.value.session,
-        cache: cachePath(root, account),
-        onError: said,
-        onEvent: (event) => {
-          if (!handle) return void early.push(event);
-          const take = handle;
-          chain = chain.then(() => take(event)).catch((err) => said("an event", err));
-        },
-      });
-      const reader = bios
-        ? createBios({ about: session.wire.about, onError: (u, e) => said(`reading ${u}`, e) })
-        : undefined;
-      const ingest = createTelegramIngest({
-        wire: session.wire,
-        publish: log.publish,
-        read: (q) => log.read(q),
-        store: log,
-        storage,
-        ...(reader ? { bios: reader } : {}),
-        onError: said,
-      });
-      handle = ingest.handle;
-      for (const event of early) chain = chain.then(() => ingest.handle(event));
-      wires.set(account, session.wire);
-      stops.push(async () => {
+    const opened = await openTelegram({
+      apiId,
+      apiHash,
+      session,
+      cache: cachePath(root, account),
+      onError: fail,
+      onEvent: (event) => {
+        const take = route.handle;
+        if (!take) return void early.push(event);
+        chain = chain.then(() => take(event)).catch((err) => fail("an event", err));
+      },
+    });
+    const reader = bios
+      ? createBios({ about: opened.wire.about, onError: (u, e) => fail(`reading ${u}`, e) })
+      : undefined;
+    const ingest = createTelegramIngest({
+      wire: opened.wire,
+      publish: log.publish,
+      read: (q) => log.read(q),
+      store: log,
+      storage,
+      ...(reader ? { bios: reader } : {}),
+      onError: fail,
+    });
+    route.handle = ingest.handle;
+    for (const event of early) chain = chain.then(() => ingest.handle(event));
+    return {
+      wire: opened.wire,
+      stop: async () => {
         ingest.stop();
         reader?.stop();
-        await session.stop();
+        await opened.stop();
         await chain.catch(() => {});
-      });
-      console.error(
-        `[telegram ${account}] listening as ${session.wire.self.name ?? account}`,
-      );
-    } catch (err) {
-      if (!(err instanceof SignedOut)) throw err;
-      console.error(`[telegram ${account}] ${err.message}`);
-      await setState(log, row, "signed_out", { error: err.message });
-    }
-  }
-  if (accounts.length === 0) {
-    console.error("[telegram] no account is linked: `liquen connect telegram` signs one in");
-  }
+      },
+    };
+  };
+
+  const accounts = createAccounts({
+    rows: () => log.connections(),
+    session: async (key) => (await creds.get(key))?.value.session,
+    open: (row, session) => open(row.address, session),
+    logOut: (session) => logOutSession({ apiId, apiHash, session }),
+    signedOut: async (row, error) => {
+      console.error(`[telegram ${row.address}] ${error}`);
+      await setState(log, row, "signed_out", { error });
+    },
+    onError: said,
+    onOpened: (account, wire) =>
+      console.error(`[telegram ${account}] listening as ${wire.self.name ?? account}`),
+  });
+  await accounts.reconcile();
+  const round = () => accounts.reconcile().catch((err) => said("*", "reconciling", err));
+  // a door's grant note is the moment an account is signed in
+  const unsubscribe = log.subscribe(() => void round(), {
+    filter: (e) => e.envelope.service === SERVICE && e.envelope.sender?.address === GRANT_SENDER,
+  });
+  const ticks = setInterval(() => void round(), RECONCILE_MS);
 
   const stopDispatch = createTelegramDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     read: (q) => log.read(q),
-    wireOf: (c) => wires.get(c),
+    publish: log.publish,
+    wireOf: accounts.wireOf,
     storage,
     directory: logDirectory((q) => log.read(q)),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
@@ -121,12 +131,14 @@ export async function runTelegram(): Promise<() => Promise<void>> {
     onError: (e, err) =>
       console.error(`[dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
   });
-  const stopPort = await servePort(`${root}/data`, (c) => wires.get(c));
+  const stopPort = await servePort(`${root}/data`, accounts.wireOf);
 
   return async () => {
+    clearInterval(ticks);
+    unsubscribe();
     await stopPort();
     await stopDispatch();
-    for (const stop of stops) await stop();
+    await accounts.stop();
     await creds.close();
     await log.close();
   };

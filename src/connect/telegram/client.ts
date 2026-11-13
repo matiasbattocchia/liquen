@@ -11,10 +11,16 @@
  * string a sign-in exports: the server, the authorization key and the account. The cache
  * is mtcute's own SQLite file under the org's `data/telegram/`: the peers it has met,
  * with the access hashes a call names them by, and the update cursors a restart resumes
- * from. A cache that is empty takes the credential in; the door starts a new cache with
- * each sign-in. With its cursors kept, the session replays what the account received
+ * from. The credential is taken in at every opening, so a new sign-in of the account
+ * replaces the key and keeps the rest: the peers and the cursors are the account's, not
+ * the session's. With its cursors kept, the session replays what the account received
  * while the process was away (`catchUp`), and a replayed line merges on its
  * `external_id`.
+ *
+ * Reactions arrive as the whole set a message wears. A set Telegram cut short (a large
+ * room's names only for the latest few) is read whole from the message's reaction list
+ * where the account may see it, and said not at all where it may not: a person missing
+ * from a set would read as a reaction taken back.
  *
  * How the account's own app holds a chat, muted or archived, is read from the dialog list
  * at start and kept current from the settings updates the session carries; each message
@@ -27,9 +33,11 @@ import {
   type InputMediaLike,
   type InputPeerLike,
   type InputText,
+  Long,
   MemoryStorage,
   type Message,
   type Peer,
+  type PeersIndex,
   SqliteStorage,
   TelegramClient,
   tl,
@@ -148,6 +156,35 @@ function entitiesOf(raw: tl.TypeMessageEntity[] | undefined): TgEntity[] {
     }];
   });
 }
+
+/** A reaction's glyph: the emoji itself, `custom:<id>` for a custom one. A paid reaction
+ *  is Stars, not a person's glyph, and is none. */
+export function glyphOf(r: tl.TypeReaction): string | undefined {
+  if (r._ === "reactionEmoji") return r.emoticon;
+  if (r._ === "reactionCustomEmoji") return `custom:${r.documentId.toString()}`;
+  return undefined;
+}
+
+/** A glyph as Telegram takes one. */
+function inputReaction(emoji: string): tl.TypeReaction {
+  return emoji.startsWith("custom:")
+    ? { _: "reactionCustomEmoji", documentId: Long.fromString(emoji.slice(7)) }
+    : { _: "reactionEmoji", emoticon: emoji };
+}
+
+/** Whether the people a set names are all of them: Telegram counts every glyph but names
+ *  only the latest reactors in a larger room. */
+export function whole(r: tl.TypeMessageReactions): boolean {
+  if (r.min) return false;
+  const counted = r.results
+    .filter((c) => glyphOf(c.reaction) !== undefined)
+    .reduce((n, c) => n + c.count, 0);
+  const named = (r.recentReactions ?? []).filter((x) => glyphOf(x.reaction) !== undefined);
+  return named.length === counted;
+}
+
+/** The most reactors a cut-short set is read to; a set with more says nothing. */
+const REACTORS_MAX = 300;
 
 const DISCARD: Record<string, "missed" | "rejected" | "ended"> = {
   phoneCallDiscardReasonMissed: "missed",
@@ -446,9 +483,17 @@ export function createTelegramWire(
         });
       }),
     delete: (chat, ids) => asked(() => client.deleteMessagesById(target(chat), ids)),
-    react: (chat, id, emoji) =>
+    react: (chat, id, emojis) =>
       asked(async () => {
-        await client.sendReaction({ chatId: target(chat), message: id, emoji });
+        const sent = await client.sendReaction({
+          chatId: target(chat),
+          message: id,
+          emoji: emojis.length ? emojis.map(inputReaction) : null,
+        });
+        const mine = sent?.raw._ === "message"
+          ? sent.raw.reactions?.recentReactions?.find((r) => r.my)
+          : undefined;
+        return mine ? new Date(mine.date * 1_000).toISOString() : undefined;
       }),
     resolve: async (handle) => {
       try {
@@ -563,6 +608,31 @@ export interface OpenOptions {
 /** mtcute's log, at the level that says only what failed. */
 const LOG_ERRORS = 1;
 
+/** End a session on Telegram, so the account's list of devices no longer shows it: the
+ *  session a new sign-in replaced. Run on a session of its own in memory, after the
+ *  connector's client of it has closed, since two clients on one session cost it. A
+ *  session Telegram already ended is no failure. */
+export async function logOutSession(
+  opts: { apiId: number; apiHash: string; session: string },
+): Promise<void> {
+  const client = new TelegramClient({
+    apiId: opts.apiId,
+    apiHash: opts.apiHash,
+    storage: new MemoryStorage(),
+    initConnectionOptions: DEVICE,
+    logLevel: LOG_ERRORS,
+    disableUpdates: true,
+  });
+  try {
+    await client.importSession(opts.session);
+    await client.logOut();
+  } catch (err) {
+    if (!ended(err)) throw wireError(err);
+  } finally {
+    await client.destroy().catch(() => {});
+  }
+}
+
 export interface SignInOptions {
   apiId: number;
   apiHash: string;
@@ -653,6 +723,58 @@ export async function openTelegram(opts: OpenOptions): Promise<TelegramSession> 
       opts.onEvent({ type: "read", chat: String(r.chatId), id: r.maxReadId });
     }
   }));
+  /** A message's reactions as the session said them, whole, or nothing. */
+  const reactionsOf = async (
+    u: tl.RawUpdateMessageReactions,
+    peers: PeersIndex,
+  ): Promise<TgEvent | undefined> => {
+    if (u.reactions.reactionsAsTags) return undefined; // Saved Messages' tags, not people
+    const chatId = getMarkedPeerId(u.peer);
+    const chat = peerOf(await client.getPeer(chatId));
+    const person = (id: number): TgPeer => {
+      try {
+        const raw = peers.user(id);
+        if (raw._ === "user") return peerOf(new User(raw));
+      } catch { /* the update came without them */ }
+      return { id: String(id), kind: "user" };
+    };
+    const said = (r: tl.RawMessagePeerReaction) => {
+      const emoji = glyphOf(r.reaction);
+      if (!emoji || r.peerId._ !== "peerUser") return [];
+      const by = r.my ? wire.self : person(r.peerId.userId);
+      return [{ by, emoji, date: new Date(r.date * 1_000).toISOString() }];
+    };
+    if (whole(u.reactions)) {
+      return {
+        type: "reactions",
+        chat,
+        id: u.msgId,
+        reactions: (u.reactions.recentReactions ?? []).flatMap(said),
+      };
+    }
+    if (!u.reactions.canSeeList) return undefined;
+    const listed: tl.RawMessagePeerReaction[] = [];
+    for await (
+      const r of client.iterReactionUsers({ chatId, message: u.msgId, limit: REACTORS_MAX })
+    ) {
+      listed.push(r.raw);
+    }
+    const counted = u.reactions.results
+      .filter((c) => glyphOf(c.reaction) !== undefined)
+      .reduce((n, c) => n + c.count, 0);
+    if (listed.filter((r) => glyphOf(r.reaction) !== undefined).length !== counted) {
+      return undefined;
+    }
+    return { type: "reactions", chat, id: u.msgId, reactions: listed.flatMap(said) };
+  };
+
+  client.onRawUpdate.add(guarded("a reactions update", ({ update, peers }) => {
+    if (update._ !== "updateMessageReactions") return;
+    reactionsOf(update, peers).then(
+      (event) => event && opts.onEvent(event),
+      (err) => opts.onError?.("reading reactions", err),
+    );
+  }));
   client.onRawUpdate.add(guarded("a settings update", ({ update }) => {
     if (update._ === "updateNotifySettings" && update.peer._ === "notifyPeer") {
       const chat = String(getMarkedPeerId(update.peer.peer));
@@ -680,7 +802,7 @@ export async function openTelegram(opts: OpenOptions): Promise<TelegramSession> 
   });
 
   try {
-    wire.self = peerOf(await client.start({ session: opts.session }));
+    wire.self = peerOf(await client.start({ session: opts.session, sessionForce: true }));
   } catch (err) {
     await client.destroy().catch(() => {});
     // an account Telegram signed out is asked for a phone, which nobody here gives
