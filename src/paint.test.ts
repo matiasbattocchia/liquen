@@ -150,7 +150,7 @@ Deno.test("live: the agent's text opens with a blank line, the time and its mark
 Deno.test("live: a row the agent wrote into another conversation paints nothing", () => {
   const { p, screen } = surface();
   const sent = answered("2026-09-11T14:14:00Z", "Mecha, no te olvides de pasarme tu mail");
-  sent.envelope.conversation = { address: "5491161444901", kind: "direct" };
+  sent.envelope.conversation = { address: "5491155550122", kind: "direct" };
   p.event(sent);
   const line = answered("2026-09-11T14:14:00Z", "");
   line.envelope.conversation = { address: "grp_ops", kind: "group", name: "ops" };
@@ -269,8 +269,8 @@ Deno.test("live: contact cards read by the names they show, after their mark", (
       type: "data",
       kind: "contacts",
       data: [
-        { name: { formatted_name: "Carlos" }, phones: [{ phone: "+54 9 261 656-0401" }] },
-        { name: { formatted_name: "" }, phones: [{ phone: "+54 9 261 485-1664" }] },
+        { name: { formatted_name: "Carlos" }, phones: [{ phone: "+54 9 261 555-0101" }] },
+        { name: { formatted_name: "" }, phones: [{ phone: "+54 9 261 555-0102" }] },
         { name: { formatted_name: "Ana" }, phones: [] },
       ],
     }],
@@ -492,8 +492,8 @@ Deno.test("a recap prints exactly what the live screen printed", () => {
     at("g1", "permission_request", {
       tool: "send",
       call: "send(to: Roxi)",
-      detail: "send(to: Roxana Casol (5492616510433), text: Terrada 1439)",
-      lands: ["Roxana Casol (5492616510433)"],
+      detail: "send(to: Roxana Casol (5492615550111), text: Terrada 1439)",
+      lands: ["Roxana Casol (5492615550111)"],
     }, { ref_id: "u1" }),
     at("r1", "tool_result", { is_error: false, output: { status: "pending_approval" } }, {
       ref_id: "u1",
@@ -533,7 +533,7 @@ Deno.test("a recap prints exactly what the live screen printed", () => {
   assertEquals(
     seen.includes(
       "⚙ send(to: Roxi, text: Terrada 1439)\n" +
-        "? approve u1 → Roxana Casol (5492616510433)\n" +
+        "? approve u1 → Roxana Casol (5492615550111)\n" +
         "— u1 allowed for this conversation\n\n" +
         "⚙ bash(date)\n✗ Command exited with code 1\n",
     ),

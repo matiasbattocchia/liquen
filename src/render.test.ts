@@ -2068,7 +2068,7 @@ Deno.test("actions on the element (§5): <msg action>, id/re references, <reacti
   };
   const mentioned: MessageEvent = {
     ...worldMsg("e6", t, conv, sol, "che @matias mirá esto"),
-    payload: { mentions: [{ address: "5491133585694", name: "matias" }] },
+    payload: { mentions: [{ address: "5491155550109", name: "matias" }] },
   };
   const reply: MessageEvent = {
     ...worldMsg("e7", t, conv, sol, "el de la esquina"),
@@ -2112,7 +2112,7 @@ Deno.test("actions on the element (§5): <msg action>, id/re references, <reacti
     dump,
     '<reaction external=\\"sol\\" address=\\"549\\" at=\\"16 Aug 12:00\\" re=\\"e1\\" action=\\"remove\\">😮</reaction>',
   );
-  assertStringIncludes(dump, 'mentions=\\"5491133585694\\">che @matias mirá esto</msg>');
+  assertStringIncludes(dump, 'mentions=\\"5491155550109\\">che @matias mirá esto</msg>');
 });
 
 Deno.test("a transcript add-event renders as <transcript re=…>, not as a reaction (§5)", () => {
@@ -2335,7 +2335,7 @@ Deno.test("a location- or contacts-only message hoists to its kind's element (§
   card.parts = [{
     type: "data",
     kind: "contacts",
-    data: [{ name: { formatted_name: "Carlos" }, phones: [{ phone: "+54 9 261 656-0401" }] }],
+    data: [{ name: { formatted_name: "Carlos" }, phones: [{ phone: "+54 9 261 555-0101" }] }],
   }];
   // a data part BESIDE text rides inline as a marker — the `<msg>` wrapper stays
   const both = worldMsg("e3", t, conv, sol, "acá estamos");
@@ -2361,7 +2361,7 @@ Deno.test("a location- or contacts-only message hoists to its kind's element (§
   assertStringIncludes(
     dump,
     '<contacts id=\\"e2\\" external=\\"sol\\" address=\\"549\\" at=\\"24 Aug 20:29\\" ' +
-      "data=\\\"[{name:{formatted_name:'Carlos'},phones:[{phone:'+54 9 261 656-0401'}]}]\\\"/>",
+      "data=\\\"[{name:{formatted_name:'Carlos'},phones:[{phone:'+54 9 261 555-0101'}]}]\\\"/>",
   );
   assertStringIncludes(
     dump,

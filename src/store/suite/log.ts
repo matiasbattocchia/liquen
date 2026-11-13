@@ -112,7 +112,7 @@ export function logSuite(s: Substrate): void {
           sender: { address, name },
         },
       });
-      await log.publish(named("01", "5492616104507", "Verónica Sesto"));
+      await log.publish(named("01", "5492615550105", "Verónica Sesto"));
       await log.publish(named("02", "5491155512345", "Verónica Paz"));
       await log.publish(named("03", "5492615550000", "Álvaro Manzur"));
 

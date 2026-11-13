@@ -59,7 +59,7 @@ boot error for an unknown key. No command writes it; `liquen init` lays the comm
 template once, and from then on humans and repos write it (turtle-agents' `sync.ts` among
 them). Every org on this machine and turtle-agents' template are converted by hand, with
 the catalog, in one change. A phone is taken quoted or bare: YAML reads
-`+5491133585694` as a number, and the catalog takes a number there as its digits, which
+`+5491155550109` as a number, and the catalog takes a number there as its digits, which
 is all a handle is compared by.
 
 ## 3. Commands write the store, never the file

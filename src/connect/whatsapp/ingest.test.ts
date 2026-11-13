@@ -694,7 +694,7 @@ Deno.test("inline mention tokens get named: @<digits> → @name, unnamed stays d
   await handler(post(
     "/whatsapp-web-webhook",
     batch({
-      contacts: [{ address: "5492604560911", extra: { name: "Euge" } }],
+      contacts: [{ address: "5492605550108", extra: { name: "Euge" } }],
       messages: [textMessage({
         conversation_address: "123456-789@g.us",
         content: {
@@ -703,8 +703,8 @@ Deno.test("inline mention tokens get named: @<digits> → @name, unnamed stays d
           kind: "text",
           // canonical digits both in the text and in mentions — the bridge already put
           // the token in our namespace (a lid group's lids never reach us)
-          text: "@5492604560911 y @5491177777777 vengan",
-          mentions: [{ address: "5492604560911" }, { address: "5491177777777" }],
+          text: "@5492605550108 y @5491177777777 vengan",
+          mentions: [{ address: "5492605550108" }, { address: "5491177777777" }],
         },
       })],
     }),
@@ -713,7 +713,7 @@ Deno.test("inline mention tokens get named: @<digits> → @name, unnamed stays d
   // the known one wears its pushname; nobody has named the other, so digits stand
   assertEquals(e.parts, [{ type: "text", kind: "text", text: "@Euge y @5491177777777 vengan" }]);
   assertEquals(e.payload?.mentions, [
-    { address: "5492604560911" },
+    { address: "5492605550108" },
     { address: "5491177777777" },
   ]);
 });

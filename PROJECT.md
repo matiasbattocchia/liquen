@@ -454,7 +454,7 @@ v0.0 is **feature-complete**. Remaining before calling it: a long-session live s
 
 ## v0.2 — WhatsApp + maturity
 
-10. **WhatsApp connection** — **LIVE since 2026-08-12** (paired +5491133585694 →
+10. **WhatsApp connection** — **LIVE since 2026-08-12** (paired +5491155550109 →
     `matias`, phone-code flow; ~28k messages / 434 conversations imported as
     `extra.backfill`). The live test drove the schema settlement (2026-08-16, all
     landed): the typed `payload` column (action · refs · turn keys — DESIGN §3), UTC
@@ -595,7 +595,7 @@ rather than left to be noticed:
   around one, so on a LID-addressed chat every id came out under the lid and matched
   nothing liquen had stored from the other side. Three symptoms, one cause: his 😂 arrived
   with `ref_external_id = wmw.…230480930730172.…` against our stored
-  `wmw.…15613518605.…` (same stanza, unmatchable) so render showed `re="?"`; no
+  `wmw.…15555550123.…` (same stanza, unmatchable) so render showed `re="?"`; no
   delivery/read receipt ever merged onto a message we sent; and — the expensive one — a
   quoted `/y`·`/n` from his phone pointed at a card liquen could not find, so the gate dropped
   his verdict without a word. `chatSegment()` now supplies the chat segment of every id the
@@ -5627,7 +5627,7 @@ after a reboot, which nothing reported either: its rows went on saying `connecte
   shows. A round it answers sets each row to the bridge's own word wherever the row says
   otherwise (`connected`, `disconnected`, or `unpaired` for a session it does not hold). A
   `logged_out` row is left to the bridge. The first run on this machine found the org's
-  second WhatsApp row (`5492615682044`) saying `connected` while the bridge answered 404
+  second WhatsApp row (`5492615550118`) saying `connected` while the bridge answered 404
   for it: a session the bridge no longer holds, which the map had kept.
 
 Each tale is one conditional UPDATE on its own stamp (`stalled_at`, `reported_at`,
@@ -5666,7 +5666,7 @@ sweep that reached nothing); a gh failure had no class, so a revoked token was r
 17 hours; a missing access token was a permanent 401 even when the token endpoint was
 merely unreachable.
 
-The org's stale WhatsApp row `5492615682044` (a sole-bot session whose device WhatsApp
+The org's stale WhatsApp row `5492615550118` (a sole-bot session whose device WhatsApp
 removed on 401 `device_removed`, its logout posted to sole-bot's webhook while sole-bot
 was down) was removed with `liquen connect --remove`.
 
@@ -5766,9 +5766,9 @@ copy whose quote resolved to nothing names its own surface row, and stays a plai
 
 ### A number typed with `+` hung its send (2026-10-22) — FIXED
 
-The mind wrote two first contacts as `+542617078202` and `+542616921694`, numbers it read
+The mind wrote two first contacts as `+542615550103` and `+542615550104`, numbers it read
 off two clinics' websites. A first contact's address was kept as typed, so the log opened a
-`+…` conversation and the bridge built `+542617078202@s.whatsapp.net` from it. WhatsApp
+`+…` conversation and the bridge built `+542615550103@s.whatsapp.net` from it. WhatsApp
 never answered the lookup for that JID; whatsmeow waits 75 s for an answer, the dispatcher
 30 s, so each attempt read `no answer from localhost:8081 within 30s`, the rows stalled, and
 the bridge's log said nothing, because it never wrote a refused dispatch down. `aimOf`

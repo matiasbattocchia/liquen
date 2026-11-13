@@ -248,7 +248,7 @@ Deno.test("contact cards are one content after the pin, and their data goes verb
   const cards = [
     {
       name: { formatted_name: "Carlos" },
-      phones: [{ phone: "+54 9 261 656-0401", wa_id: "5492616560401" }],
+      phones: [{ phone: "+54 9 261 555-0101", wa_id: "5492615550101" }],
     },
     { name: { formatted_name: "Ana" }, phones: [{ phone: "4251234" }] },
   ];
@@ -340,7 +340,7 @@ Deno.test("the directory claims @Name tokens — content.mentions for the bridge
   }, {
     directory: (service, conversation) => {
       assertEquals([service, conversation], ["whatsapp", "5491199999999"]);
-      return Promise.resolve([{ address: "5492604560911", name: "Euge" }]);
+      return Promise.resolve([{ address: "5492605550108", name: "Euge" }]);
     },
   });
   log.push(outboundMessage({
@@ -351,7 +351,7 @@ Deno.test("the directory claims @Name tokens — content.mentions for the bridge
   assertEquals(records.length, 1);
   // text ships as the agent wrote it — the BRIDGE rewrites @Name → @digits + MentionedJID
   assertEquals(records[0].content.text, "@Euge te paso la dirección");
-  assertEquals(records[0].content.mentions, [{ address: "5492604560911", name: "Euge" }]);
+  assertEquals(records[0].content.mentions, [{ address: "5492605550108", name: "Euge" }]);
 });
 
 Deno.test("the caption seat claims mentions too — the bridge encodes captions as well", async () => {
@@ -360,7 +360,7 @@ Deno.test("the caption seat claims mentions too — the bridge encodes captions 
     records.push(record);
     return Promise.resolve("wmw.out.10");
   }, {
-    directory: () => Promise.resolve([{ address: "5492604560911", name: "Euge" }]),
+    directory: () => Promise.resolve([{ address: "5492605550108", name: "Euge" }]),
   });
   log.push(outboundMessage({
     parts: [
@@ -377,7 +377,7 @@ Deno.test("the caption seat claims mentions too — the bridge encodes captions 
   assertEquals(records.length, 1); // one file → the text rides as its caption
   assertEquals(records[0].content.type, "file");
   assertEquals(records[0].content.text, "@Euge mirá la foto");
-  assertEquals(records[0].content.mentions, [{ address: "5492604560911", name: "Euge" }]);
+  assertEquals(records[0].content.mentions, [{ address: "5492605550108", name: "Euge" }]);
 });
 
 /** A fetch that never answers on its own — only its signal ends it, as a stalled socket
