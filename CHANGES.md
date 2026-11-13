@@ -1,7 +1,7 @@
 # Next batch: the org's configuration lives in the store
 
 Decided 12 Nov 2026. Driven by turtle-agents' requirements for agents made at runtime;
-1 to 4 below are settled, 5 to 8 are still to discuss.
+1 to 5 below are settled, 6 to 8 are still to discuss.
 
 1. Runtime roster: the roster lives in the org's registry on the volume, so agents added
    at runtime survive restarts and rolls.
@@ -201,9 +201,70 @@ A root deployment needs `groupadd`, `useradd`, `userdel`, `chown`, `chmod` and `
 entrypoints keep what is the org's own (turtle's sync, its vault puts, `chmod 700
 /repo/tenants`) and end in `exec liquen start`.
 
+## 9. An agent starts from the default seed, and no org has templates
+
+Requirement 5 is answered by what exists: a new agent gets `instructions.md` and
+`memories.md` at its folder's root, laid where missing, and its principal shapes it from
+there. What every agent of the org shares is `shared/`'s.
+
+## 10. Scaffolding lays the org's files; updating brings `data/system/`
+
+**Scaffolds** are the org's from the moment they are laid, and no release touches them
+again: `shared/instructions.md` and `shared/memories.md`, each agent's two, `config.yaml`.
+
+**System docs** are the release's words, kept as files in `data/system/` where agents read
+them: `instructions/`, `tools/`, `compaction.md`, the skills shipped and the ones a
+connector's door lays. Each is brought one by one, so a file a release adds reaches every
+org; the folder rule (a folder the org has is never laid into again) goes.
+
+**The manifest** is in the database, whatever `docs` says, in one table of what the org has
+taken from releases: the schema's version (in place of Postgres's `schema_version` and
+SQLite's `user_version`), the release it last booted, and per system doc the hash of the
+release text it last took or acknowledged.
+
+**The rules**, per doc; the release's text against the file and the manifest's row:
+
+| Release | File | Who | Action |
+|---|---|---|---|
+| ships it, no row | missing | boot | lay it: new in this release |
+| ships it | as the release's | boot | record it |
+| changed it | unedited (as the row) | boot | replace |
+| dropped it | unedited | boot | delete |
+| changed it | edited | update | replace, keep, or the release's beside it as `.md.new` |
+| ships it, a row | missing: the org deleted it | update | lay it again, or keep it deleted |
+| dropped it | edited | update | delete, or keep |
+| did not change it | edited or missing | none | the org's choice stands |
+
+**One path.** `bringSystemDocs` (`bringToolDocs` grown) plans, sorting each doc into a
+row, then applies: the unambiguous rows always, each ambiguous one through a `decide` its
+caller gives. Boot's decides nothing: the doc stays as the org left it, and every boot names
+the ones unresolved. `liquen update` moves the lock, then runs the same function through
+the org's import map, so the text it weighs is the new release's; its `decide` asks at a
+terminal and reads flags without one, printing the command to re-run with:
+
+- `--restore [<doc>…]` lays again what the org deleted;
+- `--replace [<doc>…]` takes the release's words over the org's, and deletes what the
+  release dropped;
+- `--beside [<doc>…]` lays the release's text as `<doc>.md.new`, not loaded: no `.md`;
+- `--keep [<doc>…]` takes the org's as acknowledged: the row records the release's hash,
+  and the doc is quiet until a release changes it again.
+
+No name means every doc of its kind. The plan is idempotent, so the order of boot and
+update is free, and `update` without flags at a terminal answered "none" is a dry run.
+
+**Adopting it.** An org with no manifest records each doc that matches the release as
+taken, and treats every other doc, a missing one included, as the org's choice: turtle's
+deleted skills stay deleted.
+
+Tool docs carry no `load`. Linked checkouts (`data/system/` folders symlinked at a liquen
+checkout) go: an org takes the harness's words from a release, so ~/new and vibes take
+this batch by a release and `liquen update`.
+
 ## Docs
 
 `CLAUDE.md`'s configuration section and DESIGN §9 (the file as the declaration the setup
 doors write, boot compiling it into the registry, the registry as a mirror that deletes
 what the file does not name) are rewritten to the above. `config.jsonc` is renamed
-everywhere it is named.
+everywhere it is named. `CLAUDE.md`'s note on live copies (seeded write-if-absent, verified
+with `diff -q`, or symlinked at the checkout) is rewritten to 10, and the seed's folder
+rule leaves `src/store/seed.ts`.
