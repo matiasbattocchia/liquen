@@ -1,7 +1,7 @@
 # Next batch: the org's configuration lives in the store
 
 Decided 12 Nov 2026. Driven by turtle-agents' requirements for agents made at runtime;
-1 to 6 below are settled, 7 and 8 are still to discuss.
+1 to 7 below are settled, 8 is still to discuss.
 
 1. Runtime roster: the roster lives in the org's registry on the volume, so agents added
    at runtime survive restarts and rolls.
@@ -267,6 +267,14 @@ exactly one, and the org's when the agent holds none and the org exactly one; a 
 several rows contend for at the winning level stays unset. That is the order the model
 keys already take (`vaultKeys`, `src/transport/mod.ts`): a member who connects a key of
 their own spends it, and one who has not spends the org's.
+
+## 12. Wakes follow the scope they are written in
+
+Requirement 7 asks nothing of liquen. The clock reminds every agent that reads a doc of
+the lines due in it (`remindDue`, `src/tick.ts`): a line in `shared/` or `system/`
+reminds the org, one in an agent's folder reminds that agent. turtle's `sync.ts --arm`
+lays sonar's poll and report wakes in `data/agents/sonar/wakes.md`, so only sonar wakes on
+them.
 
 ## Docs
 
