@@ -184,8 +184,21 @@ socket to bring the agent down first, then deletes, the folder and the user incl
 A tool an agent calls to make an agent runs inside main: it calls the store function and
 the reconcile directly, through the permission table like any call.
 
-Open: whether boot also takes the entrypoints' permission sweep (the modes and ACLs of
-`log/`, `shared/` and `system/`) when it runs as root.
+**The data classification is boot's too**, when it runs as root. Up gives the agent its
+folder (`<name>:agents`, 0700); boot, after seeding, gives the floors theirs:
+
+    log/      root:root 0700
+    shared/   root:agents 2775, a default ACL giving the group rwX
+    system/   read-only to all, but ca.key: the egress CA's key, root's alone, 0600
+
+The order is boot's to keep: the group, then the users, then the owners; the seeding,
+then `system/` made read-only. The sweeps stay recursive, as the entrypoints run them, so
+a boot also mends ownership that drifted.
+
+A root deployment needs `groupadd`, `useradd`, `userdel`, `chown`, `chmod` and `setfacl`
+(the `acl` package) in its image; boot refuses, naming the tool, when one is missing. The
+entrypoints keep what is the org's own (turtle's sync, its vault puts, `chmod 700
+/repo/tenants`) and end in `exec liquen start`.
 
 ## Docs
 
