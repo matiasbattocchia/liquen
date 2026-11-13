@@ -18,6 +18,10 @@ export interface TelegramConfig {
   bios: boolean;
 }
 
+/** Who signs the grant note a sign-in publishes: the line the running process takes an
+ *  account up by. */
+export const GRANT_SENDER = "telegram-connect";
+
 /** The vault key of the application's credentials. */
 export const APP_KEY = "telegram:app";
 

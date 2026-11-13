@@ -6840,8 +6840,7 @@ CONNECTORS §10; what the building showed:
   ingest, the dispatcher and the ports read those alone, so their tests hand them a wire
   made of literals and no test opens a connection.
 - **The credential and the cache are kept apart.** The vault holds the session string;
-  mtcute's SQLite file under `data/telegram/` holds the peers and the update cursors. A
-  sign-in starts a new cache.
+  mtcute's SQLite file under `data/telegram/` holds the peers and the update cursors.
 - **The cursor moves whether or not the handler did.** A publish that fails is tried again
   until it lands, and a replayed update merges on its `external_id`.
 - **A delete in a direct chat or a basic group names an id and no chat.** Those ids are
@@ -6859,14 +6858,38 @@ Open:
 - Nothing here has met a live account: the sign-in (QR, code, two-step password), the
   replay after downtime, a channel's gap, uploads and each port leg are tested against
   the wire's shapes, not against Telegram.
-- Reactions are sent and not read: Telegram says them as whole snapshots, and a line per
-  add or remove needs the diff against what the log holds.
 - A forum's topics are lines of the supergroup, not conversations of their own; a reply's
   topic is dropped.
 - An org account adopts no steering room.
 - The about text's memory is the process's: a restart reads a stranger again.
-- A sign-in made while the connection runs is taken up by restarting its process, every
-  account's session with it.
+- Reactions in a room past a few hundred reactors, or one whose list the account may not
+  see (a channel's), are not read: a set cut short says nothing, since a person missing
+  from it would read as a reaction taken back. Whether Telegram pushes a supergroup's
+  reaction changes to a member at all is for the live run to show.
+- A removal is taken up within a minute, by the reconcile's tick: `--remove` writes no
+  line the process hears.
+
+### Telegram: a sign-in touches only its account, and reactions come in (2026-11-13) — LANDED
+
+- **The process follows the store.** `accounts.ts` keeps the open sessions in line with
+  the live rows that have a session in the vault: at boot, when a door's grant note lands
+  in the log, and every minute. A sign-in opens that one account, a new sign-in of an
+  account swaps its session and ends the old one on Telegram, and a removal closes it.
+  The door no longer restarts the process; the application's door still does, since the
+  application is read at boot.
+- **A new sign-in keeps the cache.** The session string is imported at every opening, and
+  mtcute's forced import replaces the key and nothing else: the peers and the cursors are
+  the account's, so the new session replays what the old one missed.
+- **A removed account's refusal is final.** The log refuses a publish for a removed row,
+  and the ingest used to try it again forever, stalling that account's events. It now
+  lets the drafts go once the row is gone.
+- **Reactions are read.** Telegram says the whole set a message wears; `reactions.ts`
+  compares it with the log and writes an add or a remove per person and glyph. The
+  dispatcher stamps the agent's own reaction with the id the ingest would give it, so
+  the next set finds it standing, and writes the remove line of a glyph the account's
+  own replaced, which Telegram never says.
+- **A message id is parsed strictly.** A reaction's id ends in a number too, and the gap
+  read took it for the newest message.
 
 ### What is open (2026-10-20)
 

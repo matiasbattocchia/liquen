@@ -15,10 +15,11 @@
  *             → membership: the `connect` conversation, so the note reaches the owner
  *             → the log: the grant crosses the frontier as an event (§4)
  *
- * The session the door makes is a new one, so its cache starts empty: the file a former
- * session of the account left is removed, and the connection's process restarts onto the
- * new credential. Telegram holds what an account missed for a session that exists, so
- * nothing is lost between the sign-in and the restart.
+ * A running connection takes the account up when the note lands, and swaps a session the
+ * sign-in replaced, every other account's session left as it was; one that is not running
+ * reads it at its boot. The account's cache is kept: the peers and the update cursors are
+ * the account's, so a new sign-in replays what the old session missed. The application's
+ * door restarts the process, which reads the application once, at boot.
  */
 
 import { helpFlag } from "../help.ts";
@@ -32,7 +33,7 @@ import { entry } from "../../entry.ts";
 import { declared } from "../declare.ts";
 import { terminalUser } from "../door.ts";
 import { linked } from "../health.ts";
-import { APP_KEY, cachePath, sessionKey, SPEC } from "./config.ts";
+import { APP_KEY, GRANT_SENDER, sessionKey, SPEC } from "./config.ts";
 import { SERVICE, type TgPeer } from "./wire.ts";
 
 export interface TelegramApp {
@@ -59,8 +60,6 @@ export interface TelegramConnectDeps {
   creds: Pick<Credentials, "put">;
   store: Pick<Connections, "upsertConnections" | "upsertMemberships">;
   publish: Appender["publish"];
-  /** Remove the cache a former session of the account left. */
-  dropCache?: (account: string) => Promise<void>;
   now?: () => string;
 }
 
@@ -72,7 +71,6 @@ export async function connectTelegram(deps: TelegramConnectDeps): Promise<{ acco
   const address = self.id;
   const key = sessionKey(address);
 
-  await deps.dropCache?.(address);
   await deps.creds.put({
     key,
     value: { session },
@@ -104,7 +102,7 @@ export async function connectTelegram(deps: TelegramConnectDeps): Promise<{ acco
       service: SERVICE,
       connection_address: address,
       conversation: { address: "connect" },
-      sender: { address: "telegram-connect" },
+      sender: { address: GRANT_SENDER },
     },
     parts: [{
       type: "text",
@@ -162,7 +160,8 @@ if (import.meta.main) {
           creds,
         );
         console.error(`✓ application stored: ${APP_KEY}`);
-        // a process that refused for want of the application gets another go
+        // the process reads the application at boot, and one that refused for want of it
+        // gets another go
         await declared(root, SPEC, {}, [SPEC.name]);
         return;
       }
@@ -201,11 +200,6 @@ if (import.meta.main) {
           creds,
           store: log,
           publish: log.publish,
-          dropCache: async (id) => {
-            for (const tail of ["", "-wal", "-shm", "-journal"]) {
-              await Deno.remove(cachePath(root, id) + tail).catch(() => {});
-            }
-          },
           signIn: () =>
             signIn({
               apiId: Number(app.value.api_id),
@@ -229,8 +223,9 @@ if (import.meta.main) {
       } finally {
         await log.close();
       }
-      // the process reads its sessions once, at boot
-      await declared(root, SPEC, {}, [SPEC.name]);
+      // a running process takes the account up from the note; declaring starts one that
+      // is not running
+      await declared(root, SPEC);
       console.error(
         "  (deno task status shows the map; the session shows under Telegram → Settings → " +
           "Devices, where it is ended)",

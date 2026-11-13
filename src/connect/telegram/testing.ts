@@ -52,7 +52,11 @@ export function fakeWire(over: Partial<TgWire> = {}): FakeWire {
     })),
     edit: noted("edit", () => undefined),
     delete: noted("delete", () => undefined),
-    react: noted("react", () => undefined),
+    react: noted(
+      "react",
+      (_chat: string, _id: number, emojis: string[]) =>
+        emojis.length ? "2026-11-13T15:10:00.000Z" : undefined,
+    ),
     resolve: noted("resolve", (handle: string) => people[handle] ?? null),
     about: noted("about", () => "Arquitecta. Obras en Mendoza."),
     contacts: noted("contacts", () => [{ ...SOL, contact: true, phone: "5492615550107" }]),

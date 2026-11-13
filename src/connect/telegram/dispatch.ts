@@ -25,7 +25,7 @@ import { bytesOf, isExternal, tailOf } from "../../store/media.ts";
 import type { Storage } from "../../store/storage.ts";
 import { DispatchError } from "../errors.ts";
 import { createDispatcher, type DispatcherDeps, type Posted } from "../dispatcher.ts";
-import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
+import type { Appender, DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
 import type {
   ContactsPart,
   EventId,
@@ -36,9 +36,10 @@ import type {
   TextPart,
 } from "../../types.ts";
 import type { Directory } from "../mentions.ts";
-import { externalId, kindOf, messageIdOf } from "./ingest.ts";
+import { kindOf } from "./ingest.ts";
+import { reactionDraft, reactionId, standingOn } from "./reactions.ts";
 import { mentionSpans, toTelegram } from "./text.ts";
-import { SERVICE, type TgOutbound, type TgWire } from "./wire.ts";
+import { externalId, messageIdOf, SERVICE, type TgOutbound, type TgWire } from "./wire.ts";
 
 export interface TelegramDispatchDeps {
   subscribe: Subscriber["subscribe"];
@@ -48,6 +49,8 @@ export interface TelegramDispatchDeps {
   wireOf: (connection: string) => TgWire | undefined;
   /** Where a kept file's bytes are read from. */
   storage?: Storage;
+  /** The log, for the remove line of a reaction an agent's own replaced. */
+  publish?: Appender["publish"];
   /** The conversation's name directory (§3 mentions). Absent: a name ships as text. */
   directory?: Directory;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
@@ -60,7 +63,7 @@ export interface TelegramDispatchDeps {
 type Work =
   | { act: "edit"; id: number; text: string }
   | { act: "delete"; id: number }
-  | { act: "react"; id: number; emoji: string | null }
+  | { act: "react"; id: number; emoji: string; remove: boolean }
   | {
     act: "send";
     text: string;
@@ -89,7 +92,7 @@ function select(event: MessageEvent): Work | null {
   if (react || reactText) {
     if (re === undefined) return null;
     const glyph = react ? (react.data.unicode ?? react.data.name) : reactText!.text;
-    return { act: "react", id: re, emoji: action === "remove" ? null : glyph };
+    return { act: "react", id: re, emoji: glyph, remove: action === "remove" };
   }
   const files = event.parts.filter((p): p is FilePart => p.type === "file");
   const location = event.parts.find((p): p is LocationPart =>
@@ -139,6 +142,51 @@ export function createTelegramDispatch(deps: TelegramDispatchDeps): () => Promis
     };
   };
 
+  /** The account's reactions on a message, set to what the row asks: a glyph put on
+   *  replaces the account's own (Telegram keeps one each, more on a premium account, and
+   *  the agent asks one at a time), a glyph taken off leaves the rest. The row is stamped
+   *  with the id the ingest gives the same reaction, so the next set Telegram says of the
+   *  message finds it standing; a glyph the add replaced gets its remove line here, since
+   *  Telegram says nothing of a change the account made. */
+  const react = async (
+    wire: TgWire,
+    work: Extract<Work, { act: "react" }>,
+    event: MessageEvent,
+  ): Promise<Posted> => {
+    const connection = event.envelope.connection_address;
+    const chat = event.envelope.conversation.address;
+    const target = externalId(connection, chat, work.id);
+    const mine = [...(await standingOn(deps.read, connection, chat, target)).values()]
+      .filter((s) => s.by === connection && s.row.id !== event.id);
+    if (work.remove) {
+      const off = mine.find((s) => s.emoji === work.emoji);
+      await wire.react(chat, work.id, mine.filter((s) => s !== off).map((s) => s.emoji));
+      const added = off?.row.envelope.external_id;
+      return added ? { external_id: `${added}.removed` } : {};
+    }
+    const date = await wire.react(chat, work.id, [work.emoji]);
+    const replaced = mine.filter((s) => s.emoji !== work.emoji);
+    if (replaced.length && deps.publish) {
+      const conversation = event.envelope.conversation;
+      await deps.publish(replaced.map((s) => ({
+        ...reactionDraft({
+          account: wire.self,
+          chat: conversation,
+          target,
+          by: wire.self,
+          emoji: s.emoji,
+          action: "remove",
+          external_id: `${s.row.envelope.external_id ?? `${target}.react.${s.row.id}`}.removed`,
+          ts: new Date().toISOString(),
+        }),
+        ...(event.agent ? { agent: { id: event.agent.id } } : {}),
+      })));
+    }
+    return date
+      ? { external_id: reactionId(connection, chat, work.id, connection, work.emoji, date) }
+      : {};
+  };
+
   return createDispatcher<Work>({
     subscribe: deps.subscribe,
     service: SERVICE,
@@ -164,10 +212,7 @@ export function createTelegramDispatch(deps: TelegramDispatchDeps): () => Promis
         await wire.delete(chat, [work.id]);
         return {};
       }
-      if (work.act === "react") {
-        await wire.react(chat, work.id, work.emoji);
-        return {};
-      }
+      if (work.act === "react") return await react(wire, work, event);
 
       const flat = work.text ? await written(work.text, event) : undefined;
       const outs: TgOutbound[] = [];

@@ -13,7 +13,6 @@ function harness(over: Partial<TelegramConnectDeps> = {}) {
   const memberships: MembershipRow[] = [];
   const vault: CredentialRow[] = [];
   const published: Event[] = [];
-  const dropped: string[] = [];
   const deps: TelegramConnectDeps = {
     signIn: () => Promise.resolve({ session: "1AQAAA-session", self: SELF }),
     principal: "ana",
@@ -38,14 +37,10 @@ function harness(over: Partial<TelegramConnectDeps> = {}) {
       published.push(stored);
       return Promise.resolve(stored);
     }) as TelegramConnectDeps["publish"],
-    dropCache: (account) => {
-      dropped.push(account);
-      return Promise.resolve();
-    },
     now: () => NOW,
     ...over,
   };
-  return { deps, connections, memberships, vault, published, dropped };
+  return { deps, connections, memberships, vault, published };
 }
 
 Deno.test("telegram connect: a member's sign-in writes the vault, one owned row with its self chat, and the note", async () => {
@@ -75,9 +70,9 @@ Deno.test("telegram connect: a member's sign-in writes the vault, one owned row 
     { service: "telegram", connection: "700100", conversation: "connect", agentId: "ana" },
   ]);
   assertEquals(h.published.length, 1);
+  // the note is what a running connection takes the account up by
   assertEquals(h.published[0].envelope.conversation.address, "connect");
-  // a new session starts a new cache
-  assertEquals(h.dropped, ["700100"]);
+  assertEquals(h.published[0].envelope.sender?.address, "telegram-connect");
 });
 
 Deno.test("telegram connect: the org's account is owned by nobody and mirrors no mind", async () => {
@@ -92,7 +87,7 @@ Deno.test("telegram connect: the org's account is owned by nobody and mirrors no
 Deno.test("telegram connect: a sign-in that fails writes nothing", async () => {
   const h = harness({ signIn: () => Promise.reject(new Error("PHONE_CODE_INVALID")) });
   await assertRejects(() => connectTelegram(h.deps), Error, "PHONE_CODE_INVALID");
-  assertEquals([h.vault, h.connections, h.published, h.dropped], [[], [], [], []]);
+  assertEquals([h.vault, h.connections, h.published], [[], [], []]);
 });
 
 Deno.test("telegram connect: the application is its id and hash, both or nothing", async () => {
