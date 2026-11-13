@@ -922,14 +922,18 @@ export function materialize(
   lines.push(Object.keys(cfg.agents).length === 0 ? "agents: {}" : "agents:");
   for (const [name, entry] of Object.entries(cfg.agents)) {
     const { identity = {}, principals, ...over } = entry;
-    lines.push(`  ${name}:`, "    identity:");
-    for (const key of IDENTITY_KEYS) lines.push(...yamlLines(key, identity[key] ?? null, "      "));
-    if (principals !== undefined) lines.push(...yamlLines("principals", principals, "    "));
+    // the handles it has: one it has not is no line, so the file that copies this pins none
+    const handles = IDENTITY_KEYS.filter((key) => identity[key] != null);
+    const body: string[] = [];
+    if (handles.length > 0) body.push("    identity:");
+    for (const key of handles) body.push(...yamlLines(key, identity[key], "      "));
+    if (principals !== undefined) body.push(...yamlLines("principals", principals, "    "));
     for (const e of AGENT) {
       if (e.key in over) {
-        lines.push(...yamlLines(e.key, (over as Record<string, unknown>)[e.key], "    "));
+        body.push(...yamlLines(e.key, (over as Record<string, unknown>)[e.key], "    "));
       }
     }
+    lines.push(body.length > 0 ? `  ${name}:` : `  ${name}: {}`, ...body);
   }
   lines.push("");
   if (docs) lines.push(...wrap(SECTION_DOCS.connections, ""));
