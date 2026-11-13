@@ -1119,16 +1119,16 @@ Deno.test({
       // principal types there is both the wake and the reason to answer it out loud — the
       // mirror crosses it into the mind's room, which is where presence looks for them
       await main.log.upsertConnections([
-        { service: "whatsapp", address: "5491133585694", agentId: "a1" },
+        { service: "whatsapp", address: "5491155550109", agentId: "a1" },
       ]);
       await main.log.publish({
         ts: new Date().toISOString(),
         type: "message",
         envelope: {
           service: "whatsapp",
-          connection_address: "5491133585694",
-          conversation: { address: "5491133585694" },
-          sender: { address: "5491133585694", name: "matias" },
+          connection_address: "5491155550109",
+          conversation: { address: "5491155550109" },
+          sender: { address: "5491155550109", name: "matias" },
         },
         parts: [{ type: "text", kind: "text", text: "¿estás?" }],
       } as Draft<MessageEvent>);
@@ -1136,14 +1136,14 @@ Deno.test({
       // the fact lands in the mind's room, and the mirror carries it to the self-chat as
       // the tagged line — the whole path, main → presence → mirror → the surface's row
       const surface = async () =>
-        (await main.log.read({ conversation: "5491133585694" }))
+        (await main.log.read({ conversation: "5491155550109" }))
           .filter((e) => e.extra?.delta === true);
       await waitFor(async () => (await surface()).length > 0);
       const [said] = await surface();
       assertEquals(said.type, "message");
       assertEquals(said.agent, { id: "a1", session_id: "mind" });
       assertEquals(said.envelope.service, "whatsapp");
-      assertEquals(said.envelope.connection_address, "5491133585694");
+      assertEquals(said.envelope.connection_address, "5491155550109");
       assertEquals((said as MessageEvent).parts, [
         { type: "text", kind: "text", text: "`[agent thinking...]`" },
       ]);
@@ -1160,7 +1160,7 @@ Deno.test({
       const spoken = (await main.log.read({ types: ["message"] }))
         .filter((e) => e.extra?.delta === true)
         .map((e) => e.envelope.conversation.address);
-      assertEquals(spoken, ["5491133585694"]);
+      assertEquals(spoken, ["5491155550109"]);
     } finally {
       await main.stop();
       await Deno.remove(dir, { recursive: true });
@@ -1202,7 +1202,7 @@ Deno.test({
     try {
       await main.log.upsertConnections([{
         service: "whatsapp",
-        address: "5491133585694",
+        address: "5491155550109",
         agentId: "a1",
       }]);
       // history, not news: an imported row wakes nobody (§5), and `search` is its door
@@ -1213,7 +1213,7 @@ Deno.test({
           type: "message",
           envelope: {
             service: "whatsapp",
-            connection_address: "5491133585694",
+            connection_address: "5491155550109",
             conversation: { address: "5492610000001" },
             sender: { address: "5492610000001", name: "Juan" },
           },

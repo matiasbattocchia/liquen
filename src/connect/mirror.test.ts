@@ -362,7 +362,7 @@ Deno.test("mirror fan-out: a tool line names the addresses it points at, off the
         connection_address: "549",
         external_id: "wa-g1",
         conversation: {
-          address: "120363429869958481@g.us",
+          address: "120363000000000481@g.us",
           name: "Sprinters Friends",
           kind: "group",
         },
@@ -383,7 +383,7 @@ Deno.test("mirror fan-out: a tool line names the addresses it points at, off the
       parts: [{
         type: "data",
         kind: "tool_use",
-        data: { name: "search", input: { in: "120363429869958481@g.us", text: "Catamarca" } },
+        data: { name: "search", input: { in: "120363000000000481@g.us", text: "Catamarca" } },
       }],
     } as Draft<ToolUseEvent>);
     await waitFor(async () => (await inConv("D1")).length === 1);
@@ -415,7 +415,7 @@ Deno.test("mirror fan-out: a send's card is laid out in rows, in the surface's t
           call: "send(to: Vivian)",
           detail: "send(to: Vivian, text: hola! nos vemos)",
           send: {
-            conversation: { name: "Vivian", address: "5492604586396" },
+            conversation: { name: "Vivian", address: "5492605550107" },
             last: { text: "llegás?", at: "23 Sep 16:42" },
             text: "hola!\nnos vemos",
             files: 1,
@@ -427,7 +427,7 @@ Deno.test("mirror fan-out: a send's card is laid out in rows, in the surface's t
     assertEquals(
       textOf((await inConv("D1"))[0]),
       "`[agent asks]` approve **send**\n\n" +
-        "**Conversation**: Vivian (5492604586396)\n\n" +
+        "**Conversation**: Vivian (5492605550107)\n\n" +
         "**Last message** (23 Sep 16:42):\nllegás?\n\n" +
         "**Reply**:\nhola!\nnos vemos\n\n" +
         "**Attachments**: 1\n\n" +

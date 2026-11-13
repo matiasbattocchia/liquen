@@ -410,12 +410,12 @@ Deno.test("send: a name no conversation is addressed by lands on the one it name
       ok([{ kind: "assistant", text: "le escribí" }], "end_turn"),
     ],
     async ({ publish, read }) => {
-      await publish(namedChat("5492616104507", "Verónica Sesto", "¡Hola! Quiero más información"));
+      await publish(namedChat("5492615550105", "Verónica Sesto", "¡Hola! Quiero más información"));
       await publish(principalMsg("saludá a verónica"));
       await waitFor(async () => (await read("tool_result")).length === 1);
 
       const directed = (await read("message")).filter((e) =>
-        e.envelope.conversation.address === "5492616104507" &&
+        e.envelope.conversation.address === "5492615550105" &&
         JSON.stringify(e.parts).includes("hola!")
       );
       assertEquals(directed.length, 1); // the NAME reached the address, not a stranger
@@ -433,12 +433,12 @@ Deno.test("send: a name reaches its conversation by the name rule — case, acce
       ok([{ kind: "assistant", text: "le escribí" }], "end_turn"),
     ],
     async ({ publish, read }) => {
-      await publish(namedChat("5492616104507", "Verónica Sesto", "¡Hola! Quiero más información"));
+      await publish(namedChat("5492615550105", "Verónica Sesto", "¡Hola! Quiero más información"));
       await publish(principalMsg("recordale el turno a verónica"));
       await waitFor(async () => (await read("tool_result")).length === 1);
 
       const directed = (await read("message")).filter((e) =>
-        e.envelope.conversation.address === "5492616104507" &&
+        e.envelope.conversation.address === "5492615550105" &&
         JSON.stringify(e.parts).includes("hola!")
       );
       assertEquals(directed.length, 1); // the calendar's `APELLIDO NOMBRE` reached the phone's `Nombre Apellido`
@@ -514,16 +514,16 @@ Deno.test("send: the name proper wins over a relation's parenthesis", async () =
     ],
     async ({ publish, read }) => {
       await publish(
-        namedChat("5492604306049", "Isabel (Mamá De Yañez Marcos)", "hola, soy la mamá"),
+        namedChat("5492605550120", "Isabel (Mamá De Yañez Marcos)", "hola, soy la mamá"),
       );
-      await publish(namedChat("5492604383998", "Marcos Alberto Yañez", "buenas"));
+      await publish(namedChat("5492605550116", "Marcos Alberto Yañez", "buenas"));
       await publish(principalMsg("recordale el turno a marcos"));
       await waitFor(async () => (await read("tool_result")).length === 1);
 
       const directed = (await read("message")).filter((e) =>
         JSON.stringify(e.parts).includes('"text":"recordatorio"')
       );
-      assertEquals(directed.map((e) => e.envelope.conversation.address), ["5492604383998"]);
+      assertEquals(directed.map((e) => e.envelope.conversation.address), ["5492605550116"]);
     },
   );
 });
@@ -538,15 +538,15 @@ Deno.test("send: a name two conversations answer to is handed back, never guesse
       ok([{ kind: "assistant", text: "¿cuál de las dos?" }], "end_turn"),
     ],
     async ({ publish, read }) => {
-      await publish(namedChat("5492616104507", "Verónica Sesto", "quiero información"));
-      await publish(namedChat("5492614696945", "Verónica Mori", "buenas"));
+      await publish(namedChat("5492615550105", "Verónica Sesto", "quiero información"));
+      await publish(namedChat("5492615550112", "Verónica Mori", "buenas"));
       await publish(principalMsg("saludá a verónica"));
       await waitFor(async () => (await read("tool_result")).length === 1);
 
       const [result] = await read("tool_result");
       const said = JSON.stringify(result.parts);
       assert(said.includes("names 2 conversations"), said);
-      assert(said.includes("5492616104507") && said.includes("5492614696945"), said);
+      assert(said.includes("5492615550105") && said.includes("5492615550112"), said);
       // the wrong recipient is the one send that cannot be taken back: nothing went out
       const sent = (await read("message")).filter((e) => JSON.stringify(e.parts).includes("hola!"));
       assertEquals(sent.length, 0);
@@ -1454,10 +1454,10 @@ Deno.test("contact: `who` resolves like a send, the write rides the person's own
     ok([{
       kind: "tool_use",
       name: "contact",
-      input: { who: "5492616104507", action: "forget", name: "x" },
+      input: { who: "5492615550105", action: "forget", name: "x" },
     }], "tool_use"),
     ok(
-      [{ kind: "tool_use", name: "contact", input: { who: "5492616104507", action: "forget" } }],
+      [{ kind: "tool_use", name: "contact", input: { who: "5492615550105", action: "forget" } }],
       "tool_use",
     ),
     // a name nobody wears is not a number to save
@@ -1480,26 +1480,26 @@ Deno.test("contact: `who` resolves like a send, the write rides the person's own
         service: "whatsapp",
         connection_address: "5491100000000",
         external_id: "whatsapp:wmw.v1",
-        conversation: { address: "5492616104507", kind: "direct", name: "vero 🌻" },
-        sender: { address: "5492616104507", name: "vero 🌻" },
+        conversation: { address: "5492615550105", kind: "direct", name: "vero 🌻" },
+        sender: { address: "5492615550105", name: "vero 🌻" },
       },
       parts: [{ type: "text", kind: "text", text: "hola, quiero info" }],
     });
     await log.publish(principalMsg("agendá a verónica"));
     for (let i = 0; i < 16; i++) await xi(config, ports);
     assertEquals(wrote, [
-      { connection: "5491100000000", address: "5492616104507", name: "Verónica Sesto" },
+      { connection: "5491100000000", address: "5492615550105", name: "Verónica Sesto" },
       { connection: "5491100000000", address: "5491177777777" },
-      { connection: "5491100000000", address: "5492616104507", remove: true },
+      { connection: "5491100000000", address: "5492615550105", remove: true },
     ]);
     const results = (await log.read({ types: ["tool_result"] })).map((e) =>
       JSON.stringify(e.parts)
     );
-    assertStringIncludes(results[0], '"saved":"5492616104507"');
+    assertStringIncludes(results[0], '"saved":"5492615550105"');
     assertStringIncludes(results[0], '"as":"Verónica Sesto"');
     assertStringIncludes(results[1], '"as":"vero 🌻"');
     assertStringIncludes(results[2], "`forget` takes no `name`");
-    assertStringIncludes(results[3], '"forgot":"5492616104507"');
+    assertStringIncludes(results[3], '"forgot":"5492615550105"');
     assertStringIncludes(results[4], 'nobody named \\"Nadie\\" has spoken here');
     // a rule pinned to the account matches: the gate saw which book the write goes in
     assertEquals(gated[0].target, undefined); // derived from the rows, not named — unscoped
@@ -1526,7 +1526,7 @@ Deno.test("search `from` asks the address books too: someone saved and never hea
         return Promise.resolve(
           String(req.query).toLowerCase().includes("ver")
             ? [
-              { name: "Verónica Sesto", address: "5492616104507" },
+              { name: "Verónica Sesto", address: "5492615550105" },
               { name: "Vera Halim", address: "5491133322211" },
             ]
             : [],
@@ -1550,8 +1550,8 @@ Deno.test("search `from` asks the address books too: someone saved and never hea
         service: "whatsapp",
         connection_address: "5491100000000",
         external_id: "whatsapp:wmw.v0",
-        conversation: { address: "5492616104507", kind: "direct" },
-        sender: { address: "5492616104507" },
+        conversation: { address: "5492615550105", kind: "direct" },
+        sender: { address: "5492615550105" },
       },
       parts: [{ type: "text", kind: "text", text: "hola, quiero info" }],
     });
@@ -1572,15 +1572,15 @@ Deno.test("search `from` asks the address books too: someone saved and never hea
     assertStringIncludes(
       page,
       '<conn service="whatsapp" name="Sole" address="5491100000000">\n' +
-        '<contact name="Verónica Sesto" address="5492616104507"/>\n' +
+        '<contact name="Verónica Sesto" address="5492615550105"/>\n' +
         '<contact name="Vera Halim" address="5491133322211"/>\n' +
         "</conn>\n",
     );
     // and the book's address reached her one nameless row — a hit the log's own name
     // lookup could never have found; she is `external` by her number, having no name
     assertEquals(page.match(/<msg /g)?.length, 1);
-    assertStringIncludes(page, '<conv kind="direct" address="5492616104507">');
-    assertStringIncludes(page, ' external address="5492616104507" at="');
+    assertStringIncludes(page, '<conv kind="direct" address="5492615550105">');
+    assertStringIncludes(page, ' external address="5492615550105" at="');
     assertStringIncludes(page, ">hola, quiero info</msg>");
 
     // a name in neither place is still an error, and says both places were asked
@@ -1619,8 +1619,8 @@ Deno.test("search: a book that cannot be reached is named, never mistaken for an
         service: "whatsapp",
         connection_address: "5491100000000",
         external_id: "whatsapp:wmw.v1",
-        conversation: { address: "5492616104507", kind: "direct", name: "vero 🌻" },
-        sender: { address: "5492616104507", name: "vero 🌻" },
+        conversation: { address: "5492615550105", kind: "direct", name: "vero 🌻" },
+        sender: { address: "5492615550105", name: "vero 🌻" },
       },
       parts: [{ type: "text", kind: "text", text: "hola, quiero info" }],
     });
@@ -1665,7 +1665,7 @@ Deno.test("search: a number nobody here knows is asked of its wire — who it re
   const { transport } = scripted([
     ok([{ kind: "tool_use", name: "search", input: { in: "+54 9 261 555-0103" } }], "tool_use"),
     ok([{ kind: "tool_use", name: "search", input: { from: "5492615550104" } }], "tool_use"),
-    ok([{ kind: "tool_use", name: "search", input: { in: "5492616104507" } }], "tool_use"),
+    ok([{ kind: "tool_use", name: "search", input: { in: "5492615550105" } }], "tool_use"),
     ok([{ kind: "tool_use", name: "search", input: { in: "5490000000000" } }], "tool_use"),
     ok([{ kind: "tool_use", name: "search", input: { from: "Nadie" } }], "tool_use"),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
@@ -1679,8 +1679,8 @@ Deno.test("search: a number nobody here knows is asked of its wire — who it re
         service: "whatsapp",
         connection_address: "5491100000000",
         external_id: "whatsapp:wmw.v2",
-        conversation: { address: "5492616104507", kind: "direct" },
-        sender: { address: "5492616104507" },
+        conversation: { address: "5492615550105", kind: "direct" },
+        sender: { address: "5492615550105" },
       },
       parts: [{ type: "text", kind: "text", text: "hola, quiero info" }],
     });
@@ -1939,8 +1939,8 @@ Deno.test("contact: a `who` that names several people is refused before it is ev
       write: () => Promise.resolve({}),
       lookup: () =>
         Promise.resolve([
-          { name: "Ariana Antón", address: "5492615935116" },
-          { name: "Ariel Chang", address: "5492944229349" },
+          { name: "Ariana Antón", address: "5492615550115" },
+          { name: "Ariel Chang", address: "5492945550117" },
         ]),
     },
   };
@@ -1958,7 +1958,7 @@ Deno.test("contact: a `who` that names several people is refused before it is ev
       JSON.stringify(e.parts)
     );
     assertStringIncludes(result, '\\"Ari\\" names 2 people');
-    assertStringIncludes(result, "Ariana Antón (5492615935116)");
+    assertStringIncludes(result, "Ariana Antón (5492615550115)");
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -2045,7 +2045,7 @@ Deno.test("conversation on a wire: every verb goes through the wire's port as th
     ok([{
       kind: "tool_use",
       name: "conversation",
-      input: { action: "add", which: "5492616104507-g", who: "U7" },
+      input: { action: "add", which: "5492615550105-g", who: "U7" },
     }], "tool_use"),
     ok(
       [{ kind: "tool_use", name: "conversation", input: { action: "leave", which: "C1" } }],
@@ -2081,8 +2081,8 @@ Deno.test("conversation on a wire: every verb goes through the wire's port as th
       wireRow(
         "whatsapp",
         "5491100000000",
-        { address: "5492616104507-g", kind: "group", name: "familia" },
-        { address: "5492616104507", name: "vero 🌻" },
+        { address: "5492615550105-g", kind: "group", name: "familia" },
+        { address: "5492615550105", name: "vero 🌻" },
         "whatsapp:1",
       ),
     );
@@ -2162,14 +2162,14 @@ Deno.test("send: a list of people on a wire opens a room through the port — un
     ok([{ kind: "tool_use", name: "send", input: { to: "vero, U2", text: "hola" } }], "tool_use"),
     // two people on two accounts are not one room
     ok(
-      [{ kind: "tool_use", name: "send", input: { to: "vero, 5492616104507", text: "hola" } }],
+      [{ kind: "tool_use", name: "send", input: { to: "vero, 5492615550105", text: "hola" } }],
       "tool_use",
     ),
     // whatsapp has no port here: the list stays whole for the wire, placed by the account
     ok([{
       kind: "tool_use",
       name: "send",
-      input: { to: "5492616104507,5492616104508", connection: "sole", text: "hola" },
+      input: { to: "5492615550105,5492615550106", connection: "sole", text: "hola" },
     }], "tool_use"),
     ok([{ kind: "assistant", text: "listo" }], "end_turn"),
   ]);
@@ -2198,8 +2198,8 @@ Deno.test("send: a list of people on a wire opens a room through the port — un
       wireRow(
         "whatsapp",
         "5491100000000",
-        { address: "5492616104507", kind: "direct", name: "sole 🌻" },
-        { address: "5492616104507", name: "sole 🌻" },
+        { address: "5492615550105", kind: "direct", name: "sole 🌻" },
+        { address: "5492615550105", name: "sole 🌻" },
         "whatsapp:1",
       ),
     );
@@ -2223,7 +2223,7 @@ Deno.test("send: a list of people on a wire opens a room through the port — un
     assertEquals(sent.map((e) => [e.service, e.connection_address, e.conversation]), [
       ["slack", "T1", { address: "C1", kind: "channel", name: "ops" }],
       ["slack", "T1", { address: "C2", kind: "direct" }],
-      ["whatsapp", "5491100000000", { address: "5492616104507,5492616104508" }],
+      ["whatsapp", "5491100000000", { address: "5492615550105,5492615550106" }],
     ]);
     // judged before the room exists: the gate saw the account, the room had no address yet
     assertEquals(gated[0].target, { service: "slack", connection: "T1" });
@@ -2408,12 +2408,12 @@ Deno.test("where a send cannot land is refused before the gate: a broadcast, a s
 });
 
 Deno.test("send at the principal: their number however it was typed, not only as stored", async () => {
-  // a handle is written the way a person writes one — `+54 9 11 6754-2610` is the number
-  // the wire calls `5491167542610` — so the guard compares handles, never strings
+  // a handle is written the way a person writes one — `+54 9 11 5555-0113` is the number
+  // the wire calls `5491155550113` — so the guard compares handles, never strings
   await scenario(
     [
       ok(
-        [{ kind: "tool_use", name: "send", input: { to: "5491167542610", text: "hola" } }],
+        [{ kind: "tool_use", name: "send", input: { to: "5491155550113", text: "hola" } }],
         "tool_use",
       ),
       ok([{ kind: "assistant", text: "hola" }], "end_turn"),
@@ -2431,7 +2431,7 @@ Deno.test("send at the principal: their number however it was typed, not only as
     {},
     [],
     {},
-    [{ agentId: "a1", mind: "mind@a1", phone: "+54 9 11 6754-2610" }],
+    [{ agentId: "a1", mind: "mind@a1", phone: "+54 9 11 5555-0113" }],
   );
 });
 
@@ -3400,7 +3400,7 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
     envelope: {
       service: "local",
       connection_address: "default",
-      conversation: { address: "15613518605", kind: "direct", name: "Gianvito" },
+      conversation: { address: "15555550123", kind: "direct", name: "Gianvito" },
       ...(from ? { sender: { address: from.address, name: from.name } } : {}),
     },
     parts: [{ type: "text", kind: "text", text }],
@@ -3411,7 +3411,7 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
       ok([{ kind: "tool_use", name: "search", input: { in: "gianvito" } }], "tool_use"),
       ok([{ kind: "tool_use", name: "search", input: { from: "Nadie" } }], "tool_use"),
       // an address is spelled as the wire spells it, and one nobody wrote in is empty
-      ok([{ kind: "tool_use", name: "search", input: { in: "+1 561 351 8605" } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { in: "+1 555 555 0123" } }], "tool_use"),
       ok([{ kind: "tool_use", name: "search", input: { in: "+5492615550104" } }], "tool_use"),
       ok([{ kind: "assistant", text: "listo" }], "end_turn"),
     ],
@@ -3428,10 +3428,10 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
       // the way the window authors it — sender-less is the account's own (`org`), the peer
       // is `external` with their address
       const page = (found as ToolResultEvent).parts[0].data.output as string;
-      assertStringIncludes(page, '<conv kind="direct" name="Gianvito" address="15613518605">');
+      assertStringIncludes(page, '<conv kind="direct" name="Gianvito" address="15555550123">');
       assertEquals(page.match(/<msg /g)?.length, 2);
       assertStringIncludes(page, ' org at="');
-      assertStringIncludes(page, 'external="Gianvito" address="15613518605" at="');
+      assertStringIncludes(page, 'external="Gianvito" address="15555550123" at="');
 
       // a name nobody wears is an ERROR, not an empty result: "I don't know who that is"
       // and "they never said that" are different answers
@@ -3440,7 +3440,7 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
     {},
     [
       old("te debo la respuesta"),
-      old("dale, mañana", { address: "15613518605", name: "Gianvito" }),
+      old("dale, mañana", { address: "15555550123", name: "Gianvito" }),
     ],
   );
 });
@@ -3518,7 +3518,7 @@ Deno.test("search `from` takes the key a line wears: who among us wrote it, neve
       service: "whatsapp",
       connection_address: "549",
       external_id: `wa:${text}`,
-      conversation: { address: "5492616607927", kind: "direct", name: "Gato" },
+      conversation: { address: "5492615550114", kind: "direct", name: "Gato" },
       sender: { address: sender },
     },
     parts: [{ type: "text", kind: "text", text }],
@@ -3541,7 +3541,7 @@ Deno.test("search `from` takes the key a line wears: who among us wrote it, neve
         payload: { turn_id: "t0" },
       }),
     );
-    await log.publish(row("Torre norte queda lejos", {}, "5492616607927"));
+    await log.publish(row("Torre norte queda lejos", {}, "5492615550114"));
     await log.publish(principalMsg("buscá la dirección que le pasé"));
     for (let i = 0; i < 6; i++) await xi(CONFIG, ports);
     const [typed, said] = (await log.read({ types: ["tool_result"] })).map((e) =>
@@ -3568,7 +3568,7 @@ Deno.test("search `connection`: one of the agent's accounts, named as send names
       service: connection.service,
       connection_address: connection.address,
       conversation: { address: `${connection.address}:c`, kind: "direct", name: "Gianvito" },
-      sender: { address: "15613518605", name: "Gianvito" },
+      sender: { address: "15555550123", name: "Gianvito" },
     },
     parts: [{ type: "text", kind: "text", text }],
   });
@@ -3621,8 +3621,8 @@ Deno.test("search bounds read the org's clock: a bare stamp means the wall the m
     envelope: {
       service: "local",
       connection_address: "default",
-      conversation: { address: "15613518605", kind: "direct", name: "Gianvito" },
-      sender: { address: "15613518605", name: "Gianvito" },
+      conversation: { address: "15555550123", kind: "direct", name: "Gianvito" },
+      sender: { address: "15555550123", name: "Gianvito" },
     },
     parts: [{ type: "text", kind: "text", text }],
   });
@@ -3656,8 +3656,8 @@ Deno.test("search bounds take a line's id: strict, by the log's own order", asyn
     envelope: {
       service: "local",
       connection_address: "default",
-      conversation: { address: "15613518605", kind: "direct", name: "Gianvito" },
-      sender: { address: "15613518605", name: "Gianvito" },
+      conversation: { address: "15555550123", kind: "direct", name: "Gianvito" },
+      sender: { address: "15555550123", name: "Gianvito" },
     },
     parts: [{ type: "text", kind: "text", text }],
   });
@@ -4321,7 +4321,7 @@ Deno.test("a conditional doc loads while its conversation has an event in the wi
     );
     await Deno.writeTextFile(
       `${dir}/docs/shared/mars.md`,
-      conditional("whatsapp", "5491165565431", "Write to Mars in haiku."),
+      conditional("whatsapp", "5491155550121", "Write to Mars in haiku."),
     );
     await log.publish(principalMsg("hola"));
     await xi(CONFIG, ports);

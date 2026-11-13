@@ -63,8 +63,8 @@ Deno.test("describeCall: send names the account it rides when the call does", ()
 });
 
 Deno.test("describeCall: send says WHO — the name, with the address as the fallback", () => {
-  const call = { name: "send", input: { to: "5492604586396", text: "ya salgo" } };
-  const vivian = (a: string) => a === "5492604586396" ? { name: "Vivian", address: a } : undefined;
+  const call = { name: "send", input: { to: "5492605550107", text: "ya salgo" } };
+  const vivian = (a: string) => a === "5492605550107" ? { name: "Vivian", address: a } : undefined;
   assertEquals(
     describeCall(call, { resolve: (a) => vivian(a) }),
     "send(to: Vivian, text: ya salgo)",
@@ -73,39 +73,39 @@ Deno.test("describeCall: send says WHO — the name, with the address as the fal
   // cannot tell two of them apart
   assertEquals(
     describeCall(call, { resolve: (a) => vivian(a), full: true }),
-    "send(to: Vivian (5492604586396), text: ya salgo)",
+    "send(to: Vivian (5492605550107), text: ya salgo)",
   );
-  assertEquals(describeCall(call), "send(to: 5492604586396, text: ya salgo)");
+  assertEquals(describeCall(call), "send(to: 5492605550107, text: ya salgo)");
 });
 
 Deno.test("describeCall: contact says WHO is being saved — `who` is an address too", () => {
-  const call = { name: "contact", input: { who: "5492604586396", name: "Vivian Rossi" } };
-  const vivian = (a: string) => a === "5492604586396" ? { name: "vivi 🌸", address: a } : undefined;
+  const call = { name: "contact", input: { who: "5492605550107", name: "Vivian Rossi" } };
+  const vivian = (a: string) => a === "5492605550107" ? { name: "vivi 🌸", address: a } : undefined;
   assertEquals(
     describeCall(call, { resolve: (a) => vivian(a) }),
     "contact(who: vivi 🌸, name: Vivian Rossi)",
   );
   assertEquals(
     describeCall(call, { resolve: (a) => vivian(a), full: true }),
-    "contact(who: vivi 🌸 (5492604586396), name: Vivian Rossi)",
+    "contact(who: vivi 🌸 (5492605550107), name: Vivian Rossi)",
   );
 });
 
 Deno.test("describeCall: search says WHERE and WHO — `in`/`from` are addresses too", () => {
   const names: Record<string, string> = {
-    "120363429869958481@g.us": "Sprinters Friends",
-    "5492604586396": "Vivian Sobisch",
+    "120363000000000481@g.us": "Sprinters Friends",
+    "5492605550107": "Vivian Sobisch",
   };
   const resolve = (a: string) => names[a] ? { name: names[a], address: a } : undefined;
   assertEquals(
-    describeCall({ name: "search", input: { in: "120363429869958481@g.us", text: "Catamarca" } }, {
+    describeCall({ name: "search", input: { in: "120363000000000481@g.us", text: "Catamarca" } }, {
       resolve,
     }),
     "search(in: Sprinters Friends, text: Catamarca)",
   );
   // the bare form resolves too — one addressed argument still IS the call
   assertEquals(
-    describeCall({ name: "search", input: { in: "5492604586396" } }, { resolve }),
+    describeCall({ name: "search", input: { in: "5492605550107" } }, { resolve }),
     "search(Vivian Sobisch)",
   );
   // these keys take a name as readily as an address, and a name resolves to nothing
@@ -115,8 +115,8 @@ Deno.test("describeCall: search says WHERE and WHO — `in`/`from` are addresses
   );
   // an unaddressed argument is prose, never a lookup
   assertEquals(
-    describeCall({ name: "search", input: { text: "5492604586396" } }, { resolve }),
-    "search(5492604586396)",
+    describeCall({ name: "search", input: { text: "5492605550107" } }, { resolve }),
+    "search(5492605550107)",
   );
 });
 
@@ -154,14 +154,14 @@ Deno.test("nameResolver: the directory shows both halves — who, and which", as
     type: "message",
     envelope: {
       service: "whatsapp",
-      connection_address: "5492615682044",
+      connection_address: "5492615550118",
       conversation: { address, kind, name },
       sender: { address, name },
     },
     parts: [{ type: "text", kind: "text", text: "hola" }],
   } as unknown as Event);
 
-  const rows = [chat("5492616104507", "Verónica Sesto"), chat("5492614696945", "Verónica Mori")];
+  const rows = [chat("5492615550105", "Verónica Sesto"), chat("5492615550112", "Verónica Mori")];
   const read = (q: { conversation?: string; conversationName?: string }) =>
     Promise.resolve(
       q.conversation !== undefined
@@ -175,11 +175,11 @@ Deno.test("nameResolver: the directory shows both halves — who, and which", as
 
   // an ADDRESS gains the name it goes by
   const byAddress = await nameResolver(read as never, [
-    { name: "send", input: { to: "5492616104507" } },
+    { name: "send", input: { to: "5492615550105" } },
   ]);
-  assertEquals(byAddress("5492616104507"), {
+  assertEquals(byAddress("5492615550105"), {
     name: "Verónica Sesto",
-    address: "5492616104507",
+    address: "5492615550105",
     kind: "direct",
   });
 
@@ -189,7 +189,7 @@ Deno.test("nameResolver: the directory shows both halves — who, and which", as
   ]);
   assertEquals(byName("Verónica Sesto"), {
     name: "Verónica Sesto",
-    address: "5492616104507",
+    address: "5492615550105",
     kind: "direct",
   });
 
@@ -302,7 +302,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
       {
         conversation: {
           name: "✨Somos una gran familia✨",
-          address: "5492612514663-1476670948@g.us",
+          address: "5492615550119-1476670948@g.us",
           kind: "group",
         },
         last: { text: "Eeee yo quiero el de los mosquitos 🤪🤭", at: "30 Sep 16:46" },

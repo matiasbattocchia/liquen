@@ -178,7 +178,7 @@ const call = (text: string, turn: string): Draft<ToolUseEvent> => ({
   parts: [{
     type: "data",
     kind: "tool_use",
-    data: { name: "send", input: { to: "5491144117777", text } },
+    data: { name: "send", input: { to: "5491155550124", text } },
   }],
 });
 
@@ -192,7 +192,7 @@ const sent = (text: string, turn?: string, use?: Event["id"]): Draft<MessageEven
   envelope: {
     service: "whatsapp",
     connection_address: "5491100000000",
-    conversation: { address: "5491144117777", name: "Banco Hipotecario SA" },
+    conversation: { address: "5491155550124", name: "Banco Hipotecario SA" },
   },
   parts: [{ type: "text", kind: "text", text }],
 });

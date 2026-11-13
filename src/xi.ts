@@ -3175,8 +3175,8 @@ async function selfSend(
     .map((p) => agents.find((a) => a.agentId === p))
     .filter((a): a is NonNullable<typeof a> => a !== undefined);
   // ids are ours and exact; handles are the WORLD's, and a phone number is written however
-  // the person who typed it felt like — `+54 9 11 6754-2610` is the number the wire calls
-  // `5491167542610`. One form is never adopted on both sides, so the comparison is what
+  // the person who typed it felt like — `+54 9 11 5555-0113` is the number the wire calls
+  // `5491155550113`. One form is never adopted on both sides, so the comparison is what
   // tolerates the variants (`sameHandle`: digits for a number, folded case for an address).
   const ids = new Set(
     [

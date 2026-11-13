@@ -6,7 +6,7 @@ import { type OrgConfig, starterConfig } from "./config.ts";
 Deno.test("failing: a failure and the indented trace under it, and nothing else", () => {
   const lines: [string, boolean][] = [
     ["[ingest] google:battox@gmail.com mailbox: +1 mail", false],
-    ["[dispatch] FAILED → 5491133585694: Error: cannot reach localhost:8081 — refused", true],
+    ["[dispatch] FAILED → 5491155550109: Error: cannot reach localhost:8081 — refused", true],
     ["    at file:///home/matias/liquen/src/connect/http.ts:62:33", true],
     ["    at async Object.send (file:///src/connect/whatsapp/dispatch.ts:267:17)", true],
     ["[dispatch] google mail: watching /home/matias/new/data/log for outbound sends", false],

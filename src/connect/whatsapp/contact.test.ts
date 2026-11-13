@@ -24,7 +24,7 @@ Deno.test("whatsapp contact: one dispatch of type contact, the person as the cha
   const port = whatsappContact("http://bridge.local", "tok", fetchApi);
   const out = await port.write!({
     connection: "5491100000000",
-    address: "5492604586396",
+    address: "5492605550107",
     name: "Vivian Rossi",
   });
   assertEquals(out, { name: "Vivian Rossi" });
@@ -32,7 +32,7 @@ Deno.test("whatsapp contact: one dispatch of type contact, the person as the cha
   assertEquals((calls[0].init.headers as Record<string, string>).authorization, "Bearer tok");
   assertEquals(calls[0].body, {
     type: "contact",
-    record: { organization_address: "5491100000000", conversation_address: "5492604586396" },
+    record: { organization_address: "5491100000000", conversation_address: "5492605550107" },
     contact: { name: "Vivian Rossi", remove: false },
   });
 });
@@ -41,7 +41,7 @@ Deno.test("whatsapp contact: a nameless save asks the bridge for the wire's word
   const { calls, fetchApi } = bridge(200, { status: "sent", name: "vivi 🌸" });
   const port = whatsappContact("http://bridge.local", "tok", fetchApi);
   assertEquals(
-    await port.write!({ connection: "549", address: "5492604586396" }),
+    await port.write!({ connection: "549", address: "5492605550107" }),
     { name: "vivi 🌸" },
   );
   assertEquals(calls[0].body.contact, { name: "", remove: false });
@@ -49,7 +49,7 @@ Deno.test("whatsapp contact: a nameless save asks the bridge for the wire's word
   assertEquals(
     await whatsappContact("http://b", "t", f2).write!({
       connection: "549",
-      address: "5492604586396",
+      address: "5492605550107",
       remove: true,
     }),
     {},
@@ -89,13 +89,13 @@ Deno.test("whatsapp contact: a profile asks the bridge whether the number has an
 Deno.test("whatsapp contact: a lookup reads the account's book, and a nameless entry is none", async () => {
   const { calls, fetchApi } = bridge(200, {
     contacts: [
-      { address: "5492616104507", extra: { name: "Verónica Sesto" } },
+      { address: "5492615550105", extra: { name: "Verónica Sesto" } },
       { address: "5491155512345" }, // no name: known to the wire, not saved in the book
     ],
   });
   const port = whatsappContact("http://bridge.local", "tok", fetchApi);
   assertEquals(await port.lookup!({ connection: "5491100000000", query: "veró nica" }), [
-    { name: "Verónica Sesto", address: "5492616104507" },
+    { name: "Verónica Sesto", address: "5492615550105" },
   ]);
   assertEquals(
     calls[0].url,

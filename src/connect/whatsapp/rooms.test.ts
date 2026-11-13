@@ -38,8 +38,8 @@ Deno.test("whatsapp rooms: open — one person unnamed is their own chat, no cal
   const { calls, fetch } = bridge({});
   const port = whatsappRooms("http://b", "tok", fetch);
   assertEquals(
-    await port.open!({ ...actor, members: ["5492604586396", OWN], kind: "direct" }),
-    { address: "5492604586396", kind: "direct" },
+    await port.open!({ ...actor, members: ["5492605550107", OWN], kind: "direct" }),
+    { address: "5492605550107", kind: "direct" },
   );
   assertEquals(calls, []);
 });

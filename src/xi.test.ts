@@ -814,7 +814,7 @@ Deno.test("attention: the summons is the mind alias and the local rooms, NOTHING
   );
   assertEquals(decide([looked(1), peer], SESSION, { sleepHours: "0-23" }, NOON), "think");
   // a DM is a hail to the PRINCIPAL's account, in a room the agent is a bystander in
-  assertEquals(decide([looked(1), world("wa:5491133585694", 0)], SESSION, WAKE, NOON), "ignore");
+  assertEquals(decide([looked(1), world("wa:5491155550109", 0)], SESSION, WAKE, NOON), "ignore");
   // its name said out loud, by someone who is not its principal, is still the world
   assertEquals(
     decide([looked(1), world("slack:C1", 0, "ping @a1 wdyt?")], SESSION, WAKE, NOON),
@@ -1392,7 +1392,7 @@ Deno.test("unknownTool: a program on PATH called as a tool is pointed through ba
 
 /* ── unanswered: the rooms whose last word is not ours (§5) ─────────────── */
 
-const ACCOUNT = "5491133585694";
+const ACCOUNT = "5491155550109";
 const ACCOUNTS = new Set([ACCOUNT]);
 /** A line in a wire room: a peer's by default (`sender` = the room, a DM), the account's
  *  own when `sender` is the connection, one of us when `agent` is stamped. */

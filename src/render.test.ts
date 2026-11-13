@@ -2068,7 +2068,7 @@ Deno.test("actions on the element (§5): <msg action>, id/re references, <reacti
   };
   const mentioned: MessageEvent = {
     ...worldMsg("e6", t, conv, sol, "che @matias mirá esto"),
-    payload: { mentions: [{ address: "5491133585694", name: "matias" }] },
+    payload: { mentions: [{ address: "5491155550109", name: "matias" }] },
   };
   const reply: MessageEvent = {
     ...worldMsg("e7", t, conv, sol, "el de la esquina"),
@@ -2112,7 +2112,7 @@ Deno.test("actions on the element (§5): <msg action>, id/re references, <reacti
     dump,
     '<reaction external=\\"sol\\" address=\\"549\\" at=\\"16 Aug 12:00\\" re=\\"e1\\" action=\\"remove\\">😮</reaction>',
   );
-  assertStringIncludes(dump, 'mentions=\\"5491133585694\\">che @matias mirá esto</msg>');
+  assertStringIncludes(dump, 'mentions=\\"5491155550109\\">che @matias mirá esto</msg>');
 });
 
 Deno.test("a transcript add-event renders as <transcript re=…>, not as a reaction (§5)", () => {

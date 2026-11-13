@@ -3,17 +3,17 @@ import { claimMentions, encodeSlackText, logDirectory, whatsappMentions } from "
 import type { Event } from "../types.ts";
 
 const DIR = [
-  { address: "5492604560911", name: "Euge" },
-  { address: "5492612156258", name: "Ana María" },
+  { address: "5492605550108", name: "Euge" },
+  { address: "5492615550110", name: "Ana María" },
   { address: "U0BKTGTB65C", name: "matias" },
 ];
 
 Deno.test("mentions: claims resolve names and bare addresses, longest first", () => {
-  const c = claimMentions("che @Euge y @Ana María, avisen a @5492604560911", DIR);
+  const c = claimMentions("che @Euge y @Ana María, avisen a @5492605550108", DIR);
   assertEquals(c.map((x) => [x.address, x.index]), [
-    ["5492604560911", 4],
-    ["5492612156258", 12],
-    ["5492604560911", 33],
+    ["5492605550108", 4],
+    ["5492615550110", 12],
+    ["5492605550108", 33],
   ]);
   // "@Ana María" claimed whole — never half-claimed by a shorter key mid-word
   assertEquals(c[1].length, "@Ana María".length);
@@ -34,9 +34,9 @@ Deno.test("mentions: encodeSlackText — names → <@id>, specials, bare ids; re
 });
 
 Deno.test("mentions: whatsappMentions — claims for the bridge encoder, deduped", () => {
-  assertEquals(whatsappMentions("@Euge y @Euge, más @5492612156258", DIR), [
-    { address: "5492604560911", name: "Euge" },
-    { address: "5492612156258", name: "Ana María" },
+  assertEquals(whatsappMentions("@Euge y @Euge, más @5492615550110", DIR), [
+    { address: "5492605550108", name: "Euge" },
+    { address: "5492615550110", name: "Ana María" },
   ]);
 });
 
@@ -74,7 +74,7 @@ Deno.test("mentions: #channel claims and bare channel ids encode; WhatsApp skips
   );
   assertEquals(encodeSlackText("nada que ver: #hashtag", dir), "nada que ver: #hashtag");
   assertEquals(whatsappMentions("mirá #general @Euge", dir), [
-    { address: "5492604560911", name: "Euge" },
+    { address: "5492605550108", name: "Euge" },
   ]);
 });
 
