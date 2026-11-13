@@ -269,8 +269,8 @@ Deno.test("live: contact cards read by the names they show, after their mark", (
       type: "data",
       kind: "contacts",
       data: [
-        { name: { formatted_name: "Carlos" }, phones: [{ phone: "+54 9 261 656-0401" }] },
-        { name: { formatted_name: "" }, phones: [{ phone: "+54 9 261 485-1664" }] },
+        { name: { formatted_name: "Carlos" }, phones: [{ phone: "+54 9 261 555-0101" }] },
+        { name: { formatted_name: "" }, phones: [{ phone: "+54 9 261 555-0102" }] },
         { name: { formatted_name: "Ana" }, phones: [] },
       ],
     }],

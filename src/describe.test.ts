@@ -46,8 +46,8 @@ Deno.test("describeCall: contact cards read by the names they show", () => {
       input: {
         to: "wa:x",
         contacts: [
-          { name: "Carlos", phones: ["+54 9 261 656-0401"] },
-          { name: "Ana", phones: ["+54 9 261 485-1664"] },
+          { name: "Carlos", phones: ["+54 9 261 555-0101"] },
+          { name: "Ana", phones: ["+54 9 261 555-0102"] },
         ],
       },
     }),
@@ -236,13 +236,13 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   };
   assertEquals(
     describeSendCard({
-      conversation: { name: "Carlos Maglione", address: "5492616560401" },
+      conversation: { name: "Carlos Maglione", address: "5492615550101" },
       last: { text: "Hola, ¿tienen turno esta semana?", at: "23 Sep 16:42" },
       text: "Hola Carlos!\n\nLa doctora atiende **lunes y miércoles**.",
       files: 4,
       location: "Dra. Soledad Suarez",
     }, labels),
-    "**Conversación**: Carlos Maglione (5492616560401)\n\n" +
+    "**Conversación**: Carlos Maglione (5492615550101)\n\n" +
       "**Último mensaje** (23 Sep 16:42):\nHola, ¿tienen turno esta semana?\n\n" +
       // the reply keeps its rows: the judgment is over them as they will arrive
       "**Respuesta**:\nHola Carlos!\n\nLa doctora atiende **lunes y miércoles**.\n\n" +
@@ -261,7 +261,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   const first = (profile: { exists: boolean; name?: string }) =>
     describeSendCard(
       {
-        conversation: { address: "5492617078202" },
+        conversation: { address: "5492615550103" },
         text: "hola",
         files: 0,
         profile: { service: "whatsapp", ...profile },
@@ -269,22 +269,22 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
       labels,
     );
   assertEquals(
-    first({ exists: true, name: "Biobarica Mendoza" }),
-    "**Conversación**: Biobarica Mendoza (5492617078202)\n\n**Respuesta**:\nhola",
+    first({ exists: true, name: "Clinica Andina" }),
+    "**Conversación**: Clinica Andina (5492615550103)\n\n**Respuesta**:\nhola",
   );
-  assertEquals(first({ exists: true }), "**Conversación**: 5492617078202\n\n**Respuesta**:\nhola");
+  assertEquals(first({ exists: true }), "**Conversación**: 5492615550103\n\n**Respuesta**:\nhola");
   // contact cards: whose numbers go out, and which, counted beside the rest
   assertEquals(
     describeSendCard(
       {
         conversation: { address: "5491100000000" },
         files: 0,
-        contacts: ["Carlos (+54 9 261 656-0401)", "Ana (+54 9 261 485-1664, 4251234)"],
+        contacts: ["Carlos (+54 9 261 555-0101)", "Ana (+54 9 261 555-0102, 4251234)"],
       },
       labels,
     ),
     "**Conversación**: 5491100000000\n\n" +
-      "**Contactos**: Carlos (+54 9 261 656-0401), Ana (+54 9 261 485-1664, 4251234)",
+      "**Contactos**: Carlos (+54 9 261 555-0101), Ana (+54 9 261 555-0102, 4251234)",
   );
   // a mail opening a thread: the subject is a row of its own, above the words
   assertEquals(
@@ -317,14 +317,14 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   );
   // a send that names its line says what it does to that line: a reply answers the line
   // named, an unreact takes the glyph off it, an edit rewrites it, a delete takes it back
-  const ana = { name: "Ana", address: "5492614851664", kind: "direct" as const };
+  const ana = { name: "Ana", address: "5492615550102", kind: "direct" as const };
   const named = { text: "Muchas gracias", at: "21 Oct 9:00" };
   assertEquals(
     describeSendCard(
       { conversation: ana, last: named, re: true, text: "de nada!", files: 0 },
       labels,
     ),
-    "**Conversación**: Ana (5492614851664)\n\n**Mensaje** (21 Oct 9:00):\nMuchas gracias\n\n" +
+    "**Conversación**: Ana (5492615550102)\n\n**Mensaje** (21 Oct 9:00):\nMuchas gracias\n\n" +
       "**Respuesta**:\nde nada!",
   );
   assertEquals(
@@ -332,7 +332,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
       { conversation: ana, last: named, re: true, action: "remove", react: "👍", files: 0 },
       labels,
     ),
-    "**Conversación**: Ana (5492614851664)\n\n**Mensaje** (21 Oct 9:00):\nMuchas gracias\n\n" +
+    "**Conversación**: Ana (5492615550102)\n\n**Mensaje** (21 Oct 9:00):\nMuchas gracias\n\n" +
       "**Quitar reacción**: 👍",
   );
   assertEquals(
@@ -340,7 +340,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
       { conversation: ana, last: named, re: true, action: "edit", text: "Mil gracias", files: 0 },
       labels,
     ),
-    "**Conversación**: Ana (5492614851664)\n\n**Mensaje a editar** (21 Oct 9:00):\nMuchas gracias\n\n" +
+    "**Conversación**: Ana (5492615550102)\n\n**Mensaje a editar** (21 Oct 9:00):\nMuchas gracias\n\n" +
       "**Texto nuevo**:\nMil gracias",
   );
   assertEquals(
@@ -348,7 +348,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
       { conversation: ana, last: named, re: true, action: "delete", files: 0 },
       labels,
     ),
-    "**Conversación**: Ana (5492614851664)\n\n**Mensaje a borrar** (21 Oct 9:00):\nMuchas gracias",
+    "**Conversación**: Ana (5492615550102)\n\n**Mensaje a borrar** (21 Oct 9:00):\nMuchas gracias",
   );
   // a line that is not words says what it carried, ahead of whatever words it has
   const answering = (last: SendPreview["last"]) =>

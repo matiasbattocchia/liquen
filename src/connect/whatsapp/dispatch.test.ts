@@ -248,7 +248,7 @@ Deno.test("contact cards are one content after the pin, and their data goes verb
   const cards = [
     {
       name: { formatted_name: "Carlos" },
-      phones: [{ phone: "+54 9 261 656-0401", wa_id: "5492616560401" }],
+      phones: [{ phone: "+54 9 261 555-0101", wa_id: "5492615550101" }],
     },
     { name: { formatted_name: "Ana" }, phones: [{ phone: "4251234" }] },
   ];

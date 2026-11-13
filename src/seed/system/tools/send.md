@@ -19,10 +19,11 @@ profile: read how your principal writes there, then send again.
 - text: the message body or the attachment caption; omit only when reacting or sending files
   without a caption
 - re: target message `id`. REQUIRED with `react`. OPTIONAL with `text` and/or `files` (depends
-  on the `action`). To press an option of an `<interactive>` message, reply to it with the
-  option's `title` as `text`: that goes out as the press the bot reads; the same words
-  without `re` reach it as typing, which a bot usually refuses. Its `links` only open a page
-  or dial a number: no reply presses them
+  on the `action`). Only needed to answer something the conversation has moved on from. To
+  press an option of an `<interactive>` message, reply to it with the option's `title` as
+  `text`: that goes out as the press the bot reads; the same words without `re` reach it as
+  typing, which a bot usually refuses. Its `links` only open a page or dial a number: no
+  reply presses them
 - subject: the name of the conversation this message opens: a mail's Subject line on a first
   send to addresses — every mail thread is a conversation of its own, and a send into one
   needs no subject. On a list of agents, the room's name: `ops` opens a group, `#ops` a
@@ -43,5 +44,5 @@ profile: read how your principal writes there, then send again.
 - contacts: contact cards, sent together as their own message after any text, files or pin.
   WhatsApp conversations only
   - name: the name the card shows
-  - phones: its numbers, each with `+` and the country code (`+54 9 261 656-0401`) so the
+  - phones: its numbers, each with `+` and the country code (`+54 9 11 9999-9999`) so the
     card opens a WhatsApp chat

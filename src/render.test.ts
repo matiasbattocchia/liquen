@@ -2335,7 +2335,7 @@ Deno.test("a location- or contacts-only message hoists to its kind's element (§
   card.parts = [{
     type: "data",
     kind: "contacts",
-    data: [{ name: { formatted_name: "Carlos" }, phones: [{ phone: "+54 9 261 656-0401" }] }],
+    data: [{ name: { formatted_name: "Carlos" }, phones: [{ phone: "+54 9 261 555-0101" }] }],
   }];
   // a data part BESIDE text rides inline as a marker — the `<msg>` wrapper stays
   const both = worldMsg("e3", t, conv, sol, "acá estamos");
@@ -2361,7 +2361,7 @@ Deno.test("a location- or contacts-only message hoists to its kind's element (§
   assertStringIncludes(
     dump,
     '<contacts id=\\"e2\\" external=\\"sol\\" address=\\"549\\" at=\\"24 Aug 20:29\\" ' +
-      "data=\\\"[{name:{formatted_name:'Carlos'},phones:[{phone:'+54 9 261 656-0401'}]}]\\\"/>",
+      "data=\\\"[{name:{formatted_name:'Carlos'},phones:[{phone:'+54 9 261 555-0101'}]}]\\\"/>",
   );
   assertStringIncludes(
     dump,

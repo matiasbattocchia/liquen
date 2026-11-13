@@ -2898,7 +2898,7 @@ function shapeOf(address: string): Shape | undefined {
 }
 
 /** An address as the wire spells it. A phone is typed however the typist likes
- *  (`+54 9 261 707-8202`); the wire addresses it, and the log records its conversation, by
+ *  (`+54 9 261 555-0103`); the wire addresses it, and the log records its conversation, by
  *  the digits alone. */
 function spelled(address: string): string {
   return shapeOf(address) === "phone" && digits(address) !== "" ? digits(address) : address;
@@ -3979,7 +3979,7 @@ function contactsPartOf(raw: unknown): ContactsPart {
     if (!name) throw new Error(`\`contacts[${i}].name\` is the name the card shows`);
     const phones = Array.isArray(o.phones) ? o.phones.map((p) => String(p).trim()) : [];
     if (phones.length === 0 || phones.some((p) => shapeOf(p) !== "phone" || digits(p) === "")) {
-      throw new Error(`\`contacts[${i}].phones\` are phone numbers, \`+54 9 261 656-0401\``);
+      throw new Error(`\`contacts[${i}].phones\` are phone numbers, \`+54 9 261 555-0101\``);
     }
     return {
       name: { formatted_name: name },

@@ -945,18 +945,18 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
         text: "hola Carlos!\n\nlunes o miércoles",
         files: ["fachada.jpg", "portero.jpg"],
         location: { latitude: -32.9, longitude: -68.8, name: "Consultorio" },
-        contacts: [{ name: "Dra. Suarez", phones: ["+54 9 261 707-8202", "4251234"] }],
+        contacts: [{ name: "Dra. Suarez", phones: ["+54 9 261 555-0103", "4251234"] }],
       },
     }, {
       // a first contact: the card says who the number reaches, asked of the wire
       kind: "tool_use",
       name: "send",
-      input: { to: "+54 9 261 707-8202", text: "hola" },
+      input: { to: "+54 9 261 555-0103", text: "hola" },
     }, {
       // a number the wire says has no account: refused, never put to the principal
       kind: "tool_use",
       name: "send",
-      input: { to: "+54 9 261 692-1694", text: "hola" },
+      input: { to: "+54 9 261 555-0104", text: "hola" },
     }], "tool_use"),
     ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
   ]);
@@ -975,9 +975,9 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
         profile: (req) => {
           asked.push(req);
           return Promise.resolve(
-            req.address === "5492616921694"
+            req.address === "5492615550104"
               ? { exists: false }
-              : { exists: true, name: "Biobarica Mendoza" },
+              : { exists: true, name: "Clinica Andina" },
           );
         },
       },
@@ -989,10 +989,10 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
     envelope: {
       service: "whatsapp",
       connection_address: "5491100000000",
-      conversation: { address: "5492616560401", kind: "direct", name: "Carlos" },
+      conversation: { address: "5492615550101", kind: "direct", name: "Carlos" },
       sender: own
         ? { address: "5491100000000", name: "Sole" }
-        : { address: "5492616560401", name: "Carlos" },
+        : { address: "5492615550101", name: "Carlos" },
     },
     parts: [{ type: "text", kind: "text", text }],
   });
@@ -1012,26 +1012,26 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
     assertEquals(refused.parts[0].data.is_error, true);
     assertStringIncludes(
       String(refused.parts[0].data.output),
-      "5492616921694 has no whatsapp account",
+      "5492615550104 has no whatsapp account",
     );
     assertEquals(req.parts[0].data.send, {
-      conversation: { name: "Carlos", address: "5492616560401", kind: "direct" },
+      conversation: { name: "Carlos", address: "5492615550101", kind: "direct" },
       last: { text: "hola, tienen turno?", at: "23 Sep 16:42" },
       text: "hola Carlos!\n\nlunes o miércoles",
       files: 2,
       location: "Consultorio",
-      contacts: ["Dra. Suarez (+54 9 261 707-8202, 4251234)"],
+      contacts: ["Dra. Suarez (+54 9 261 555-0103, 4251234)"],
     });
     assertEquals(stranger.parts[0].data.send, {
-      conversation: { address: "5492617078202" },
+      conversation: { address: "5492615550103" },
       text: "hola",
       files: 0,
-      profile: { service: "whatsapp", exists: true, name: "Biobarica Mendoza" },
+      profile: { service: "whatsapp", exists: true, name: "Clinica Andina" },
     });
     // only the strangers were asked about, under the address the wire spells
     assertEquals([...new Set(asked.map((r) => `${r.connection} ${r.address}`))], [
-      "5491100000000 5492617078202",
-      "5491100000000 5492616921694",
+      "5491100000000 5492615550103",
+      "5491100000000 5492615550104",
     ]);
   } finally {
     await log.close();
@@ -1053,12 +1053,12 @@ Deno.test("a gated send that names its line carries that line and what it does t
       service: "whatsapp",
       connection_address: "5491100000000",
       external_id: id,
-      conversation: { address: "5492614851664", kind: "direct", name: "Ana" },
-      sender: { address: "5492614851664", name: "Ana" },
+      conversation: { address: "5492615550102", kind: "direct", name: "Ana" },
+      sender: { address: "5492615550102", name: "Ana" },
     },
     parts: [{ type: "text", kind: "text", text }],
   });
-  const unreact: Record<string, Json> = { to: "5492614851664", react: "👍", action: "remove" };
+  const unreact: Record<string, Json> = { to: "5492615550102", react: "👍", action: "remove" };
   const { transport } = scripted([
     ok([{ kind: "tool_use", name: "send", input: unreact }], "tool_use"),
     ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
@@ -1079,7 +1079,7 @@ Deno.test("a gated send that names its line carries that line and what it does t
     const [req] = await log.read({ types: ["permission_request"] });
     assert(req.type === "permission_request");
     assertEquals(req.parts[0].data.send, {
-      conversation: { name: "Ana", address: "5492614851664", kind: "direct" },
+      conversation: { name: "Ana", address: "5492615550102", kind: "direct" },
       last: { text: "Muchas gracias", at: "21 Oct 9:00" },
       re: true,
       action: "remove",
@@ -1101,7 +1101,7 @@ Deno.test("a gated send's last word is a line without text: what it carried, and
   ]);
   const { transport } = scripted([
     ok([
-      { kind: "tool_use", name: "send", input: { to: "5492616560401", text: "qué lindo!" } },
+      { kind: "tool_use", name: "send", input: { to: "5492615550101", text: "qué lindo!" } },
       { kind: "tool_use", name: "send", input: { to: "5492615550000", text: "dale, el lunes" } },
     ], "tool_use"),
     ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
@@ -1127,7 +1127,7 @@ Deno.test("a gated send's last word is a line without text: what it carried, and
     });
   try {
     // a photo with no caption
-    await from("5492616560401", "Carlos", "2026-09-23T19:42:00Z", [{
+    await from("5492615550101", "Carlos", "2026-09-23T19:42:00Z", [{
       type: "file",
       kind: "image",
       file: { mime_type: "image/jpeg", uri: "file:///foto.jpg" },
@@ -1227,7 +1227,7 @@ Deno.test("send `contacts`: the harness shapes the cards, on WhatsApp only", asy
   await log.upsertConnections([
     { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
   ]);
-  const card = { name: "  Carlos\n Maglione ", phones: ["+54 9 261 656-0401", "4251234"] };
+  const card = { name: "  Carlos\n Maglione ", phones: ["+54 9 261 555-0101", "4251234"] };
   const { transport } = scripted([
     ok([{
       kind: "tool_use",
@@ -1270,7 +1270,7 @@ Deno.test("send `contacts`: the harness shapes the cards, on WhatsApp only", asy
         kind: "contacts",
         data: [{
           name: { formatted_name: "Carlos Maglione" },
-          phones: [{ phone: "+54 9 261 656-0401", wa_id: "5492616560401" }, { phone: "4251234" }],
+          phones: [{ phone: "+54 9 261 555-0101", wa_id: "5492615550101" }, { phone: "4251234" }],
         }],
       },
     ]);
@@ -1655,16 +1655,16 @@ Deno.test("search: a number nobody here knows is asked of its wire — who it re
         asked.push(address);
         if (address === "5490000000000") return Promise.reject(new Error("HTTP 503"));
         return Promise.resolve(
-          address === "5492617078202"
-            ? { exists: true, name: "biobaricamendoza" }
+          address === "5492615550103"
+            ? { exists: true, name: "clinicaandina" }
             : { exists: false },
         );
       },
     },
   };
   const { transport } = scripted([
-    ok([{ kind: "tool_use", name: "search", input: { in: "+54 9 261 707-8202" } }], "tool_use"),
-    ok([{ kind: "tool_use", name: "search", input: { from: "5492616921694" } }], "tool_use"),
+    ok([{ kind: "tool_use", name: "search", input: { in: "+54 9 261 555-0103" } }], "tool_use"),
+    ok([{ kind: "tool_use", name: "search", input: { from: "5492615550104" } }], "tool_use"),
     ok([{ kind: "tool_use", name: "search", input: { in: "5492616104507" } }], "tool_use"),
     ok([{ kind: "tool_use", name: "search", input: { in: "5490000000000" } }], "tool_use"),
     ok([{ kind: "tool_use", name: "search", input: { from: "Nadie" } }], "tool_use"),
@@ -1688,7 +1688,7 @@ Deno.test("search: a number nobody here knows is asked of its wire — who it re
     for (let i = 0; i < 14; i++) await xi(CONFIG, ports);
 
     // a conversation the log holds is its own answer: its number was never asked
-    assertEquals(asked, ["5492617078202", "5492616921694", "5490000000000"]);
+    assertEquals(asked, ["5492615550103", "5492615550104", "5490000000000"]);
     const pages = (await log.read({ types: ["tool_result"] })).map((r) =>
       JSON.stringify((r as ToolResultEvent).parts)
     );
@@ -1697,14 +1697,14 @@ Deno.test("search: a number nobody here knows is asked of its wire — who it re
     assertEquals(
       output(0),
       '<conn service="whatsapp" name="Sole" address="5491100000000">\n' +
-        '<profile address="5492617078202" exists="true" name="biobaricamendoza"/>\n' +
+        '<profile address="5492615550103" exists="true" name="clinicaandina"/>\n' +
         "</conn>",
     );
     // a `from` nobody spoke and no book holds is no longer an error: the wire says nobody
     assertEquals(
       output(1),
       '<conn service="whatsapp" name="Sole" address="5491100000000">\n' +
-        '<profile address="5492616921694" exists="false"/>\n' +
+        '<profile address="5492615550104" exists="false"/>\n' +
         "</conn>",
     );
     assertEquals(output(2).includes("<profile "), false);
@@ -3412,7 +3412,7 @@ Deno.test("search by name: the handle the window SHOWED resolves to addresses", 
       ok([{ kind: "tool_use", name: "search", input: { from: "Nadie" } }], "tool_use"),
       // an address is spelled as the wire spells it, and one nobody wrote in is empty
       ok([{ kind: "tool_use", name: "search", input: { in: "+1 561 351 8605" } }], "tool_use"),
-      ok([{ kind: "tool_use", name: "search", input: { in: "+5492616921694" } }], "tool_use"),
+      ok([{ kind: "tool_use", name: "search", input: { in: "+5492615550104" } }], "tool_use"),
       ok([{ kind: "assistant", text: "listo" }], "end_turn"),
     ],
     async ({ publish, read }) => {
