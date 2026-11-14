@@ -8,15 +8,21 @@ connection it rides. All seven below are settled.
 2. A connection is owned or shared. Owned is one agent's world, read by it alone; shared
    is the org's, read by every agent. A Slack bot is shared only, a Slack user grant owned
    only; a WhatsApp number, a Google account and a Microsoft account either.
-3. Self-talk steers on an owned connection, and does nothing on a shared one.
+3. Self-talk steers on an owned connection only.
 4. A DM with an owned connection steers its agent when the sender is one of its
    principals.
-5. A DM with a shared connection steers the sender's own agent, when that agent runs and
-   counts the sender among its principals. Any other DM is the shared inbox.
-6. A room on a shared connection named after an agent steers that agent, whatever it owns
-   elsewhere.
+5. In a workspace, a DM with a shared connection steers the sender's own agent, when that
+   agent runs and counts the sender among its principals. Any other DM is the shared
+   inbox.
+6. In a workspace, a room on a shared connection named after an agent steers that agent,
+   whatever it owns elsewhere.
 7. A shared Google or Microsoft account is mail and calendar, as Google's already is: a
    shared Microsoft account's Teams chats go unread, so Teams is owned only.
+
+Slack and Teams are workspaces: everyone in one is a colleague, so a shared connection's
+DMs and rooms can steer. WhatsApp and Google reach anyone, and a shared account there stays
+the shared inbox it is. With Teams owned only, the shared connection that steers is the
+Slack bot.
 
 The term is shared: docs, CLI output and comments say it where they said org account.
 
@@ -37,17 +43,16 @@ As the code stands, with owned bots gone: the `self` branch of the `aliases` vie
 WhatsApp DM by the principal's number, and `mirrors.dms` on an owned Teams account. A
 Slack user grant records its self-DM alone.
 
-## 3. A DM with a shared connection steers the sender's own agent
+## 3. A DM with the shared bot steers the sender's own agent
 
 The sender's own agent is the one the classifier stamps on their line: a member's grant
-row, or their email or phone on the roster. The DM is that agent's mind surface: hidden
-from every agent, copied into `mind@<agent>`, answered through the shared connection.
+row, or the email on their Slack profile against the roster. The DM is that agent's mind
+surface: hidden from every agent, copied into `mind@<agent>`, answered through the bot.
 
-- Slack: the bot's ingest records the `im` on the shared bot row, `mirrors.dms` member →
+- The bot's ingest records the `im` on the shared bot row, `mirrors.dms` member →
   channel, the first time a member writes there.
-- WhatsApp: derived, as on an owned number: a DM whose address is a member's phone.
-- The `aliases` view gains the branch: on a live shared connection, each recorded or
-  derived DM whose member counts among the principals of the agent of the same name.
+- The `aliases` view gains the branch: on a live shared connection, each recorded DM whose
+  member counts among the principals of the agent of the same name.
 
 A sender who is no member, or whose agent does not run or does not count them, stays in
 the shared inbox.
