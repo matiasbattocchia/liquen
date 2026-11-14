@@ -143,6 +143,7 @@ import {
   scripted,
   type Seen,
   shortId,
+  signedOutOf,
   silenced,
   type Surface,
   textOf,
@@ -306,6 +307,10 @@ function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
  * is owed an answer for, so it is read when words make the digest due and never makes it
  * due alone.
  *
+ * A sign-out (`signedOutOf`) is the world's news told in the harness's voice: it lands in
+ * the mind room as an alarm, yet only the night and the digest (rungs 2, 5 and 6) govern
+ * it, so the night holds it for the morning.
+ *
  * A transcript is not a rung of its own: it INHERITS the attention of the note it names.
  * The words ARE that message, arriving late — so they wake once the note has been looked at
  * and could not be read (below the night, which swallows the note too), and they never count
@@ -328,6 +333,8 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // its enrollments — so every piece of news is addressed to it, and the ladder below
   // (digest cadence, the night) is the MIND's, built for a world that talks around you.
   if (session.id !== MIND) return "think";
+  // a sign-out skips the rungs that wake at once, so only the night and the digest weigh it
+  const told = news.filter((e) => !signedOutOf(e));
   // The summons is the MIND ALIAS and the LOCAL ROOMS (§2). Not a DM, not a reply to the
   // agent on a wire, not its name said out loud: none of those address the agent, they
   // address the principal's account in a room the agent is a bystander in — and answering
@@ -339,20 +346,20 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // it as engaged, and one that lands after the floor decayed is the world talking, which
   // is what the digest is for.
   if (
-    news.some((e) =>
+    told.some((e) =>
       e.envelope.conversation.address === session.conversation || e.envelope.service === "local"
     )
   ) return "think";
   // an ALARM wakes now, wherever it landed: it fired at a time the agent itself chose, and
   // deferring it to the digest (or sleeping through it) would answer a question nobody
   // asked — "was 07:00 really what you meant?". The one wake class the agent set itself.
-  if (news.some((e) => e.type === "alarm")) return "think";
+  if (told.some((e) => e.type === "alarm")) return "think";
   // …and so does an update: work the agent started, telling how it went on — the lines a
   // command was asked to wake on, its end — which the next turn may have to act on
-  if (news.some((e) => e.type === "tool_result")) return "think";
+  if (told.some((e) => e.type === "tool_result")) return "think";
   // holding the floor is the one question that is per-conversation — so the news is grouped
   // for it, and for nothing else: the two rules below weigh the world as one thing
-  for (const conv of new Set(news.map((e) => e.envelope.conversation.address))) {
+  for (const conv of new Set(told.map((e) => e.envelope.conversation.address))) {
     if (engaged(conv, events, session, wake, now)) return "think";
   }
   // ASLEEP: inside the span the ambient class wakes nobody, however deep the pile. The two
@@ -785,10 +792,10 @@ function newsOf(events: Event[], session: Session): News[] {
 
 /** Who asked for the work `v` opens (`Cause`, §9 presence). A think is asked for when its
  *  news holds the principal's line in the session's own room, a reminder coming due there,
- *  or the principal's deny; it is the world's when the news is only other rooms'. An act
- *  that runs a ruling is the principal's. The rest has no cause of its own: a checkpoint,
- *  an unload, the turn over an unload's notice, a cut turn going on, an act finishing
- *  its own calls, a think over an update on a call or a lapse. */
+ *  or the principal's deny; it is the world's when the news is only other rooms' and
+ *  sign-outs. An act that runs a ruling is the principal's. The rest has no cause of its
+ *  own: a checkpoint, an unload, the turn over an unload's notice, a cut turn going on, an
+ *  act finishing its own calls, a think over an update on a call or a lapse. */
 export function causeOf(
   events: Event[],
   session: Session,
@@ -801,7 +808,9 @@ export function causeOf(
     !unloadOf(e) && !isUpdate(e, session) && !lapse(e)
   );
   if (news.length === 0) return undefined;
-  return news.some((e) => e.envelope.conversation.address === session.conversation)
+  return news.some((e) =>
+      e.envelope.conversation.address === session.conversation && !signedOutOf(e)
+    )
     ? "asked"
     : "world";
 }

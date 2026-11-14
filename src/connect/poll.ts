@@ -32,7 +32,7 @@ import type { GrantBroker } from "../proxy/grants.ts";
 import type { Service } from "../types.ts";
 import { findRoot, orgFlag } from "../config.ts";
 import { SignedOut } from "./errors.ts";
-import { setState } from "./health.ts";
+import { setState, type StateStore } from "./health.ts";
 import { Unreached } from "./http.ts";
 import { fault } from "../entry.ts";
 
@@ -107,7 +107,7 @@ export interface PollerDeps {
    *  row as stored (`connect/health.ts`) — `signed_out` when its issuer ended the access,
    *  `failing` when a sweep cannot read it, `connected` when every poll reads it again — so
    *  the anchor can say a surface is down, and since when (§5). */
-  store?: Pick<Connections, "connections" | "upsertConnections">;
+  store?: StateStore;
   /** Which resources to poll on each grant — calendars, mail folders — as the connector
    *  names them. */
   resources: string[];
@@ -224,9 +224,11 @@ export interface PollIngestDeps {
   read: Reader["read"];
   creds: Credentials;
   broker: GrantBroker;
-  /** The account rows, and the roster that names who is behind them. */
+  /** The account rows, the roster that names who is behind them, and the log a sign-out
+   *  is told on. */
   store:
-    & Pick<Connections, "connection" | "connections" | "upsertConnections">
+    & Pick<Connections, "connection">
+    & StateStore
     & Pick<Registry, "agents">;
   /** Where a polled file is kept (`saveMedia`). */
   storage: Storage;

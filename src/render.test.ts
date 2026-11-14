@@ -1,5 +1,6 @@
 import { roomPart } from "./room.ts";
 import { openLog } from "./store/log.ts";
+import { signedOutLine } from "./connect/health.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
@@ -2540,6 +2541,34 @@ Deno.test("an unload's notice names where its span starts, by the line's handle"
   const texts = blocksOf(messages).map(txt);
   assert(texts.some((s) => s.includes('<system kind="unload" since="03f9a2"></system>')));
   assert(!texts.some((s) => s.includes('kind="alarm"')));
+});
+
+Deno.test("a sign-out says the account and since when, and names connect only to an agent offered it", () => {
+  const t = (m: number) => `2026-11-14T17:0${m}:00Z`;
+  const line = signedOutLine(
+    { service: "google", address: "ana@example.com", agentId: "a1" },
+    t(2),
+  );
+  const events = [mindMsg("e01", t(0), "hola", false), { ...line, id: "e02" } as Event];
+  const said = (offered?: ReadonlySet<string>) =>
+    blocksOf(
+      render({
+        events,
+        docs: [],
+        session: SESSION,
+        zone: "America/Argentina/Buenos_Aires",
+        now: t(3),
+        ...(offered ? { offered } : {}),
+      }).messages,
+    ).map(txt).filter((s) => s.includes("signed_out"));
+  assertEquals(said(new Set(["send", "connect"])), [
+    '<system kind="signed_out" since="14 Nov 14:02">google ana@example.com is signed out; ' +
+    "connect signs it in again</system>",
+  ]);
+  const bare =
+    '<system kind="signed_out" since="14 Nov 14:02">google ana@example.com is signed out</system>';
+  assertEquals(said(new Set(["send"])), [bare]);
+  assertEquals(said(), [bare]);
 });
 
 Deno.test("a ruling stands in the session's room, closed or trailing, whoever ruled; the ask draws nothing", () => {

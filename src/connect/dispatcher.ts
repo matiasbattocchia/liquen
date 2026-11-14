@@ -27,8 +27,7 @@
  */
 
 import { failedStatus, SignedOut } from "./errors.ts";
-import { rowsOf, setState } from "./health.ts";
-import type { Connections } from "../store/connections.ts";
+import { rowsOf, setState, type StateStore } from "./health.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../store/log.ts";
 import type { Event, EventId, MessageEvent, Service } from "../types.ts";
 
@@ -58,8 +57,9 @@ export interface DispatcherDeps<W> {
   /** Put one send on the wire. Throws to fail the send — `DispatchError` carries the class. */
   post: (work: W, event: MessageEvent) => Promise<Posted>;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
-  /** The connections map, where a signed-out account is said down (§5). */
-  store?: Pick<Connections, "connections" | "upsertConnections">;
+  /** The connections map, where a signed-out account is said down (§5), and the log its
+   *  owner is told on. */
+  store?: StateStore;
   onError?: (event: MessageEvent, err: unknown) => void;
   onSent?: (event: MessageEvent, id: string | undefined) => void;
 }
