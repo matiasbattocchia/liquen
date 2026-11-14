@@ -1,11 +1,20 @@
 import { assertEquals } from "@std/assert";
 import { bridgeStatus, createBridgeProbe, MISSES } from "./probe.ts";
 import type { ConnectionRow } from "../../store/connections.ts";
+import type { Appender } from "../../store/log.ts";
+import type { Draft, Event } from "../../types.ts";
 
-/** The connections map as the probe reads and writes it: `extra` merges, a null drops. */
+/** The connections map as the probe reads and writes it: `extra` merges, a null drops; what
+ *  it publishes is kept in `told`. */
 function map(rows: ConnectionRow[]) {
   const byKey = new Map(rows.map((r) => [`${r.service}:${r.address}`, r]));
+  const told: Draft<Event>[] = [];
   return {
+    told,
+    publish: ((e: Draft<Event> | Draft<Event>[]) => {
+      told.push(...[e].flat());
+      return Promise.resolve(null);
+    }) as Appender["publish"],
     connections: () => Promise.resolve([...byKey.values()]),
     upsertConnections: (put: ConnectionRow[]) => {
       for (const r of put) {
@@ -81,7 +90,7 @@ Deno.test("probe: the bridge's first answer sets each session to its word", asyn
 Deno.test("probe: an answered round sets a row the bridge disagrees with to its word, and keeps the since of one it agrees with", async () => {
   const store = map([
     // the map kept it after the bridge forgot it (a device unlinked while nobody heard)
-    { service: "whatsapp", address: "549111", extra: { state: "connected" } },
+    { service: "whatsapp", address: "549111", agentId: "ana", extra: { state: "connected" } },
     {
       service: "whatsapp",
       address: "549222",
@@ -103,6 +112,10 @@ Deno.test("probe: an answered round sets a row the bridge disagrees with to its 
   assertEquals(store.extra("549222").unavailable_at, "x"); // agreed: the since stays
   assertEquals(store.extra("549333").suspended_at, "y"); // a ban is truer than not connected
   assertEquals(store.state("549444"), "connected");
+  // the owner hears of the forgotten device once, and the next round says nothing more
+  assertEquals(store.told.map((e) => e.envelope.conversation.address), ["mind@ana"]);
+  await probe.tick();
+  assertEquals(store.told.length, 1);
 });
 
 Deno.test("bridgeStatus: 404 is a session it does not hold, a refusal is a bridge not there", async () => {

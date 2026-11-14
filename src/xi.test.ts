@@ -25,6 +25,7 @@ import { RUNAWAY } from "./compact.ts";
 import { localFiles } from "./store/media.ts";
 import { fileStorage } from "./store/storage.ts";
 import { parseDirect } from "./session.ts";
+import { signedOutLine } from "./connect/health.ts";
 
 const MIND = "mind@a1"; // the session's own conversation (§4)
 const SESSION: Session = { id: "mind", agentId: "a1", conversation: MIND };
@@ -974,6 +975,36 @@ Deno.test("alarm: a fired wake is answered NOW — no digest to wait for, no nig
   const night = Date.parse("2026-08-19T03:00:00Z"); // inside the default 23-8 span
   assertEquals(decide([looked(night), world("slack:C1", 3, "x")], SESSION, WAKE, night), "ignore");
   assertEquals(decide([looked(night), alarm(3, night)], SESSION, WAKE, night), "think");
+});
+
+Deno.test("signed out: the owner's line waits as the world's do, and the morning reads it", () => {
+  const night = Date.parse("2026-08-19T03:00:00Z"); // inside the default 23-8 span (UTC)
+  const morning = Date.parse("2026-08-19T08:30:00Z");
+  const looked = (minAgo: number, base: number) =>
+    ev("message", { ...SELF, ts: at(minAgo, base), payload: { turn_id: "T9" } } as Partial<Event>);
+  const out = (minAgo: number, base: number) =>
+    ev(
+      "alarm",
+      signedOutLine(
+        { service: "google", address: "ana@x.io", agentId: "a1" },
+        at(minAgo, base),
+      ) as Partial<Event>,
+    );
+  // a reminder in the mind room wakes at once, night or day…
+  const reminder = alarm(3, night, MIND);
+  assertEquals(decide([looked(60, night), reminder], SESSION, WAKE, night), "think");
+  // …but a sign-out sleeps through the night, however long since the last look, and the
+  // turn that just closed in the mind room holds no floor over it
+  assertEquals(decide([out(3, night)], SESSION, WAKE, night), "ignore");
+  assertEquals(decide([looked(60, night), out(3, night)], SESSION, WAKE, night), "ignore");
+  assertEquals(decide([looked(1, night), out(0, night)], SESSION, WAKE, night), "ignore");
+  // the first look of the morning reads it, as the world's first digest
+  const waiting = [looked(60, night), out(3, night)];
+  assertEquals(decide(waiting, SESSION, WAKE, morning), "think");
+  assertEquals(causeOf(waiting, SESSION, "think"), "world");
+  // by day it waits for the digest like any line of the world's
+  assertEquals(decide([looked(5, NOON), out(3, NOON)], SESSION, WAKE, NOON), "ignore");
+  assertEquals(decide([looked(16, NOON), out(3, NOON)], SESSION, WAKE, NOON), "think");
 });
 
 Deno.test("update: a call's later word is answered NOW, until a turn reads past it", () => {

@@ -32,6 +32,16 @@ function memoryStorage(): Storage & { kept: Map<string, Uint8Array> } {
   };
 }
 
+/** A store's own publish, keeping what it is handed: where an owner hears of a sign-out. */
+function keeper(): { publish: TelegramIngestDeps["publish"]; kept: Draft<Event>[] } {
+  const kept: Draft<Event>[] = [];
+  const publish = ((e: Draft<Event> | Draft<Event>[]) => {
+    kept.push(...[e].flat());
+    return Promise.resolve(null);
+  }) as unknown as TelegramIngestDeps["publish"];
+  return { publish, kept };
+}
+
 function harness(over: Partial<TelegramIngestDeps> = {}) {
   const published: Draft<MessageEvent>[] = [];
   const wire = fakeWire();
@@ -343,6 +353,7 @@ Deno.test("telegram ingest: the classifier stamps a member by their own account,
     connection: (_s: string, address: string) => Promise.resolve(rows[address] ?? null),
     connections: () => Promise.resolve(Object.values(rows)),
     upsertConnections: () => Promise.resolve(),
+    publish: keeper().publish,
     agents: () =>
       Promise.resolve([
         { agentId: "beto", phone: "+54 9 261 555-0103" },
@@ -446,6 +457,7 @@ Deno.test("telegram ingest: a shared account records no DM", async () => {
       upserts++;
       return Promise.resolve();
     },
+    publish: keeper().publish,
   };
   const { ingest, published } = harness({ store });
   await ingest.handle({ type: "message", message: message() });
@@ -566,6 +578,7 @@ Deno.test("telegram ingest: a refusal for an account whose row was removed is fi
       connection: () => Promise.resolve(null),
       connections: () => Promise.resolve(live),
       upsertConnections: () => Promise.resolve(),
+      publish: keeper().publish,
     },
   });
   await ingest.handle({ type: "message", message: message() });
@@ -827,9 +840,11 @@ Deno.test("telegram ingest: the session's state lands on the account's row", asy
   const row: ConnectionRow = {
     service: "telegram",
     address: "700100",
+    agentId: "sol",
     extra: { state: "connected" },
   };
-  const { ingest } = harness({
+  const told = keeper();
+  const { ingest, published } = harness({
     store: {
       connection: () => Promise.resolve(row),
       connections: () => Promise.resolve([row]),
@@ -837,6 +852,7 @@ Deno.test("telegram ingest: the session's state lands on the account's row", asy
         upserts.push(...rows);
         return Promise.resolve();
       },
+      publish: told.publish,
     },
   });
   await ingest.handle({ type: "state", state: "connected" });
@@ -847,4 +863,9 @@ Deno.test("telegram ingest: the session's state lands on the account's row", asy
     signed_out_at: NOW,
     error: "SESSION_REVOKED",
   });
+  // the owner hears it in their mind, through the store and not the wire's marked publish
+  assertEquals(told.kept.map((e) => [e.type, e.envelope.conversation.address]), [
+    ["alarm", "mind@sol"],
+  ]);
+  assertEquals(published, []);
 });

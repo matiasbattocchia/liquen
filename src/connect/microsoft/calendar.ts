@@ -58,7 +58,7 @@ import {
 } from "../poll.ts";
 import type { Appender, Reader } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
-import type { Connections } from "../../store/connections.ts";
+import type { StateStore } from "../health.ts";
 import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import type { CalendarData } from "../../types.ts";
 import { entry } from "../../entry.ts";
@@ -155,7 +155,7 @@ export interface MicrosoftCalendarDeps {
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
   broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
-  store?: Pick<Connections, "connections" | "upsertConnections">;
+  store?: StateStore;
   /** Which calendars to watch on each grant. Default `DEFAULT_CALENDARS`. */
   calendars?: string[];
   /** Injectable for tests; defaults to global `fetch` against Graph. */

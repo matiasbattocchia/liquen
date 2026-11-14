@@ -5,7 +5,7 @@ import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
 import { members, membersAt } from "../../testing.ts";
 import { type Appender, type Log, openLog, type Reader } from "../../store/log.ts";
-import type { Connections } from "../../store/connections.ts";
+import type { StateStore } from "../health.ts";
 import type { CalendarPart, Draft, Event, MessageEvent } from "../../types.ts";
 
 const KEY = "google:ana@example.com";
@@ -61,7 +61,7 @@ function poller(
   fetchApi: typeof fetch,
   publish: Appender["publish"] = captor().publish,
   calendars?: string[],
-  store?: Pick<Connections, "connections" | "upsertConnections">,
+  store?: StateStore,
   read?: Reader["read"],
 ): { tick(): Promise<void> } {
   return createGoogleWebhook({

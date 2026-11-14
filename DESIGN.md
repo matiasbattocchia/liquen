@@ -174,7 +174,8 @@ a room the agent is a bystander in, and waking on each is a full turn per line o
 else's conversation. What is genuinely said TO the agent arrives in its mind session,
 through the mirror's fan-in (§4), or in a room of the org's own, which a member opened with
 the agent in it: nothing local is the world talking around it, so a peer's word wakes it
-at once, the night included. The rest is the world, and the world waits. An **engaged** conversation wakes immediately too, and
+at once, the night included. An owned account's sign-out (§5) lands in the mind room yet
+is the world's news, so only the night and the digest govern it. The rest is the world, and the world waits. An **engaged** conversation wakes immediately too, and
 engagement is **holding the floor**: the last thing our complex said there was the agent's
 own voice (`ownVoice` — the `turn_id` discriminator, §3) and it is younger than
 `engagedMinutes`. Every reply refreshes the clock (ping-pong), silence lets it decay — and
@@ -805,7 +806,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; `<permission_response re verdict>` in the session room — the ask itself draws nothing, its `pending_approval` result carries the handle | act on an allow; think on the principal's deny; a lapse wakes nobody | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
 | `summary` | nu, in the idle gap after a turn, or inside a turn that ran away (§5) | leading text block (§5) | look again (idle, the think a dead turn left owed, or the running turn's next step) | parts(text) · payload{covers, running?} |
-| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) · xi, raising an unload in the idle gap (§5) | `<system kind="alarm">` carrying the note; an unload's `<system kind="unload" since="…">` | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} · extra{timer} or extra{unload: {since, through}} |
+| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) · xi, raising an unload in the idle gap (§5) · a connector, when an owned account signs out (§5) | `<system kind="alarm">` carrying the note; an unload's `<system kind="unload" since="…">`; a sign-out's `<system kind="signed_out" since="…">` | **think** — news that wakes NOW (past the digest, past `sleepHours`); a sign-out waits as the world's lines do | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} · extra{timer}, extra{unload: {since, through}} or extra{signed_out: {service, address}} |
 | `error` | nu · xi · the checkpoint · the mirror | **system** + Stream | ignore | parts(data:{error}) · extra{consumed} — what a failed request read (the model's, a checkpoint's) · payload{ref_id} — the call a word is said of, or the line that settled no card |
 | `delta` | main (presence, §9): the mind has started a kind of work | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
 | `anchor` | nu, with a step's first row, when the state moved since the last (§5) | `mid_conv_system` where its step read it: the sections that moved; crosses to no surface | ignore | parts(text, kind anchor: `now:` and the ambient lines) · payload{turn_id} |
@@ -1916,7 +1917,10 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   itself; a round it answers writes the bridge's word, `signed_out` for a session it does
   not hold), `suspended` (WhatsApp barred the number for a while). A send the service
   refused as signed out (`SignedOut`) marks the account too, and the next one that lands
-  marks it back. Over all of them stands `connector_down`, which no row stores: a running
+  marks it back. An owned row's move to `signed_out` also writes one line into its owner's
+  mind, `<system kind="signed_out" since="…">google ana@example.com is signed out</system>`,
+  which names `connect` only to an agent offered it and waits out sleep hours as the world's
+  lines do; a shared row's sign-out is the down line alone. Over all of them stands `connector_down`, which no row stores: a running
   connector stamps `extra.heard_at` on its rows every 30s, and a row unstamped for two
   minutes reads as its connector stopped, since the last stamp — the supervisor never
   opens the log and a dead process says nothing, so the silence is the signal. A row its

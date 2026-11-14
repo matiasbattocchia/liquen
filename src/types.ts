@@ -534,7 +534,8 @@ export interface Payload {
  *  call whose script made it through the door, §9 — the answer wakes nobody, and the window
  *  folds the pair into that call), `via` (mirror provenance, §4), `reminder` (alarm provenance, §10: the doc whose
  *  lines it reminds of, and the minute), `unload` (on an alarm the harness raised for an unload, §5: the
- *  first line of the span it asks written down and the last event it covers), and per-service provenance under the service name —
+ *  first line of the span it asks written down and the last event it covers), `signed_out` (on an alarm the harness raised in
+ *  an owner's mind when an account it owns signed out, §5: the service and address), and per-service provenance under the service name —
  *  how the wire said it, not what the event means (`slack: {subtype, authorizations}`,
  *  `raw`). */
 export type Extra = Record<string, unknown>;

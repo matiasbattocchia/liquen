@@ -4,6 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Emission } from "./mu.ts";
 import { canned } from "./testing.ts";
 import { estTokens, SILENCE } from "./render.ts";
+import { signedOutLine } from "./connect/health.ts";
 import type { Delta, Draft, Event, MessageEvent, ThinkingEvent, ToolUseEvent } from "./types.ts";
 
 // the checkpoint instruction every turn here reads: what a compacting window sends
@@ -127,6 +128,27 @@ Deno.test("nu renders the window it was handed (events reach liquen)", async () 
     },
   );
   assert(seen[0].includes("¿todo bien?"));
+});
+
+Deno.test("nu: a sign-out names connect when the request offers that tool", async () => {
+  const line = {
+    ...signedOutLine(
+      { service: "google", address: "ana@x.io", agentId: "a1" },
+      "2026-11-14T14:02Z",
+    ),
+    id: "e1",
+  } as Event;
+  const asked = async (tools: Anthropic.Tool[]) => {
+    let seen = "";
+    await nu({ events: [line], docs: [], tools, compactPrompt: PROMPT, config: CONFIG }, (p) => {
+      seen = JSON.stringify(p.messages);
+      return Promise.resolve(canned([{ kind: "assistant", text: "ok" }]));
+    });
+    return seen;
+  };
+  const connect = { name: "connect", input_schema: { type: "object" as const } };
+  assertStringIncludes(await asked([connect]), "is signed out; connect signs it in again");
+  assert(!(await asked([])).includes("connect signs"));
 });
 
 Deno.test("nu: the sentinel is SILENCE wherever it lands — the word governs the reply", async () => {
