@@ -5,8 +5,8 @@
  * `(service, address, agent_id?, credential_key?, extra?)`. `agent_id` names the owner
  * and IS the privacy switch: owned ⇒ private to that agent; ownerless ⇒ the org's,
  * shared inbox (the acl table refines this later; until then absence is the config). A
- * Slack user grant is its own connection `<team>:<user>`; the org bot is the bare
- * `<team>`. `credential_key` points at the grant's secret in the vault; `extra` carries
+ * Slack user grant is its own connection `<team>:<user>`; the shared bot is its own,
+ * `<team>:<bot user>`, beside the bare `<team>` stub. `credential_key` points at the grant's secret in the vault; `extra` carries
  * discovered account facts (JSON, merged on upsert by RFC 7396 at every depth: a key
  * given replaces or joins, a key given `null` goes).
  *
@@ -118,9 +118,10 @@ export interface ConversationRow {
 }
 
 /** A mind-alias binding (§4): a conversation on the wire that is a face of the agent's
- *  mind — self-talk on a connection it OWNS, a principal's DM with an account it owns, or
- *  its steering room on an org account. RECORDED on the connection (`extra.mirrors`:
- *  `self`, `dms` principal → conversation, `rooms` agent → conversation) where the
+ *  mind — self-talk on a connection it OWNS, a principal's DM with an account it owns, a
+ *  member's DM with the shared bot, or its steering room on a shared account. RECORDED on
+ *  the connection (`extra.mirrors`: `self`, `dms` member → conversation, `rooms` agent →
+ *  conversation) where the
  *  platform's id is opaque, DERIVED where platform structure gives it away (a WA self-chat
  *  is addressed by the connection's own number, a principal's DM by their own);
  *  `store/roster.ts` reads both. */
@@ -180,7 +181,8 @@ export interface Connections {
   connections(): Promise<ConnectionRow[]>;
   /** The mind-alias bindings (§4), in (service, connection, conversation) order: every
    *  owned connection's self-conversation, each principal's DM with an account the agent
-   *  owns, and each org account's steering rooms (the `aliases` view, `store/roster.ts`).
+   *  owns, each member's DM with the shared bot, and each shared account's steering rooms
+   *  (the `aliases` view, `store/roster.ts`).
    *  A soft-deleted binding KEEPS answering, with
    *  `live: false` — a revocation closes the gate, never the hiding: the mind copies
    *  already there are that surface's record, and the binding still names whose they are. */

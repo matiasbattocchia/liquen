@@ -530,11 +530,11 @@ async function memberOf(
   return (await store.agents()).find((a) => sameHandle(a.email, email))?.agentId ?? null;
 }
 
-/** A principal's DM with the bot is a surface of the mind of the agent that owns it (§4),
- *  and Slack's id for it is opaque — so the first line a member sends an owned bot in an
- *  `im` RECORDS the channel on the bot's row (`extra.mirrors.dms`, member → channel), where
- *  the alias derivation reads it. Which members are principals is decided there, not
- *  here. An org bot is no agent's, and its DMs stay the world's. */
+/** A member's DM with the shared bot is a surface of the mind of their own agent (§4), and
+ *  Slack's id for it is opaque — so the first line a member sends the bot in an `im`
+ *  RECORDS the channel on the bot's row (`extra.mirrors.dms`, member → channel), where the
+ *  alias derivation reads it. Whether that agent runs and counts them is decided there,
+ *  not here. */
 async function recordDm(
   store: Store,
   anchor: string,
@@ -542,7 +542,7 @@ async function recordDm(
   channel: string,
 ): Promise<void> {
   const row = await store.connection("slack", anchor);
-  if (!row?.agentId || mirrorsOf(row).dms?.[member] === channel) return;
+  if (!row || row.agentId || mirrorsOf(row).dms?.[member] === channel) return;
   await store.upsertConnections([{
     service: "slack",
     address: anchor,
@@ -550,10 +550,11 @@ async function recordDm(
   }]);
 }
 
-/** A steering room (§4): on an org bot, a channel named exactly as a roster agent is that
- *  agent's room, unless the agent owns an account. It is RECORDED the first time the bot
- *  is met in it (`extra.mirrors.rooms`, agent → channel), by id, so a rename never moves
- *  it and another channel wearing the name later is nobody's while the first holds it. */
+/** A steering room (§4): on the shared bot, a channel named exactly as a roster agent is
+ *  that agent's room, whatever the agent owns elsewhere. It is RECORDED the first time the
+ *  bot is met in it (`extra.mirrors.rooms`, agent → channel), by id, so a rename never
+ *  moves it and another channel wearing the name later is nobody's while the first holds
+ *  it. */
 async function adoptRoom(
   deps: SlackWebhookDeps,
   team: string,
@@ -562,7 +563,7 @@ async function adoptRoom(
   via: string[],
 ): Promise<void> {
   const { store, names } = deps;
-  if (!store?.agents || !store.connections || !names || anchor === team) return;
+  if (!store?.agents || !names || anchor === team) return;
   const row = await store.connection("slack", anchor);
   if (!row || row.agentId) return;
   const name = await names.roomOf(team, channel, via);
@@ -570,8 +571,6 @@ async function adoptRoom(
   if (!agent || agent.runs === false || mirrorsOf(row).rooms?.[agent.agentId] !== undefined) {
     return;
   }
-  // an agent with an account of its own is a person's, steered there and nowhere else
-  if ((await store.connections()).some((c) => c.agentId === agent.agentId)) return;
   await store.upsertConnections([{
     service: "slack",
     address: anchor,
@@ -1537,7 +1536,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   ];
 
   // the media seam, broker-side (§9): resolve a token that can read `url_private`
-  // (the org bot → any authorized grant), download, land in the media store —
+  // (the shared bot → any authorized grant), download, land in the media store —
   // the URL and the token stay on this side of the frontier
   const tokenFor = async (team: string, users: string[]): Promise<string | null> => {
     const org = await creds.get(`slack:${team}:org`);
@@ -1575,7 +1574,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
     }
   };
 
-  // the name directory reads with the same resolution the media seam uses (org bot →
+  // the name directory reads with the same resolution the media seam uses (shared bot →
   // any authorized grant → env) — a display name is a workspace fact any grant can read
   const names = slackNames(tokenFor);
 

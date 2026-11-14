@@ -271,7 +271,7 @@ export async function undeclareConnection(
 /** Route a room to an agent, making the agent when it is missing (§4, §9): the steps in
  *  the order a room's first line needs. The agent is made from `entry` — its identity and
  *  settings, nobody steering it unless `entry` names someone; the route is one merge of
- *  `extra.mirrors.rooms` on the org account's connection row, every other agent's room
+ *  `extra.mirrors.rooms` on the shared account's connection row, every other agent's room
  *  left as it was; a new agent is poked up. The caller then publishes the line: the route
  *  holds once the row does, and the mirror's copy into the agent's mind is owed to it from
  *  its backlog floor, whether main has brought it up yet or not. Answers whether the

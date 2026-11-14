@@ -6930,6 +6930,38 @@ reference to read, not a patch to apply. Its PROJECT and DESIGN text tells the w
   Where a bot and a personal grant share a place, the other may never see the row; main
   has not been checked against that.
 
+### Who steers an agent, and through which connection (2026-11-14) — LANDED
+
+Who steers an agent and what kind of connection it rides are two axes now. An agent's
+principals are a list of any length; a connection is owned (one agent's world) or shared
+(the org's). DESIGN §4 holds the whole of it; what the building did:
+
+- **A Slack bot is shared.** `connectSlackBot` takes no agent, and the door asks for none.
+- **A member's DM with the shared bot steers their own agent.** The ingest records the `im`
+  on the bot's row (`mirrors.dms`, member → channel), and the `aliases` view takes it, on
+  both engines, when that agent runs and counts the member among its principals. A
+  stranger's DM stays in the shared inbox.
+- **A steering room takes any agent.** `adoptRoom` adopts a channel named as an agent
+  whatever it owns elsewhere, so the "What is open" note on a room that could not tell a
+  person's agent from an org's is closed.
+- **A crossing speaks as the account its surface is on.** The Slack dispatcher sends a
+  mirror's copy onto a shared row with the bot's token, never the author's own grant, so
+  an augmented self steered through the bot never posts as its person there.
+- **Teams is owned only.** `readsTeams` keeps subscriptions, the catch-up and notices to
+  owned grants; a shared Microsoft account is its mail and calendar. Teams' steering rooms
+  (group chats by topic, channels by the hourly listing) are gone.
+
+`new` and `vibes` held no owned bot and no live shared Microsoft account, so nothing there
+changed shape.
+
+Open:
+
+- Slack names one installation per delivery, so a steering room or the shared inbox can
+  miss a line Slack attributes to a member's own grant instead of the bot (the witnesses
+  entry above). It matters more now, since a member with an augmented self may write in a
+  room on the bot.
+- Nothing here has met a live workspace.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
@@ -6946,9 +6978,6 @@ their entries.
   new `[agent]` line (`ccParts`).
 - A lapse reaches no surface. The card stays on the phone, and a `/y` quoting it is
   answered "that approval was already answered"; only the terminal draws the lapse.
-- A steering room cannot tell a person's agent from an org's: Slack and Teams adopt any
-  agent that runs and owns no account, and the room stays when its person connects one
-  later, since the view's rooms branch asks nothing of ownership.
 - A connector process that never stamped a row, one that dies at boot, shows nowhere:
   `connector_down` is read off `heard_at`, and the first beat waits one interval.
 - Unsent messages are no standing list in the anchor; the agent hears of one only when it

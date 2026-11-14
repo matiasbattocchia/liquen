@@ -204,14 +204,16 @@ records it on the connection row under `extra.mirrors`, and the alias view reads
 - `self` — the account's self-conversation, on a row an agent owns (the Slack self-DM;
   Telegram's Saved Messages, the account's own id, written by its door; WhatsApp derives
   its own and needs none).
-- `dms` — principal → conversation: a principal's DM with an account an agent owns, written
-  by the ingest the first time that principal writes there, when the DM's id is opaque.
-- `rooms` — agent → conversation: an agent's **steering room** on an org account (no
+- `dms` — member → conversation: a principal's DM with an account an agent owns, or in a
+  workspace a member's DM with the shared bot, theirs when their own agent runs and counts
+  them. Written by the ingest the first time that member writes there, when the DM's id is
+  opaque.
+- `rooms` — agent → conversation: an agent's **steering room** on a shared account (no
   owner). Whoever writes there steers, so the mind copy is signed with the sender the
   ingest stamps: stamp a stable id as `address` and the person's name as `name`, and stamp
   none on a row of your own making. A service the org runs writes its own at connect; a
-  wire whose rooms anyone can open adopts one only for an agent that owns no account, by
-  id, and says the adoption in the agent's mind as a room line (Slack's ingest, §4).
+  workspace whose rooms anyone can open adopts one for any agent of the room's name, by
+  id (Slack's ingest, §4).
   A roster member writing there who is not among the agent's principals is another agent
   among us; an agent whose `principals` is `"*"` is steered by everyone in its room, a
   member included.
@@ -243,12 +245,9 @@ whichever landed first, so `aliasOf` matches a Microsoft account on its domain. 
 writes `self` at the first line in an owned account's chat with itself, by the id the
 notices carry, so a send there and its echo are one row. Someone writing to an owned
 account in a oneOnOne chat is written as `dms.<member>`: the owner of the grant that is
-their account, else the roster entry declaring the email the chat lists for them. On an
-org account, a group chat whose topic is exactly an agent's name becomes that agent's room,
-under Slack's rule, and is let go when the account leaves it. A channel reaches only the
-grant that holds its one subscription, so channels are settled from the org account's own
-hourly listing instead: one named as the agent is adopted, and one the listing stops
-showing is let go.
+their account, else the roster entry declaring the email the chat lists for them. Teams is
+read on owned accounts alone (`readsTeams`): a shared Microsoft account is its mail and
+calendar, holds no Teams subscription, and hosts no room.
 
 The store merges `extra` as an RFC 7396 patch, so a connector writes only the key it
 learns — `{ mirrors: { dms: { sol: "D77" } } }` — and removes one by patching it to `null`.
@@ -561,8 +560,8 @@ the harness names each the way the log knows them, from the lines they wrote on 
 account. Main wires the port from boot, over the vault, so a workspace connected while it
 runs has its port already there.
 
-**The steering rooms.** On an org bot (`liquen connect slack bot` with no agent), a channel
-named exactly as a roster agent that owns no account is that agent's steering room. The
+**The steering rooms.** On the shared bot (a bot is always shared), a channel named exactly
+as a roster agent is that agent's steering room, whatever the agent owns elsewhere. The
 ingest adopts it the first time the bot is met there — any line in a public or private
 channel, Slack's own "joined" line the first of them (its `member_joined_channel` adopts
 nothing: Slack says the arrival twice at once, and one fact gets one trigger, as Teams

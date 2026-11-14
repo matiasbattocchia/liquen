@@ -1464,12 +1464,11 @@ Deno.test("the classifier reads the roster by email (§4): a profile email that 
   assertEquals(m.extra?.sender_email, "Sol@Acme.co");
 });
 
-Deno.test("a member's DM with an owned bot is recorded on the bot's row (§4): mirrors.dms, member → channel", async () => {
+Deno.test("a member's DM with the shared bot is recorded on the bot's row (§4): mirrors.dms, member → channel", async () => {
   const { names } = fakeNames({}, { "T1:U7": "sol@acme.co" });
   const bot: ConnectionRow = {
     service: "slack",
     address: "T1:UBOT",
-    agentId: "ventas",
     credentialKey: "slack:T1:org",
   };
   const written: ConnectionRow[] = [];
@@ -1513,14 +1512,24 @@ Deno.test("a member's DM with an owned bot is recorded on the bot's row (§4): m
     })),
   );
   assertEquals(written.length, 1);
-  // an org bot is no agent's: a DM with it is the world's, and nothing is recorded
-  delete bot.agentId;
-  delete bot.extra;
-  await handler(await im("D78", "hola"));
+  // a stranger's DM is the shared inbox's: nobody to record it for
+  await handler(
+    await signedReq(messageEvent({
+      authorizations: [{ user_id: "UBOT", is_bot: true }],
+      event: {
+        type: "message",
+        channel: "D79",
+        channel_type: "im",
+        user: "U9",
+        text: "hi",
+        ts: "1.4",
+      },
+    })),
+  );
   assertEquals(written.length, 1);
 });
 
-Deno.test("a channel named as an agent is its steering room on an org bot (§4): recorded once by id, released when the bot is out, said nowhere", async () => {
+Deno.test("a channel named as an agent is its steering room on the shared bot (§4), whatever the agent owns: recorded once by id, released when the bot is out, said nowhere", async () => {
   const { names } = fakeNames({
     "T1:C9": "ventas",
     "T1:C10": "ventas",
@@ -1547,7 +1556,6 @@ Deno.test("a channel named as an agent is its steering room on an org bot (§4):
         { agentId: "ventas", mind: "mind@ventas" },
         { agentId: "matias", mind: "mind@matias" },
       ]),
-    connections: () => Promise.resolve([{ service: "slack", address: "T1:UM", agentId: "matias" }]),
   };
   const { handler, published } = harness(SECRET, store, undefined, names);
   const asBot = (event: Record<string, unknown>) =>
@@ -1568,17 +1576,20 @@ Deno.test("a channel named as an agent is its steering room on an org bot (§4):
   assertEquals(published.map((e) => e.envelope.conversation.address), ["C9"]);
   bot.extra = { mirrors: { rooms: { ventas: "C9" } } };
 
-  // a second channel wearing the name, a room named for nobody, and one named for an agent
-  // with an account of its own (a person's) are left alone
+  // a second channel wearing the name and a room named for nobody are left alone
   await handler(await line("C10", "1.1"));
   await handler(await line("C1", "1.2"));
-  await handler(await line("C11", "1.25"));
   assertEquals(written.length, 1);
+
+  // one named for an agent with an account of its own is that agent's room all the same
+  await handler(await line("C11", "1.25"));
+  assertEquals(written[1].extra, { mirrors: { rooms: { matias: "C11" } } });
+  bot.extra = { mirrors: { rooms: { ventas: "C9", matias: "C11" } } };
 
   // the bot is removed from #ventas: the record is released, and nothing is said
   const before = published.length;
   await handler(await asBot({ type: "member_left_channel", user: "UBOT", channel: "C9" }));
-  assertEquals(written[1], {
+  assertEquals(written[2], {
     service: "slack",
     address: "T1:UBOT",
     extra: { mirrors: { rooms: { ventas: null } } },
@@ -1586,15 +1597,9 @@ Deno.test("a channel named as an agent is its steering room on an org bot (§4):
   assertEquals(published.length, before);
 
   // with the record gone, the next channel the bot is met in under the name is adopted
-  bot.extra = { mirrors: { rooms: {} } };
+  bot.extra = { mirrors: { rooms: { matias: "C11" } } };
   await handler(await line("C10", "1.3"));
-  assertEquals(written[2].extra, { mirrors: { rooms: { ventas: "C10" } } });
-
-  // an owned bot hosts no room
-  bot.agentId = "ventas";
-  bot.extra = {};
-  await handler(await asBot({ type: "member_joined_channel", user: "UBOT", channel: "C9" }));
-  assertEquals(written.length, 3);
+  assertEquals(written[3].extra, { mirrors: { rooms: { ventas: "C10" } } });
 });
 
 /** The org's connections map on a log of its own: two workspace rows of the app. */

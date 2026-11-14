@@ -75,7 +75,7 @@ Deno.test("telegram connect: a member's sign-in writes the vault, one owned row 
   assertEquals(h.published[0].envelope.sender?.address, "telegram-connect");
 });
 
-Deno.test("telegram connect: the org's account is owned by nobody and mirrors no mind", async () => {
+Deno.test("telegram connect: a shared account is owned by nobody and mirrors no mind", async () => {
   const h = harness({ principal: undefined });
   await connectTelegram(h.deps);
   assertEquals(h.vault[0].agentId, undefined);

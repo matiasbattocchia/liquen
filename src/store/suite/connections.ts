@@ -194,7 +194,7 @@ export function connectionsSuite(s: Substrate): void {
     }
   });
 
-  Deno.test("aliases: an org account's recorded rooms are its agents' steering rooms (§4)", async () => {
+  Deno.test("aliases: a shared account's recorded rooms are its agents' steering rooms (§4)", async () => {
     const store = await s.fresh();
     const log = await store.open();
     try {
@@ -210,7 +210,7 @@ export function connectionsSuite(s: Substrate): void {
           address: "t2",
           agentId: "sonar",
           extra: { mirrors: { rooms: { sonar: "sonar" } } },
-        }, // owned: a room is an org account's, and the agent's account leaves its rooms be
+        }, // owned: a room is a shared account's, and the agent's account leaves its rooms be
         { service: "sonar", address: "t3", extra: { mirrors: { rooms: { nobody: "x" } } } }, // names no roster entry
         { service: "slack", address: "T1:B1", extra: { mirrors: { rooms: { sonar: "C7" } } } },
       ]);
@@ -237,7 +237,7 @@ export function connectionsSuite(s: Substrate): void {
       await log.upsertConnections([
         { service: "slack", address: "T1:B1", extra: { mirrors: { rooms: { sonar: null } } } },
       ]);
-      // a revoked org account takes its room with it, as every derived surface goes
+      // a revoked shared account takes its room with it, as every derived surface goes
       await log.deleteConnections([{ service: "sonar", address: "t1" }]);
       assertEquals(await log.aliases(), []);
     } finally {

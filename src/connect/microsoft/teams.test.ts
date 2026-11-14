@@ -1088,7 +1088,7 @@ const DM_ORG = "19:4f0c2b1e_50150150@unq.gbl.spaces";
 const SELF = "19:8ea0e38b_8ea0e38b@unq.gbl.spaces";
 const GROUP = "19:0a1b2c3d4e5f@thread.v2";
 
-/** A second grant beside ana's: `agentId` absent ⇒ an org account. */
+/** A second grant beside ana's: `agentId` absent ⇒ a shared account. */
 async function grantFor(
   creds: Awaited<ReturnType<typeof openCredentials>>,
   key: string,
@@ -1178,7 +1178,7 @@ const told = (subId: string, chat: string, id: string) =>
     resource: `chats('${chat}')/messages('${id}')`,
   });
 
-Deno.test("teams surfaces: a principal's DM with an owned account is recorded on its row once, the member found by email or by grant; the owner's own lines, a group chat and an org account record nothing", async () => {
+Deno.test("teams surfaces: a principal's DM with an owned account is recorded on its row once, the member found by email or by grant; the owner's own lines, a group chat and a shared account record nothing", async () => {
   await withVault(async (creds) => {
     await withOrg(async ({ log, store, writes }) => {
       await grantFor(creds, BO_KEY, BO_OID, "bo", { [TEAMS_SUB]: sub(CHAT_RES, "sub-b") });
@@ -1249,7 +1249,7 @@ Deno.test("teams surfaces: a principal's DM with an owned account is recorded on
         extra: { mirrors: { dms: { bo: DM_BO } } },
       });
 
-      // a group chat is a room, never a DM; an org account's DMs are the world's
+      // a group chat is a room, never a DM; a shared account's DMs are the world's
       await handler(told("sub-a", GROUP, "5"));
       await handler(told("sub-o", DM_ORG, "6"));
       assertEquals(writes.length, 3);
@@ -1297,7 +1297,7 @@ Deno.test("teams surfaces: an owned account's chat with itself is its self-chat,
       const self = (await log.aliases()).find((a) => a.conversation === SELF);
       assertEquals(self?.agentId, "ana");
       assertEquals(self?.principal, "ana");
-      // an org account has no self-chat: nobody's mind is behind it
+      // a shared account has no self-chat: nobody's mind is behind it
       await handler(told("sub-o", ORG_SELF, "2"));
       assertEquals(writes.length, 1);
 
@@ -1333,17 +1333,11 @@ Deno.test("teams surfaces: an owned account's chat with itself is its self-chat,
   });
 });
 
-Deno.test("teams surfaces: a group chat named as an agent with no account is its steering room on an org account — recorded once by id, let go when the account is out, said nowhere", async () => {
+Deno.test("teams surfaces: a shared account's Teams is not read — a notice on a subscription it still holds is nobody's, and a chat named as an agent records nothing", async () => {
   await withVault(async (creds) => {
-    await withOrg(async ({ log, store, writes }) => {
+    await withOrg(async ({ store, writes }) => {
       await grantFor(creds, ORG_KEY, ORG_OID, undefined, { [TEAMS_SUB]: sub(CHAT_RES, "sub-o") });
-      await creds.put({ key: KEY, value: {}, extra: { [TEAMS_SUB]: sub(CHAT_RES, "sub-a") } });
-      const GROUP2 = "19:9f8e7d6c5b4a@thread.v2";
-      const GROUP_ANA = "19:a4a4a4a4a4a4@thread.v2";
-      const OWNED = "19:0e0e0e0e0e0e@thread.v2";
-      const org = { userId: ORG_OID };
       const sol = { userId: "u-sol", email: "sol@contoso.com" };
-      let inGroup = [org, sol];
       const { publish, rows } = captor();
       const handler = createTeamsWebhook({
         publish,
@@ -1352,73 +1346,18 @@ Deno.test("teams surfaces: a group chat named as an agent with no account is its
         store,
         save,
         fetchApi: graph({
-          [`/chats/${GROUP}`]: () =>
-            Response.json({ chatType: "group", topic: "ventas", members: inGroup }),
-          [`/chats/${GROUP}/messages/1`]: line(GROUP, "1", "u-sol"),
-          [`/chats/${GROUP}/messages/2`]: {
-            id: "2",
-            messageType: "systemEventMessage",
-            createdDateTime: "2026-09-23T11:02:00.000Z",
-            chatId: GROUP,
-            body: { contentType: "html", content: "<systemEventMessage/>" },
-            eventDetail: {
-              "@odata.type": "#microsoft.graph.membersDeletedEventMessageDetail",
-              members: [{ id: ORG_OID, displayName: "Org" }],
-              initiator: { user: { id: "u-sol", displayName: "Sol" } },
-            },
-          },
-          [`/chats/${GROUP2}`]: { chatType: "group", topic: "ventas", members: [org, sol] },
-          [`/chats/${GROUP2}/messages/3`]: line(GROUP2, "3", "u-sol"),
-          [`/chats/${GROUP2}/messages/4`]: line(GROUP2, "4", "u-sol"),
-          // ana owns an account: a chat wearing her name is a room like any other
-          [`/chats/${GROUP_ANA}`]: { chatType: "group", topic: "ana", members: [org, sol] },
-          [`/chats/${GROUP_ANA}/messages/5`]: line(GROUP_ANA, "5", "u-sol"),
-          // an owned account in a chat named as the agent hosts no room
-          [`/chats/${OWNED}`]: {
+          [`/chats/${GROUP}`]: {
             chatType: "group",
             topic: "ventas",
-            members: [{ userId: OID }, sol],
+            members: [{ userId: ORG_OID }, sol],
           },
-          [`/chats/${OWNED}/messages/6`]: line(OWNED, "6", "u-sol"),
+          [`/chats/${GROUP}/messages/1`]: line(GROUP, "1", "u-sol"),
         }),
         now: () => NOW,
       });
-
-      // a line in the org account's chat named "ventas": the room is recorded before the
-      // line lands, and nothing is said of it
       await handler(told("sub-o", GROUP, "1"));
-      assertEquals(writes, [{
-        service: "microsoft",
-        address: "org@contoso.com",
-        extra: { mirrors: { rooms: { ventas: GROUP } } },
-      }]);
-      assertEquals(rows.length, 1);
-      assertEquals(rows[0].envelope.conversation.address, GROUP);
-      const room = (await log.aliases()).find((a) => a.conversation === GROUP);
-      assertEquals(room?.agentId, "ventas");
-      assertEquals(room?.principal, undefined);
-
-      // a second chat wearing the name, one named for an agent with an account, and an
-      // owned account's chat are left alone
-      await handler(told("sub-o", GROUP2, "3"));
-      await handler(told("sub-o", GROUP_ANA, "5"));
-      await handler(told("sub-a", OWNED, "6"));
-      assertEquals(writes.length, 1);
-
-      // the org account is taken out: the room is let go; the room's own line is all
-      inGroup = [sol];
-      rows.length = 0;
-      await handler(told("sub-o", GROUP, "2"));
-      assertEquals(writes[1], {
-        service: "microsoft",
-        address: "org@contoso.com",
-        extra: { mirrors: { rooms: { ventas: null } } },
-      });
-      assertEquals(rows.map((r) => r.envelope.conversation.address), [GROUP]);
-
-      // with the record gone, the next chat wearing the name is adopted
-      await handler(told("sub-o", GROUP2, "4"));
-      assertEquals(writes[2].extra, { mirrors: { rooms: { ventas: GROUP2 } } });
+      assertEquals(rows.length, 0);
+      assertEquals(writes, []);
     });
   });
 });
@@ -1620,61 +1559,32 @@ Deno.test("teams keeper: a subscription inside its last day is renewed, an expir
   );
 });
 
-Deno.test("teams keeper: a channel named as an agent with no account is its steering room on an org account, adopted from the account's own listing and let go when the listing no longer shows it", async () => {
+Deno.test("teams keeper: a shared account holds no subscription; an owned one beside it is kept", async () => {
   await withVault(async (creds) => {
-    await withOrg(async ({ log, store, writes }) => {
-      await grantFor(creds, ORG_KEY, ORG_OID);
-      const VENTAS = "19:7e7e7e7e7e7e7e7e@thread.tacv2";
-      let channels = [
-        { id: CHANNEL, displayName: "General" },
-        { id: VENTAS, displayName: "ventas" },
-      ];
-      let clock = Date.parse(NOW);
-      let n = 0;
-      const { publish, rows } = captor();
-      const keeper = createTeamsKeeper({
-        creds,
-        broker: createGrantBroker({ creds }),
-        store,
-        publish,
-        notificationUrl: URL_,
-        fetchApi: graph({
-          "/me/joinedTeams": { value: [{ id: TEAM, displayName: "Sales" }] },
-          [`/teams/${TEAM}/channels`]: () => Response.json({ value: channels }),
-          "POST /subscriptions": () =>
-            Response.json({ id: `sub-${++n}`, expirationDateTime: "2026-09-26T11:50:00Z" }),
-        }),
-        now: () => new Date(clock).toISOString(),
-        onError: (_k, err) => {
-          throw err;
-        },
-      });
-
-      await keeper.tick();
-      // ana's account is hers and hosts no room: only the org's row is written
-      assertEquals(writes, [{
-        service: "microsoft",
-        address: "org@contoso.com",
-        extra: { mirrors: { rooms: { ventas: `${TEAM}/${VENTAS}` } } },
-      }]);
-      assertEquals(rows.length, 0);
-      const room = (await log.aliases()).find((a) => a.agentId === "ventas");
-      assertEquals(room?.conversation, `${TEAM}/${VENTAS}`);
-
-      // within the hour nothing is listed again; past it, the channel is gone
-      channels = [{ id: CHANNEL, displayName: "General" }];
-      await keeper.tick();
-      assertEquals(writes.length, 1);
-      clock += 3600_000;
-      await keeper.tick();
-      assertEquals(writes[1], {
-        service: "microsoft",
-        address: "org@contoso.com",
-        extra: { mirrors: { rooms: { ventas: null } } },
-      });
-      assertEquals(rows.length, 0);
-      assertEquals((await log.aliases()).find((a) => a.agentId === "ventas"), undefined);
+    await grantFor(creds, ORG_KEY, ORG_OID);
+    let n = 0;
+    const calls: Call[] = [];
+    const keeper = createTeamsKeeper({
+      creds,
+      broker: createGrantBroker({ creds }),
+      notificationUrl: URL_,
+      fetchApi: graph({
+        "/me/joinedTeams": { value: [] },
+        "POST /subscriptions": () =>
+          Response.json({ id: `sub-${++n}`, expirationDateTime: "2026-09-26T11:50:00Z" }),
+      }, calls),
+      now: () => NOW,
+      onError: (_k, err) => {
+        throw err;
+      },
     });
+    await keeper.tick();
+    assertEquals(Object.keys(subsOf(await creds.get(ORG_KEY))), []);
+    assertEquals(
+      Object.keys(subsOf(await creds.get(KEY))).sort(),
+      [CHAT_RES, chatsResource(OID)].sort(),
+    );
+    assert(!JSON.stringify(calls).includes(ORG_OID));
   });
 });
 

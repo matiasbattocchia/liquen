@@ -384,7 +384,7 @@ export interface RenderInput {
    *  principal but the agent itself. */
   roster?: Roster;
   /** The account behind each connection, by address: the name the service shows for it
-   *  (`extra.name` on the connection row — an org account's pushname, a workspace's
+   *  (`extra.name` on the connection row — a shared account's pushname, a workspace's
    *  title). Rides `<conn name>`, so the string the wire stamps on the account's own lines
    *  reads as the account and never as a person in the room. Absent ⇒ the address alone. */
   connections?: Record<string, string>;
@@ -2030,7 +2030,7 @@ export function renderHits(
  *  can spell. */
 /** The author attribute (§5): ONE attribute per line whose key says who among us wrote it
  *  and whose value is their name — never a name in one slot and a role in another, which
- *  read as two facts and let the louder one win (an org account's pushname on a
+ *  read as two facts and let the louder one win (a shared account's pushname on a
  *  principal's phone-typed line read as the account's owner speaking, not the principal).
  *
  *    `self`             this agent's own voice, any session of it (authorship, §3: `turn_id`)
