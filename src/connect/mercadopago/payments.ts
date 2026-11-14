@@ -36,7 +36,7 @@ import {
 import { SignedOut } from "../errors.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
-import type { Connections } from "../../store/connections.ts";
+import type { StateStore } from "../health.ts";
 import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import type { DataPart, Draft, MessageEvent } from "../../types.ts";
 import { SENDER_EMAIL } from "../../sender.ts";
@@ -226,7 +226,7 @@ export interface MercadopagoDeps {
   /** The vault: the grants (the tokens) and the cursor. */
   creds: Pick<Credentials, "get" | "put" | "list">;
   broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
-  store?: Pick<Connections, "connections" | "upsertConnections">;
+  store?: StateStore;
   /** Injectable for tests; defaults to global `fetch` against the API. */
   fetchApi?: typeof fetch;
   now?: () => string;

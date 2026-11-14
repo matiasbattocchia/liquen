@@ -13,10 +13,10 @@
  * a banned number is not connected either, and the ban is the truer word.
  */
 
-import type { ConnectionRow, Connections, ConnectionState } from "../../store/connections.ts";
+import type { ConnectionRow, ConnectionState } from "../../store/connections.ts";
 import { SERVICE } from "./ingest.ts";
 import { timedFetch } from "../http.ts";
-import { setState } from "../health.ts";
+import { setState, type StateStore } from "../health.ts";
 
 /** How often the bridge is asked after its sessions. */
 export const PROBE_MS = 30_000;
@@ -54,7 +54,7 @@ export function bridgeStatus(
 
 export interface BridgeProbeDeps {
   status: BridgeStatus;
-  store: Pick<Connections, "connections" | "upsertConnections">;
+  store: StateStore;
   now?: () => string;
   /** A round the bridge did not answer, and why. */
   onError?: (err: unknown) => void;

@@ -7031,6 +7031,49 @@ Open:
 - Nothing here has met a live workspace; turtle's app-level token needs
   `authorizations:read` added by hand.
 
+### An agent signs accounts in, and makes agents (2026-11-14) — LANDED
+
+The CHANGES batch of 14 Nov, all six items. The signed-out line was built beside the rest
+and merged in.
+
+- **Main holds every sign-in.** `connect/signin.ts` keeps one table in the vault
+  (`sign_ins`, both engines): a ticket per sign-in, at most one open per service and key,
+  the key being the account when it is known before the sign-in, else whom the grant is
+  for. Each link service's handler is served by main on its oauth socket while one of its
+  tickets is open, and takes a ticket instead of `?agent=`; WhatsApp's pairing and
+  GitHub's device flow run their polls in main, noting what a restart takes up. At boot
+  main lapses what ran out, serves the rest, and tells a call whose ticket is gone that
+  nothing more is coming.
+- **The judge.** A handler or a poll hands the vouched account to the ticket before it
+  writes: a reconnect lands only as its account, a grant for another agent only as the
+  email or phone on their row, and an account someone else owns, or a shared one asked
+  for as anyone's own, is never taken over. A reconnect goes through the app that made the
+  grant and asks the scopes it held; Google's and Microsoft's links preselect the account.
+- **The CLI runs main's door.** `connect google account`, `microsoft account`, `slack
+  user`, `whatsapp` and `github user`'s device flow ask main over `data/run/main.sock` and
+  print what it streams back. Leaving the CLI leaves the sign-in open, and the same command
+  finds it. The per-service app pickers gave way to one (`appOf`), which names the CLI's
+  `--app` when the vault holds several.
+- **The tools.** `connect({service, account?, for?})` joins the default offer, gated
+  `ask`; its answer is the link or the code, and the outcome is the call's update, final.
+  `agent({id, name?, email?, phone?})` makes an agent and brings it up, gated `ask` and
+  offered only where an agent's `tools` names it; an id that exists is refused.
+- **A sign-out says so.** An owned row that moves to `signed_out` writes one alarm into its
+  owner's mind (`signedOutLine`, health.ts), including the WhatsApp session route that
+  writes the state itself. It waits out the night and the digest as world lines do, and
+  names `connect` only to an agent offered it.
+
+Open:
+
+- Nothing has met a live sign-in: a Google reconnect of a grant refused as `invalid_grant`
+  is the first to try, through the tool and through the CLI.
+- WhatsApp through the tool needs the service declared: a pairing asked of an org that has
+  never paired is refused, naming the CLI door, since declaring it would restart main.
+- The mirror, the REPL, export, tail and turns show the signed-out line as a plain alarm.
+- An org's own connectors keep their one-shot doors (`oneShot`, `serveDoor`), outside
+  main's table.
+- An org whose `config.yaml` pins `tools` offers `connect` only once it is added there.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

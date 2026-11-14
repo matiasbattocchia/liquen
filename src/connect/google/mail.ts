@@ -71,7 +71,7 @@ import {
 import { DispatchError } from "../errors.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
-import type { Connections } from "../../store/connections.ts";
+import type { StateStore } from "../health.ts";
 import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import { entry } from "../../entry.ts";
 import type { RoomView } from "../../types.ts";
@@ -150,7 +150,7 @@ export interface GmailDeps {
   creds: Pick<Credentials, "get" | "put" | "list">;
   /** A live access token for a grant key, reusing the proxy's refresh machinery. */
   broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
-  store?: Pick<Connections, "connections" | "upsertConnections">;
+  store?: StateStore;
   /** Where attachments land. */
   save: SaveFile;
   /** Injectable for tests; defaults to global `fetch` against the Gmail API. */

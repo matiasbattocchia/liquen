@@ -174,7 +174,8 @@ a room the agent is a bystander in, and waking on each is a full turn per line o
 else's conversation. What is genuinely said TO the agent arrives in its mind session,
 through the mirror's fan-in (§4), or in a room of the org's own, which a member opened with
 the agent in it: nothing local is the world talking around it, so a peer's word wakes it
-at once, the night included. The rest is the world, and the world waits. An **engaged** conversation wakes immediately too, and
+at once, the night included. An owned account's sign-out (§5) lands in the mind room yet
+is the world's news, so only the night and the digest govern it. The rest is the world, and the world waits. An **engaged** conversation wakes immediately too, and
 engagement is **holding the floor**: the last thing our complex said there was the agent's
 own voice (`ownVoice` — the `turn_id` discriminator, §3) and it is younger than
 `engagedMinutes`. Every reply refreshes the clock (ping-pong), silence lets it decay — and
@@ -805,7 +806,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; `<permission_response re verdict>` in the session room — the ask itself draws nothing, its `pending_approval` result carries the handle | act on an allow; think on the principal's deny; a lapse wakes nobody | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
 | `summary` | nu, in the idle gap after a turn, or inside a turn that ran away (§5) | leading text block (§5) | look again (idle, the think a dead turn left owed, or the running turn's next step) | parts(text) · payload{covers, running?} |
-| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) · xi, raising an unload in the idle gap (§5) | `<system kind="alarm">` carrying the note; an unload's `<system kind="unload" since="…">` | **think** — news that wakes NOW (past the digest, past `sleepHours`) | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} · extra{timer} or extra{unload: {since, through}} |
+| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) · xi, raising an unload in the idle gap (§5) · a connector, when an owned account signs out (§5) | `<system kind="alarm">` carrying the note; an unload's `<system kind="unload" since="…">`; a sign-out's `<system kind="signed_out" since="…">` | **think** — news that wakes NOW (past the digest, past `sleepHours`); a sign-out waits as the world's lines do | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} · extra{timer}, extra{unload: {since, through}} or extra{signed_out: {service, address}} |
 | `error` | nu · xi · the checkpoint · the mirror | **system** + Stream | ignore | parts(data:{error}) · extra{consumed} — what a failed request read (the model's, a checkpoint's) · payload{ref_id} — the call a word is said of, or the line that settled no card |
 | `delta` | main (presence, §9): the mind has started a kind of work | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
 | `anchor` | nu, with a step's first row, when the state moved since the last (§5) | `mid_conv_system` where its step read it: the sections that moved; crosses to no surface | ignore | parts(text, kind anchor: `now:` and the ambient lines) · payload{turn_id} |
@@ -1304,8 +1305,21 @@ The 3×2 grid, each cell real and distinct:
   Docker the files are broker-owned.
   Connecting is **interactive, dev-shaped** — `gh login` / `claude login` is the pattern
   devs expect (Claude-Code MCP logins likewise): a `liquen connect <service>` flow writes the
-  connection row + vault rows; the same flow is later steerable through the agent (§8
-  conversational setup), since the REPL into the mind is already the operator console.
+  connection row + vault rows.
+  **Every sign-in is main's** (`src/connect/signin.ts`), asked for at the terminal or by an
+  agent. A CLI door asks over main's socket and says what main streams back; the `connect`
+  tool asks from a turn, gated `ask`, and answers at once with the link or the code, the
+  outcome arriving later as the call's update, final. Both reach one table: a ticket in
+  the vault per sign-in, keyed by service and by who signs in (the account when it is known
+  before, else whom the grant is for), so two asks share one sign-in. A link service's
+  handler is served by main while one of its tickets is open, and a code service's poll
+  runs there, noting on the ticket what a restart needs. The handler hands the account the
+  service vouched for to the ticket before anything is written: a reconnect lands only as
+  its account, a grant for another agent only as the handle on their row, and nobody's
+  account changes owner. The link carries the ticket's id alone, so whom it binds is the
+  ticket's, never the link's. With the `agent` tool beside it, offered only where an
+  agent's `tools` names it, one agent provisions another: the agent made with a member's
+  email, then a sign-in for it sent to that member.
   **The two Slack doors (`liquen connect slack {app,user}`, `connect/slack/connect.ts`)**: the dashboard's
   "Install to Workspace" button IS an OAuth flow with Slack hosting the redirect, so a
   dev self-serves tokens with zero public surface — `app` is one sitting at the console:
@@ -1315,12 +1329,11 @@ The 3×2 grid, each cell real and distinct:
   (`slack:socket:<app id>`), and with `--bot`/`--user` the tokens the install issued
   (`slack:<team>:org`, the dev's own leg). `auth.test` resolves the workspace (a token
   string never identifies one) before the map writes. A paste serves whoever is at the
-  terminal; `user` serves a member who is not, through the OAuth handler mounted for one
-  sign-in at the org's public door (`<edge.publicUrl>/slack/oauth/callback`, which the
-  manifest registers) — the link carries the agent
-  name the way Google's does, Slack's verified `authed_user.id` is what the terminal
-  reports against it, and the grant lands through the same `landSlackUser` a paste lands
-  through. Only user scopes are asked there: the bot is the org's, from the install. Facts
+  terminal; `user` serves a member who is not, through main's sign-in door at the org's
+  public address (`<edge.publicUrl>/slack/oauth/callback`, which the manifest registers) —
+  the ticket names the agent as Google's does, Slack's verified `authed_user.id` is what
+  the terminal reports against it, and the grant lands through the same `landSlackUser` a
+  paste lands through. Only user scopes are asked there: the bot is the org's, from the install. Facts
   that shaped it: one app × workspace = ONE bot (reinstall rotates the token, never a
   second bot; more bots ⇒ more apps — per-agent apps named after the agent), multiple
   apps coexist under ONE anchor row (per-bot identity lives in the vault, and the
@@ -1916,7 +1929,10 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   itself; a round it answers writes the bridge's word, `signed_out` for a session it does
   not hold), `suspended` (WhatsApp barred the number for a while). A send the service
   refused as signed out (`SignedOut`) marks the account too, and the next one that lands
-  marks it back. Over all of them stands `connector_down`, which no row stores: a running
+  marks it back. An owned row's move to `signed_out` also writes one line into its owner's
+  mind, `<system kind="signed_out" since="…">google ana@example.com is signed out</system>`,
+  which names `connect` only to an agent offered it and waits out sleep hours as the world's
+  lines do; a shared row's sign-out is the down line alone. Over all of them stands `connector_down`, which no row stores: a running
   connector stamps `extra.heard_at` on its rows every 30s, and a row unstamped for two
   minutes reads as its connector stopped, since the last stamp — the supervisor never
   opens the log and a dead process says nothing, so the silence is the signal. A row its
@@ -3857,9 +3873,9 @@ loudly, the same law as an unknown config key.
   reads on.
 - **One port, and the connectors listen where they live.** The org binds one port,
   `edge.port`, and nothing else: every connector serves its ingest on a Unix socket under
-  the org's own folder, `data/run/<service>.sock`, and a sign-in door on
-  `data/run/<service>-oauth.sock` while it is open (`socketOf`, src/edge.ts; `serveIngest`,
-  src/connect/serve.ts). The location is the whole address, so a connector declares
+  the org's own folder, `data/run/<service>.sock`, and main serves a sign-in door on
+  `data/run/<service>-oauth.sock` while one of its sign-ins is open (`socketOf`,
+  src/edge.ts; `serveIngest`, src/connect/serve.ts). The location is the whole address, so a connector declares
   nothing to be reachable, two orgs on one machine never meet, and a socket somebody
   already answers on is refused rather than stolen. Whatever dials the org on this host —
   a browser here, the whatsmeow bridge, `gh webhook forward` — dials the edge,

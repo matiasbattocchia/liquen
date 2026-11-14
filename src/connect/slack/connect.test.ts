@@ -13,13 +13,13 @@ import {
 } from "@std/assert";
 import { missingScopes } from "./config.ts";
 import {
+  APP_PREFIX,
   appIdOf,
   connectSlackApp,
   connectSlackBot,
   connectSlackSocket,
   connectSlackUser,
   manifestUrl,
-  pickSlackApp,
   slackDoor,
   slackHave,
   slackNext,
@@ -31,6 +31,7 @@ import type { CredentialRow } from "../../store/credentials.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Draft, Event } from "../../types.ts";
 import { newId } from "../../store/id.ts";
+import { appOf } from "../signin.ts";
 
 const LINKED_AT = "2026-10-20T00:00:00.000Z";
 /** What a door writes on the row it links: up, no reason left standing. */
@@ -249,13 +250,14 @@ Deno.test("app door: the client lands under its own id; pick = only one, or by i
     get: (k: string) => Promise.resolve(rows.get(k) ?? null),
     list: (p: string) => Promise.resolve([...rows.values()].filter((r) => r.key.startsWith(p))),
   };
-  await assertRejects(() => pickSlackApp(creds), Error, "liquen connect slack app");
+  const pick = (named?: string) => appOf(creds, APP_PREFIX, "liquen connect slack user", named);
+  await assertRejects(() => pick(), Error, "liquen connect slack app");
   const key = await connectSlackApp({ clientId: "123.456", clientSecret: "sec" }, creds);
   assertEquals(key, "slack:app:123.456");
-  assertEquals((await pickSlackApp(creds)).value.client_id, "123.456");
-  assertEquals((await pickSlackApp(creds, "123.456")).value.client_secret, "sec");
+  assertEquals((await pick()).value.client_id, "123.456");
+  assertEquals((await pick("123.456")).value.client_secret, "sec");
   await connectSlackApp({ clientId: "789.000", clientSecret: "sec2" }, creds);
-  await assertRejects(() => pickSlackApp(creds), Error, "--app"); // several ⇒ pick explicitly
+  await assertRejects(() => pick(), Error, "--app"); // several ⇒ pick explicitly
 });
 
 Deno.test("connect: a paste short of the ask is stored, and says what it cannot do", async () => {

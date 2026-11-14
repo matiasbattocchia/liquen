@@ -388,6 +388,9 @@ export interface RenderInput {
    *  title). Rides `<conn name>`, so the string the wire stamps on the account's own lines
    *  reads as the account and never as a person in the room. Absent ⇒ the address alone. */
   connections?: Record<string, string>;
+  /** The tools the request offers, by name: a harness line names a tool only to an agent
+   *  that holds it (`<system kind="signed_out">`). Absent ⇒ none. */
+  offered?: ReadonlySet<string>;
   /** The checkpoint budget (§5), and the cap on what one WUM of world lines may weigh.
    *  Absent ⇒ the catalog's. */
   compactAt?: number;
@@ -1164,6 +1167,7 @@ function renderMessages(
     media,
     roster,
     connections,
+    offered,
     compactAt = DEFAULT_COMPACT_AT,
     before: pool,
   }: RenderInput,
@@ -1482,7 +1486,7 @@ function renderMessages(
       // nothing failed: it was stopped. A tool it cut welds above it, its result included
       place("user", { type: "text", text: systemEl("control", CANCELLED) });
     } else if (e.type === "alarm") {
-      place("user", { type: "text", text: alarmLine(e) });
+      place("user", { type: "text", text: alarmLine(e, zone, offered) });
     } else if (e.type === "permission_response") {
       if (e.envelope.conversation.address === here) {
         place("user", { type: "text", text: permissionEl(e, who, zone) });
@@ -2381,9 +2385,10 @@ function checkpointEl(e: SummaryEvent, window: Event[]): string {
 /** The harness's own word to the model — an element, and its body escaped, so the tag is
  *  render's to write and nobody else's: a peer who types one into a message renders it as
  *  text, since every world body is escaped on the way in. `kind` is the type of the event
- *  it renders, so the four read apart without the sentence having to announce itself. */
+ *  it renders, or what a harness alarm is for (`unload`, `signed_out`), so they read apart
+ *  without the sentence having to announce itself. */
 function systemEl(
-  kind: "error" | "control" | "alarm" | "unload" | "tool_result",
+  kind: "error" | "control" | "alarm" | "unload" | "signed_out" | "tool_result",
   text: string,
   flags: string[] = [],
 ): string {
@@ -2639,11 +2644,28 @@ export function errorTextOf(e: HarnessErrorEvent): string {
 /** A fired wake (§10), as the agent reads it: its own note handed back at the moment it
  *  asked for. `<system>` because the harness is the one speaking — the note is quoted, not
  *  ventriloquized as the principal. No room to name: an alarm fires in the session that
- *  armed it, which is the session reading it. */
-function alarmLine(e: AlarmEvent): string {
+ *  armed it, which is the session reading it. A sign-out names `connect` only to an agent
+ *  the request offers it. */
+function alarmLine(e: AlarmEvent, zone?: string, offered?: ReadonlySet<string>): string {
   const span = unloadOf(e);
   if (span) return systemEl("unload", "", [`since="${shortId(span.since)}"`]);
-  return systemEl("alarm", e.parts[0]?.text ?? "");
+  const text = e.parts[0]?.text ?? "";
+  if (signedOutOf(e)) {
+    const again = offered?.has("connect") ? "; connect signs it in again" : "";
+    return systemEl("signed_out", `${text}${again}`, [`since="${hhmm(e.ts, zone)}"`]);
+  }
+  return systemEl("alarm", text);
+}
+
+/** The account an owned sign-out names (connect/health.ts `signedOutLine`): an alarm the
+ *  harness raises in the owner's mind when the row moves to `signed_out`. Undefined for
+ *  any other row. */
+export function signedOutOf(e: Event): { service: string; address: string } | undefined {
+  if (e.type !== "alarm") return undefined;
+  const s = e.extra?.signed_out as { service?: unknown; address?: unknown } | undefined;
+  return typeof s?.service === "string" && typeof s.address === "string"
+    ? { service: s.service, address: s.address }
+    : undefined;
 }
 
 /** The span an unload notice covers (unload.ts): an alarm the harness raises for itself,

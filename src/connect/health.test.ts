@@ -42,6 +42,52 @@ Deno.test("setState: stamps the moment a row moves, never again while it stays",
   });
 });
 
+/** What the owner `ana` has been told in her mind. */
+const toldAna = async (log: Log) =>
+  (await log.read({ conversation: "mind@ana", types: ["alarm"] })).map((e) => ({
+    ts: e.ts,
+    service: e.envelope.service as string,
+    extra: e.extra,
+    text: e.type === "alarm" ? e.parts[0].text : undefined,
+  }));
+
+Deno.test("setState: an owned row's move to signed_out tells its owner once, in her mind", async () => {
+  await withLog(async (log) => {
+    const row = { service: "google", address: "ana@x.io" };
+    await log.upsertConnections([{ ...row, agentId: "ana", extra: { state: "connected" } }]);
+    const T1 = "2026-11-14T14:02:00.000Z";
+    assertEquals(await setState(log, row, "signed_out", { error: "invalid_grant", now: T1 }), true);
+    const line = {
+      ts: T1,
+      service: "local",
+      extra: { signed_out: { service: "google", address: "ana@x.io" } },
+      text: "google ana@x.io is signed out",
+    };
+    assertEquals(await toldAna(log), [line]);
+    // a restart into the same state, a new reason included, says nothing more
+    await setState(log, row, "signed_out", { error: "invalid_grant", now: "2026-11-14T15:00Z" });
+    await setState(log, row, "signed_out", { error: "revoked", now: "2026-11-14T15:01Z" });
+    assertEquals(await toldAna(log), [line]);
+    // back, and failing: the grant note and the down line are the news, not her mind
+    await setState(log, row, "connected", { now: "2026-11-14T16:00:00.000Z" });
+    await setState(log, row, "failing", { error: "503", now: "2026-11-14T17:00:00.000Z" });
+    assertEquals(await toldAna(log), [line]);
+    // a later sign-out is a move of its own
+    const T2 = "2026-11-14T18:00:00.000Z";
+    await setState(log, row, "signed_out", { now: T2 });
+    assertEquals((await toldAna(log)).map((l) => l.ts), [T1, T2]);
+  });
+});
+
+Deno.test("setState: a shared row's sign-out tells no mind; the anchor's down line says it", async () => {
+  await withLog(async (log) => {
+    const row = { service: "slack", address: "T1" };
+    await log.upsertConnections([{ ...row, extra: { state: "connected" } }]);
+    assertEquals(await setState(log, row, "signed_out", { now: "2026-11-14T14:02:00.000Z" }), true);
+    assertEquals(await log.read({ types: ["alarm"] }), []);
+  });
+});
+
 Deno.test("setState: a removed connection stays removed — no state revives it", async () => {
   await withLog(async (log) => {
     const row = { service: "whatsapp", address: "549" };

@@ -2,18 +2,18 @@
  * connect/microsoft/oauth.ts — the Entra OAuth surface of the connection (DESIGN §4, §9).
  *
  * Google's twin (connect/google/oauth.ts): two routes, one portable handler
- * (`(Request) => Response`, deps injected), served by a door for the length of one sign-in.
+ * (`(Request) => Response`, deps injected), served by main while a Microsoft ticket is open.
  *
- *   GET /start     mint a one-time `state` → 302 to the tenant's authorize endpoint. The
- *                  link is minted PER MEMBER: `?agent=<name>` rides into the state, and
- *                  the callback binds the grant to that member. No `agent` ⇒ an
- *                  ownerless grant: the org's shared account (§6). `?scopes=` overrides
- *                  the default ask; Entra records consent per permission, so a later ask
- *                  for Mail adds to what the member already granted.
+ *   GET /start     `?ticket=` names an open sign-in (connect/signin.ts): mint a one-time
+ *                  `state` pointing at it → 302 to the tenant's authorize endpoint, asking
+ *                  the ticket's scopes. Entra records consent per permission, so a later
+ *                  ask for Mail adds to what the member already granted. A reconnect's
+ *                  link preselects its account (`login_hint`).
  *   GET /callback  verify state (one-time, TTL) → exchange the code → read the member's
  *                  verified identity from the `id_token` (Entra signed it and handed it
- *                  over TLS — decoded, not re-verified) → write the map:
- *                    connections: `(microsoft, <upn>)`, `agent_id` from the state,
+ *                  over TLS — decoded, not re-verified) → the ticket judges the account
+ *                  and names whom it binds to → write the map:
+ *                    connections: `(microsoft, <upn>)`, `agent_id` from the ticket,
  *                                 `credential_key` → the vault row below
  *                    vault:       `microsoft:<upn>` — `refresh_token` (the grant) +
  *                                 `access_token`; scopes/oid/tid/expiry in `extra`
@@ -31,20 +31,21 @@
  * so whatever fronts them must carry a redirect.
  */
 
-import { DEFAULT_SCOPES, GRANT_ENV, GRANT_HOSTS } from "./config.ts";
+import { GRANT_ENV, GRANT_HOSTS } from "./config.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
-import type { Credentials } from "../../store/credentials.ts";
+import type { Credentials, TicketRow } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { timedFetch } from "../http.ts";
 import { linked } from "../health.ts";
+import type { Gate } from "../signin.ts";
+import { askedOf, callbackTicket, page, startTicket } from "../door.ts";
 
 export interface MicrosoftOAuthConfig {
   clientId: string;
   clientSecret: string;
   tenant: string;
   redirectUri: string; // must exactly match a redirect URI registered on the app
-  scopes?: string[]; // the default ask when /start names none
 }
 
 /** The token endpoint's answer — the fields this door reads (the wire carries more). */
@@ -59,7 +60,10 @@ export interface MicrosoftTokens {
 }
 
 export interface MicrosoftOAuthDeps {
-  config: MicrosoftOAuthConfig;
+  /** The app registration a ticket signs in through, and the redirect it registered. */
+  config: (ticket: TicketRow) => Promise<MicrosoftOAuthConfig>;
+  /** The sign-in the ticket is (connect/signin.ts): judged, then told. */
+  gate: Gate;
   creds: Pick<Credentials, "put" | "mintState" | "consumeState">;
   /** → the EventLog: the grant notification crosses the frontier as an event (§4). */
   publish: Appender["publish"];
@@ -67,9 +71,6 @@ export interface MicrosoftOAuthDeps {
   store: Pick<Connections, "upsertConnections" | "upsertMemberships">;
   /** The code exchange — injectable for tests; default POSTs the tenant's token endpoint. */
   exchange?: (code: string, config: MicrosoftOAuthConfig) => Promise<MicrosoftTokens>;
-  /** Called once the grant is written, before the page returns: a door that has a
-   *  terminal in front of it (the account verb) reports the shortfall there and then. */
-  onGrant?: (grant: { upn: string; agent?: string; missing: string[] }) => void;
   now?: () => string;
 }
 
@@ -85,58 +86,57 @@ function authorizeEndpoint(tenant: string): string {
 
 /** Build the two-route handler. Pure over its deps — serve it anywhere synchronous. */
 export function createMicrosoftOAuth(deps: MicrosoftOAuthDeps): OAuthHandler {
-  const { config } = deps;
   const exchange = deps.exchange ?? defaultExchange;
   const now = deps.now ?? (() => new Date().toISOString());
 
   return async (req) => {
     const url = new URL(req.url);
-    if (req.method !== "GET") return text(405, "method not allowed");
+    if (req.method !== "GET") return page(405, "method not allowed");
 
     if (url.pathname.endsWith("/start")) {
-      const agent = url.searchParams.get("agent");
-      const scopes = url.searchParams.get("scopes")?.split(/[ ,]+/).filter(Boolean) ??
-        config.scopes ?? DEFAULT_SCOPES;
-      const state = await deps.creds.mintState("microsoft", {
-        ...(agent ? { agent } : {}),
-        scopes,
-      });
+      const t = await startTicket(url, deps.gate);
+      if (t instanceof Response) return t;
+      const config = await deps.config(t);
+      const state = await deps.creds.mintState("microsoft", { ticket: t.ticket });
       const auth = new URL(authorizeEndpoint(config.tenant));
       auth.searchParams.set("client_id", config.clientId);
       auth.searchParams.set("redirect_uri", config.redirectUri);
       auth.searchParams.set("response_type", "code");
       auth.searchParams.set("response_mode", "query");
-      auth.searchParams.set("scope", scopes.join(" "));
-      // a browser signed in to several accounts picks, rather than the link binding a
-      // grant meant for one member to whichever account happened to be first
-      auth.searchParams.set("prompt", "select_account");
+      auth.searchParams.set("scope", askedOf(t).join(" "));
+      if (typeof t.extra.account === "string") {
+        auth.searchParams.set("login_hint", t.extra.account);
+      } else {
+        // a browser signed in to several accounts picks, rather than the link binding a
+        // grant meant for one member to whichever account happened to be first
+        auth.searchParams.set("prompt", "select_account");
+      }
       auth.searchParams.set("state", state);
       return new Response(null, { status: 302, headers: { location: auth.href } });
     }
 
     if (url.pathname.endsWith("/callback")) {
-      const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state");
-      if (!code || !state) {
-        // Entra reports a refused consent on the callback itself, in the query
-        const why = url.searchParams.get("error_description") ?? url.searchParams.get("error");
-        return text(400, why ?? "missing code/state");
-      }
-      // one-time, TTL'd — a replayed or forged callback dies here (§9 boundary check)
-      const bound = await deps.creds.consumeState("microsoft", state);
-      if (bound === null) return text(400, "bad state");
+      // Entra reports a refused consent on the callback itself, in the query
+      const at = await callbackTicket(url, "microsoft", deps.creds, deps.gate);
+      if (at instanceof Response) return at;
+      const { ticket: t, code } = at;
+      const config = await deps.config(t);
       const tok = await exchange(code, config);
       if (tok.error || !tok.access_token) {
-        return text(502, `exchange failed: ${tok.error_description ?? tok.error ?? "no token"}`);
+        const why = `the exchange failed: ${tok.error_description ?? tok.error ?? "no token"}`;
+        await deps.gate.failed(t.ticket, why);
+        return page(502, why);
       }
       const id = claimsOf(tok.id_token);
-      if (!id?.preferred_username) return text(502, "exchange carried no identity");
+      if (!id?.preferred_username) {
+        await deps.gate.failed(t.ticket, "the exchange carried no identity");
+        return page(502, "exchange carried no identity");
+      }
       const upn = id.preferred_username;
-      const agent = typeof bound.agent === "string" ? bound.agent : undefined;
-      const asked = Array.isArray(bound.scopes)
-        ? bound.scopes.filter((s): s is string => typeof s === "string")
-        : [];
-      const missing = missingScopes(asked, tok.scope);
+      const verdict = await deps.gate.judge(t.ticket, { address: upn, email: upn });
+      if ("refused" in verdict) return page(403, verdict.refused);
+      const { agent } = verdict;
+      const missing = missingScopes(askedOf(t), tok.scope);
 
       const credentialKey = `microsoft:${upn}`;
       await deps.creds.put({
@@ -194,19 +194,19 @@ export function createMicrosoftOAuth(deps: MicrosoftOAuthDeps): OAuthHandler {
         }],
       };
       await deps.publish(note);
-      deps.onGrant?.({ upn, ...(agent ? { agent } : {}), missing });
-      return new Response(
+      await deps.gate.landed(t.ticket, upn, missing);
+      return page(
+        200,
         missing.length
           ? `Connected as ${upn}, but these permissions were not granted:\n` +
             `  ${missing.join("\n  ")}\n\n` +
             `Approve them on the consent screen and connect again — consent adds up, so ` +
             `they merge into this grant.`
           : "✓ Connected. You can close this window.",
-        { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } },
       );
     }
 
-    return text(404, "not found");
+    return page(404, "not found");
   };
 }
 
@@ -268,8 +268,4 @@ async function defaultExchange(code: string, c: MicrosoftOAuthConfig): Promise<M
     }),
   });
   return await res.json() as MicrosoftTokens;
-}
-
-function text(status: number, message: string): Response {
-  return new Response(message, { status, headers: { "content-type": "text/plain" } });
 }

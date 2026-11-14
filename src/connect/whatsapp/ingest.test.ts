@@ -1175,6 +1175,34 @@ Deno.test("sessions/events: a drop, a logout and a ban record the map's words, s
   assertEquals(upserts[2].extra?.state, "suspended");
 });
 
+Deno.test("sessions/events: an owned number's logout tells its owner once; a shared one's tells nobody", async () => {
+  const logout = { event: "logged_out", organization_id: "org-1", address: "5491100000000" };
+  const owned = {
+    service: "whatsapp",
+    address: "5491100000000",
+    agentId: "matias",
+    extra: { state: "connected" },
+  };
+  const { store } = fakeStore(owned);
+  const { handler, published } = harness({ store, now: () => "2026-11-14T14:02:00.000Z" });
+  await handler(post("/whatsapp-web-management/sessions/events", logout));
+  assertEquals(published.map((e) => [e.type, e.ts, e.envelope.conversation.address]), [
+    ["alarm", "2026-11-14T14:02:00.000Z", "mind@matias"],
+  ]);
+  assertEquals(published[0].extra, {
+    signed_out: { service: "whatsapp", address: "5491100000000" },
+  });
+  // the row as stored already says it: the word again tells nothing more
+  const out = fakeStore({ ...owned, extra: { state: "signed_out" } });
+  const again = harness({ store: out.store });
+  await again.handler(post("/whatsapp-web-management/sessions/events", logout));
+  assertEquals(again.published, []);
+  const shared = fakeStore({ ...owned, agentId: undefined });
+  const org = harness({ store: shared.store });
+  await org.handler(post("/whatsapp-web-management/sessions/events", logout));
+  assertEquals(org.published, []);
+});
+
 Deno.test("sessions/events: a word the row already says keeps its stamp; an unknown one is refused", async () => {
   const row = {
     service: "whatsapp",

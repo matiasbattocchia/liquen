@@ -61,11 +61,13 @@ export const DEFAULT_MODEL = "claude-sonnet-5";
 export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + tools + text
 // the default deployment's whole offer: the four built-ins plus the exec plane's bash.
 // A name added at runtime (an MCP server's tools) joins the offer by being listed here.
-export const DEFAULT_TOOLS = ["search", "cancel", "bash"];
+export const DEFAULT_TOOLS = ["search", "cancel", "bash", "connect"];
 export const DEFAULT_RULES: Rule[] = [
   { tool: "send", service: "local", action: "allow" }, // a word to a peer stays in the org
   { tool: "send", action: "ask" }, // dispatch leaves the org, in the principal's name
   { tool: "contact", action: "ask" }, // writes the principal's own address book
+  { tool: "connect", action: "ask" }, // hands out a sign-in to an account
+  { tool: "agent", action: "ask" }, // makes an agent, which runs and spends
   { tool: "*", action: "allow" },
 ];
 // attention (§2). The baseline is that every message deserves a reaction; these four knobs
@@ -464,9 +466,10 @@ const AGENT: Entry[] = [
       'alike; null ⇒ every tool the deployment has. Add "send" where the agent has peers ' +
       "or a world to write to — a reply to its own principal is its plain answer, never a " +
       'call — "conversation" where it has peers and may open rooms with them, or an ' +
-      'account on a wire whose rooms it may change, and "contact" where an account keeps ' +
-      "an address book the agent may write. With docs: database, read · write · edit are " +
-      "offered whatever this says: they are the agent's one way to its docs",
+      'account on a wire whose rooms it may change, "contact" where an account keeps an ' +
+      'address book the agent may write, and "agent" where it may make agents. "connect" ' +
+      "hands out sign-ins, its own principal's or a member's. With docs: database, read · " +
+      "write · edit are offered whatever this says: they are the agent's one way to its docs",
   },
   {
     key: "rules",

@@ -4,18 +4,16 @@
  * Two routes, one portable handler (`(Request) => Response`, deps injected — the same
  * shape as connect/slack/oauth.ts):
  *
- *   GET /start     mint a one-time `state` → 302 to Google's consent screen. Unlike the
- *                  Slack door (a shared admin link; Slack verifies who clicked), this
- *                  link is minted PER MEMBER: `?agent=<name>` rides into the state, and
- *                  the callback binds the grant to that member. No `agent` ⇒ an
- *                  ownerless grant: the org's shared account (§6).
- *                  `?scopes=` (space-separated) overrides the default ask — consent is
- *                  INCREMENTAL (`include_granted_scopes`): a later ask for Drive merges
- *                  into the same grant, so the first ask stays as small as calendar.
+ *   GET /start     `?ticket=` names an open sign-in (connect/signin.ts): mint a one-time
+ *                  `state` pointing at it → 302 to Google's consent screen, asking the
+ *                  ticket's scopes. Consent is INCREMENTAL (`include_granted_scopes`): a
+ *                  later ask for Drive merges into the same grant. A reconnect's link
+ *                  preselects its account (`login_hint`).
  *   GET /callback  verify state (one-time, TTL) → exchange the code → read the member's
  *                  verified identity from the `id_token` (Google signed it and handed it
- *                  over TLS — decoded, not re-verified) → write the map:
- *                    connections: `(google, <email>)`, `agent_id` from the state,
+ *                  over TLS — decoded, not re-verified) → the ticket judges the account
+ *                  and names whom it binds to → write the map:
+ *                    connections: `(google, <email>)`, `agent_id` from the ticket,
  *                                 `credential_key` → the vault row below
  *                    vault:       `google:<email>` — `refresh_token` (the grant) +
  *                                 `access_token`; scopes/sub/expiry in `extra`
@@ -27,26 +25,26 @@
  * doesn't carry. The refresh token never leaves the vault: consumers ask the broker for
  * short-lived access tokens (the credential stays broker-side, §9).
  *
- * Nothing serves these routes standing: a door serves them for the length of one sign-in
- * (`liquen connect google account`). The redirect URI is the one the door hands in
- * (`redirectUri`: the org's `callbackAddress`, connect.ts), sent verbatim, so the browser
- * Google redirects reaches the same door the link started at. Both routes are SYNCHRONOUS
- * request/response (a 302, a page), so whatever fronts them must carry a redirect.
+ * Main serves these routes while a Google ticket is open. The app is the ticket's
+ * (`config`), and its redirect URI is sent verbatim, so the browser Google redirects
+ * reaches the door the link started at. Both routes are SYNCHRONOUS request/response (a
+ * 302, a page), so whatever fronts them must carry a redirect.
  */
 
-import { DEFAULT_SCOPES, GRANT_ENV, GRANT_HOSTS } from "./config.ts";
+import { GRANT_ENV, GRANT_HOSTS } from "./config.ts";
 import type { Appender } from "../../store/log.ts";
 import type { Connections } from "../../store/connections.ts";
-import type { Credentials } from "../../store/credentials.ts";
+import type { Credentials, TicketRow } from "../../store/credentials.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { timedFetch } from "../http.ts";
 import { linked } from "../health.ts";
+import type { Gate } from "../signin.ts";
+import { askedOf, callbackTicket, page, startTicket } from "../door.ts";
 
 export interface GoogleOAuthConfig {
   clientId: string;
   clientSecret: string;
   redirectUri: string; // must exactly match a registered redirect URI
-  scopes?: string[]; // the default ask when /start names none
 }
 
 /** The token endpoint's answer — the fields this door reads (the wire carries more). */
@@ -61,7 +59,10 @@ export interface GoogleTokens {
 }
 
 export interface GoogleOAuthDeps {
-  config: GoogleOAuthConfig;
+  /** The app a ticket signs in through, and the redirect it registered. */
+  config: (ticket: TicketRow) => Promise<GoogleOAuthConfig>;
+  /** The sign-in the ticket is (connect/signin.ts): judged, then told. */
+  gate: Gate;
   creds: Pick<Credentials, "put" | "mintState" | "consumeState">;
   /** → the EventLog: the grant notification crosses the frontier as an event (§4). */
   publish: Appender["publish"];
@@ -69,9 +70,6 @@ export interface GoogleOAuthDeps {
   store: Pick<Connections, "upsertConnections" | "upsertMemberships">;
   /** The code exchange — injectable for tests; default POSTs the token endpoint. */
   exchange?: (code: string, config: GoogleOAuthConfig) => Promise<GoogleTokens>;
-  /** Called once the grant is written, before the page returns: a door that has a
-   *  terminal in front of it (the account verb) reports the shortfall there and then. */
-  onGrant?: (grant: { email: string; agent?: string; missing: string[] }) => void;
   now?: () => string;
 }
 
@@ -80,52 +78,53 @@ export type OAuthHandler = (req: Request) => Promise<Response>;
 
 /** Build the two-route handler. Pure over its deps — serve it anywhere synchronous. */
 export function createGoogleOAuth(deps: GoogleOAuthDeps): OAuthHandler {
-  const { config } = deps;
   const exchange = deps.exchange ?? defaultExchange;
   const now = deps.now ?? (() => new Date().toISOString());
 
   return async (req) => {
     const url = new URL(req.url);
-    if (req.method !== "GET") return text(405, "method not allowed");
+    if (req.method !== "GET") return page(405, "method not allowed");
 
     if (url.pathname.endsWith("/start")) {
-      const agent = url.searchParams.get("agent");
-      const scopes = url.searchParams.get("scopes")?.split(/[ ,]+/).filter(Boolean) ??
-        config.scopes ?? DEFAULT_SCOPES;
-      const state = await deps.creds.mintState("google", {
-        ...(agent ? { agent } : {}),
-        scopes,
-      });
+      const t = await startTicket(url, deps.gate);
+      if (t instanceof Response) return t;
+      const config = await deps.config(t);
+      const state = await deps.creds.mintState("google", { ticket: t.ticket });
       const auth = new URL("https://accounts.google.com/o/oauth2/v2/auth");
       auth.searchParams.set("client_id", config.clientId);
       auth.searchParams.set("redirect_uri", config.redirectUri);
       auth.searchParams.set("response_type", "code");
-      auth.searchParams.set("scope", scopes.join(" "));
+      auth.searchParams.set("scope", askedOf(t).join(" "));
       auth.searchParams.set("access_type", "offline");
       auth.searchParams.set("prompt", "consent");
       auth.searchParams.set("include_granted_scopes", "true");
+      if (typeof t.extra.account === "string") {
+        auth.searchParams.set("login_hint", t.extra.account);
+      }
       auth.searchParams.set("state", state);
       return new Response(null, { status: 302, headers: { location: auth.href } });
     }
 
     if (url.pathname.endsWith("/callback")) {
-      const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state");
-      if (!code || !state) return text(400, "missing code/state");
-      // one-time, TTL'd — a replayed or forged callback dies here (§9 boundary check)
-      const bound = await deps.creds.consumeState("google", state);
-      if (bound === null) return text(400, "bad state");
+      const at = await callbackTicket(url, "google", deps.creds, deps.gate);
+      if (at instanceof Response) return at;
+      const { ticket: t, code } = at;
+      const config = await deps.config(t);
       const tok = await exchange(code, config);
       if (tok.error || !tok.access_token) {
-        return text(502, `exchange failed: ${tok.error ?? "no token"}`);
+        const why = `the exchange failed: ${tok.error ?? "no token"}`;
+        await deps.gate.failed(t.ticket, why);
+        return page(502, why);
       }
       const id = claimsOf(tok.id_token);
-      if (!id?.email) return text(502, "exchange carried no identity");
-      const agent = typeof bound.agent === "string" ? bound.agent : undefined;
-      const asked = Array.isArray(bound.scopes)
-        ? bound.scopes.filter((s): s is string => typeof s === "string")
-        : [];
-      const missing = missingScopes(asked, tok.scope);
+      if (!id?.email) {
+        await deps.gate.failed(t.ticket, "the exchange carried no identity");
+        return page(502, "exchange carried no identity");
+      }
+      const verdict = await deps.gate.judge(t.ticket, { address: id.email, email: id.email });
+      if ("refused" in verdict) return page(403, verdict.refused);
+      const { agent } = verdict;
+      const missing = missingScopes(askedOf(t), tok.scope);
 
       const credentialKey = `google:${id.email}`;
       await deps.creds.put({
@@ -183,19 +182,19 @@ export function createGoogleOAuth(deps: GoogleOAuthDeps): OAuthHandler {
         }],
       };
       await deps.publish(note);
-      deps.onGrant?.({ email: id.email, ...(agent ? { agent } : {}), missing });
-      return new Response(
+      await deps.gate.landed(t.ticket, id.email, missing);
+      return page(
+        200,
         missing.length
           ? `Connected as ${id.email}, but these permissions were not granted:\n` +
             `  ${missing.join("\n  ")}\n\n` +
             `Approve them on the consent screen and connect again — consent is ` +
             `incremental, so it merges into this grant.`
           : "✓ Connected. You can close this window.",
-        { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } },
       );
     }
 
-    return text(404, "not found");
+    return page(404, "not found");
   };
 }
 
@@ -250,8 +249,4 @@ async function defaultExchange(code: string, c: GoogleOAuthConfig): Promise<Goog
     }),
   });
   return await res.json() as GoogleTokens;
-}
-
-function text(status: number, message: string): Response {
-  return new Response(message, { status, headers: { "content-type": "text/plain" } });
 }

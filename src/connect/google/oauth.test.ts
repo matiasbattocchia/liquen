@@ -6,8 +6,21 @@ import type { Draft, Event } from "../../types.ts";
 import { newId } from "../../store/id.ts";
 import type { Appender } from "../../store/log.ts";
 import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
+import { DEFAULT_SCOPES } from "./config.ts";
+import { fakeGate, ticket } from "../testing.ts";
 
 const LINKED_AT = "2026-10-20T00:00:00.000Z";
+
+/** The open sign-ins the tests start: ana's, the org's, and a reconnect pinned to ana's
+ *  account. */
+const TICKETS = [
+  ticket("t-ana", { agentId: "ana", extra: { scopes: DEFAULT_SCOPES } }),
+  ticket("t-org", { extra: { scopes: DEFAULT_SCOPES } }),
+  ticket("t-again", {
+    agentId: "ana",
+    extra: { scopes: ["openid", "email"], account: "ana@example.com" },
+  }),
+];
 
 const CONFIG = {
   clientId: "cid",
@@ -37,12 +50,12 @@ async function withOAuth(
     connections: ConnectionRow[];
     memberships: MembershipRow[];
     creds: Awaited<ReturnType<typeof openCredentials>>;
-    grants: { email: string; agent?: string; missing: string[] }[];
+    gate: ReturnType<typeof fakeGate>;
     start: (query?: string) => Promise<Response>;
     callback: (code: string, state: string) => Promise<Response>;
   }) => Promise<void>,
   tokens: GoogleTokens = TOKENS,
-  opts: { defaultExchange?: boolean } = {},
+  opts: { defaultExchange?: boolean; refuse?: string } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
   await membersAt(dir, "ana", "bo");
@@ -51,11 +64,11 @@ async function withOAuth(
   const exchanged: string[] = [];
   const connections: ConnectionRow[] = [];
   const memberships: MembershipRow[] = [];
-  const grants: { email: string; agent?: string; missing: string[] }[] = [];
+  const gate = fakeGate(TICKETS, opts);
   const handler = createGoogleOAuth({
-    config: CONFIG,
+    config: () => Promise.resolve(CONFIG),
+    gate,
     creds,
-    onGrant: (g) => grants.push(g),
     now: () => LINKED_AT,
     // the map's write side in miniature: the grant creates anchor + binding (§4)
     store: {
@@ -89,7 +102,7 @@ async function withOAuth(
       connections,
       memberships,
       creds,
-      grants,
+      gate,
       start: (query = "") => handler(new Request(`https://x.example/oauth/google/start${query}`)),
       callback: (code, state) =>
         handler(
@@ -110,9 +123,9 @@ function stateOf(res: Response): string {
   return loc.searchParams.get("state")!;
 }
 
-Deno.test("start: 302 to Google asking offline + incremental, default scopes", async () => {
+Deno.test("start: 302 to Google asking offline + incremental, the ticket's scopes", async () => {
   await withOAuth(async (t) => {
-    const res = await t.start();
+    const res = await t.start("?ticket=t-ana");
     assertEquals(res.status, 302);
     const loc = new URL(res.headers.get("location")!);
     assertEquals(loc.origin + loc.pathname, "https://accounts.google.com/o/oauth2/v2/auth");
@@ -125,21 +138,41 @@ Deno.test("start: 302 to Google asking offline + incremental, default scopes", a
   });
 });
 
-Deno.test("start: ?scopes= narrows the ask — the member decides, not the door", async () => {
+Deno.test("start: a reconnect asks what the ticket kept and preselects its account", async () => {
   await withOAuth(async (t) => {
-    const res = await t.start("?scopes=openid%20email%20readonly.scope");
+    const res = await t.start("?ticket=t-again");
     const loc = new URL(res.headers.get("location")!);
-    assertEquals(loc.searchParams.get("scope"), "openid email readonly.scope");
+    assertEquals(loc.searchParams.get("scope"), "openid email");
+    assertEquals(loc.searchParams.get("login_hint"), "ana@example.com");
+    assertEquals(
+      new URL((await t.start("?ticket=t-ana")).headers.get("location")!)
+        .searchParams.get("login_hint"),
+      null,
+    );
+  });
+});
+
+Deno.test("start: a link with no live ticket is refused, and names nobody", async () => {
+  await withOAuth(async (t) => {
+    assertEquals((await t.start()).status, 410);
+    assertEquals((await t.start("?ticket=nope")).status, 410);
+    assertEquals((await t.start("?agent=ana")).status, 410); // a name is no ticket
   });
 });
 
 Deno.test("callback: the grant writes the map — vault, connection, membership, event", async () => {
   await withOAuth(async (t) => {
-    const state = stateOf(await t.start("?agent=ana"));
+    const state = stateOf(await t.start("?ticket=t-ana"));
     const res = await t.callback("c0de", state);
     assertEquals(res.status, 200);
     assertStringIncludes(await res.text(), "close this window");
     assertEquals(t.exchanged, ["c0de"]);
+    // the ticket judged the account the id token vouched for, and heard it landed
+    assertEquals(t.gate.seen.judged, [{
+      ticket: "t-ana",
+      who: { address: "ana@example.com", email: "ana@example.com" },
+    }]);
+    assertEquals(t.gate.seen.landed, [{ ticket: "t-ana", account: "ana@example.com" }]);
     // the vault row: the refresh token IS the grant, owned by the principal
     const row = (await t.creds.get("google:ana@example.com"))!;
     assertEquals(row.value.refresh_token, "1//long");
@@ -167,9 +200,9 @@ Deno.test("callback: the grant writes the map — vault, connection, membership,
   });
 });
 
-Deno.test("callback: no agent in the state ⇒ the org's grant — ownerless, no membership", async () => {
+Deno.test("callback: no agent on the ticket ⇒ the org's grant — ownerless, no membership", async () => {
   await withOAuth(async (t) => {
-    const state = stateOf(await t.start());
+    const state = stateOf(await t.start("?ticket=t-org"));
     await t.callback("c0de", state);
     const row = (await t.creds.get("google:ana@example.com"))!;
     assertEquals(row.agentId, undefined);
@@ -181,16 +214,52 @@ Deno.test("callback: no agent in the state ⇒ the org's grant — ownerless, no
 Deno.test("callback: a forged or replayed state dies at the door", async () => {
   await withOAuth(async (t) => {
     assertEquals((await t.callback("c0de", "forged")).status, 400);
-    const state = stateOf(await t.start());
+    const state = stateOf(await t.start("?ticket=t-org"));
     assertEquals((await t.callback("c0de", state)).status, 200);
     assertEquals((await t.callback("c0de", state)).status, 400); // one-time
     assertEquals(t.exchanged, ["c0de"]); // the replay never reached the exchange
   });
 });
 
+Deno.test("callback: a second click's state finds its ticket settled by the first", async () => {
+  await withOAuth(async (t) => {
+    const first = stateOf(await t.start("?ticket=t-ana"));
+    const second = stateOf(await t.start("?ticket=t-ana")); // the link opened again
+    assertEquals((await t.callback("c0de", first)).status, 200);
+    assertEquals((await t.callback("c0de", second)).status, 410);
+    assertEquals(t.exchanged, ["c0de"]);
+  });
+});
+
+Deno.test("callback: an account the ticket refuses writes nothing", async () => {
+  await withOAuth(
+    async (t) => {
+      const res = await t.callback("c0de", stateOf(await t.start("?ticket=t-again")));
+      assertEquals(res.status, 403);
+      assertStringIncludes(await res.text(), "nothing was connected");
+      assertEquals(t.connections, []);
+      assertEquals(await t.creds.get("google:ana@example.com"), null);
+      assertEquals(t.published, []);
+      assertEquals(t.gate.seen.landed, []);
+    },
+    TOKENS,
+    { refuse: "signed in as bo@example.com: nothing was connected" },
+  );
+});
+
+Deno.test("callback: consent declined on the wire ends the sign-in it names", async () => {
+  await withOAuth(async (t) => {
+    const state = stateOf(await t.start("?ticket=t-ana"));
+    const handler = await t.callback("", state);
+    assertEquals(handler.status, 400);
+    assertEquals(t.gate.seen.failed.map((f) => f.ticket), ["t-ana"]);
+    assertEquals(t.exchanged, []);
+  });
+});
+
 Deno.test("callback: a re-consent without a refresh token keeps the stored one", async () => {
   await withOAuth(async (t) => {
-    const first = stateOf(await t.start("?agent=ana"));
+    const first = stateOf(await t.start("?ticket=t-ana"));
     await t.callback("c0de", first);
     await t.creds.put({
       key: "google:ana@example.com",
@@ -204,10 +273,11 @@ Deno.test("callback: a re-consent without a refresh token keeps the stored one",
 
 Deno.test("callback: an exchange without identity is a failure, not a nameless row", async () => {
   await withOAuth(async (t) => {
-    const state = stateOf(await t.start());
+    const state = stateOf(await t.start("?ticket=t-org"));
     const res = await t.callback("c0de", state);
     assertEquals(res.status, 502);
     assertEquals(t.connections, []);
+    assertEquals(t.gate.seen.failed.map((f) => f.ticket), ["t-org"]);
   }, { access_token: "ya29.short" }); // no id_token on the wire
 });
 
@@ -226,16 +296,16 @@ Deno.test("missingScopes: Google's shorthands are the same scope, not a shortfal
   assertEquals(missingScopes(["openid"], undefined), ["openid"]); // no scope on the wire
 });
 
-Deno.test("callback: a grant that dropped a scope says so — page, event, hook", async () => {
+Deno.test("callback: a grant that dropped a scope says so — page, event, outcome", async () => {
   await withOAuth(async (t) => {
-    const state = stateOf(await t.start("?agent=ana"));
+    const state = stateOf(await t.start("?ticket=t-ana"));
     const res = await t.callback("c0de", state);
     // the flow COMPLETED — the grant is real and stored; it just cannot do the work
     assertEquals(res.status, 200);
     assertStringIncludes(await res.text(), "auth/calendar");
-    assertEquals(t.grants, [{
-      email: "ana@example.com",
-      agent: "ana",
+    assertEquals(t.gate.seen.landed, [{
+      ticket: "t-ana",
+      account: "ana@example.com",
       missing: ["https://www.googleapis.com/auth/calendar"],
     }]);
     assertStringIncludes(t.published[0].parts[0].text!, "NOT granted: ");
@@ -258,7 +328,7 @@ Deno.test("callback: the default exchange's token call carries a timeout signal"
   try {
     await withOAuth(
       async (t) => {
-        const res = await t.callback("c1", stateOf(await t.start()));
+        const res = await t.callback("c1", stateOf(await t.start("?ticket=t-org")));
         assertEquals(res.status, 200);
         assertEquals(t.connections.length > 0, true);
       },

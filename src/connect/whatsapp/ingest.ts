@@ -74,6 +74,7 @@ import { roomPart } from "../../room.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { entry } from "../../entry.ts";
 import { createMarks, marked } from "../marks.ts";
+import { signedOutLine } from "../health.ts";
 
 /* ── the bridge's wire shapes (openbsp.go is the source of truth — the bridge's own
  *    contract, not a platform API, so hand-rolled here is honest) ─────────────────── */
@@ -898,19 +899,29 @@ function session(
     // the frontier gate the very next publish checks (§4). The other events only record
     // state, stamped `<state>_at` when the row moves to it — what the anchor reads to say
     // a surface is down, and since when (§5): the gate stays open (history stays
-    // readable), and a reconnect or re-pairing revives by upsert.
-    const prior = await deps.store?.connection(SERVICE, e.address);
-    await deps.store?.upsertConnections([{
+    // readable), and a reconnect or re-pairing revives by upsert. An owned number that
+    // moves to `signed_out` tells its owner, as `setState` does.
+    if (!deps.store) return json(200, {});
+    const prior = await deps.store.connection(SERVICE, e.address);
+    const moved = prior?.extra?.state !== state;
+    const at = now();
+    await deps.store.upsertConnections([{
       service: SERVICE,
       address: e.address,
       ...(e.agent_id ? { agentId: e.agent_id } : {}), // personal session ⇒ owned grant (§6)
       extra: {
         state,
-        ...(prior?.extra?.state !== state ? { [`${state}_at`]: now() } : {}),
+        ...(moved ? { [`${state}_at`]: at } : {}),
         organization_id: e.organization_id,
         ...(e.extra ?? {}),
       },
     }]);
+    const owner = e.agent_id ?? prior?.agentId;
+    if (moved && state === "signed_out" && owner) {
+      await deps.publish(
+        signedOutLine({ service: SERVICE, address: e.address, agentId: owner }, at),
+      );
+    }
     return json(200, {});
   }).catch(() => text(400, "invalid json"));
 }

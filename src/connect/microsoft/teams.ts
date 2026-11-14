@@ -69,6 +69,7 @@ import { htmlToText, mediaShelf, type SaveFile } from "../mail.ts";
 import { createPoller, FETCH_TIMEOUT_MS, granted, type PollIngestDeps } from "../poll.ts";
 import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import { DispatchError } from "../errors.ts";
+import type { StateStore } from "../health.ts";
 import { createMarks, marked } from "../marks.ts";
 import { claimMentions, type Directory, logDirectory, type NameEntry } from "../mentions.ts";
 import { bytesOf, isExternal, tailOf } from "../../store/media.ts";
@@ -1410,8 +1411,8 @@ async function collect<T>(items: AsyncGenerator<T>): Promise<T[]> {
 export interface TeamsKeeperDeps {
   creds: Pick<Credentials, "list" | "get" | "put">;
   broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
-  /** The account rows the sweep marks. */
-  store?: Pick<Connections, "connections" | "upsertConnections">;
+  /** The account rows the sweep marks, and the log a sign-out is told on. */
+  store?: StateStore;
   /** Where Graph dials the ingest — `<edge.publicUrl>/microsoft/ingest`, sent as the
    *  `notificationUrl` and `lifecycleNotificationUrl` of every subscription made. */
   notificationUrl: string;

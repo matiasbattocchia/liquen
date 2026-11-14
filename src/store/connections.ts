@@ -72,7 +72,8 @@ export function mirrorsOf(row: ConnectionRow): Mirrors {
  *  every connector (§5): up, or down for a reason the anchor names.
  *
  *   connected     up
- *   signed_out    the service ended the account's access; the principal links it again
+ *   signed_out    the service ended the account's access; the principal links it again,
+ *                 and an owned row's move here tells its owner (`signedOutLine`)
  *   unavailable   the link is down while the access stands; it usually comes back alone
  *   failing       the service answers, with refusals or errors
  *   bridge_down   the process between the connector and the service is not there

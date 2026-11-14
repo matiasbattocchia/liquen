@@ -6,8 +6,26 @@ import type { Draft, Event } from "../../types.ts";
 import { newId } from "../../store/id.ts";
 import type { Appender } from "../../store/log.ts";
 import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
+import { DEFAULT_SCOPES } from "./config.ts";
+import { fakeGate, ticket } from "../testing.ts";
 
 const LINKED_AT = "2026-10-20T00:00:00.000Z";
+
+/** The open sign-ins the tests start: ana's, the org's, a narrow ask, and a reconnect. */
+const TICKETS = [
+  ticket("t-ana", { service: "microsoft", agentId: "ana", extra: { scopes: DEFAULT_SCOPES } }),
+  ticket("t-org", { service: "microsoft", extra: { scopes: DEFAULT_SCOPES } }),
+  ticket("t-narrow", {
+    service: "microsoft",
+    agentId: "ana",
+    extra: { scopes: ["openid", "offline_access", "User.Read", "Sites.ReadWrite.All"] },
+  }),
+  ticket("t-again", {
+    service: "microsoft",
+    agentId: "ana",
+    extra: { scopes: DEFAULT_SCOPES, account: "ana@contoso.com" },
+  }),
+];
 
 const CONFIG = {
   clientId: "cid",
@@ -39,7 +57,7 @@ async function withOAuth(
     connections: ConnectionRow[];
     memberships: MembershipRow[];
     creds: Awaited<ReturnType<typeof openCredentials>>;
-    grants: { upn: string; agent?: string; missing: string[] }[];
+    gate: ReturnType<typeof fakeGate>;
     start: (query?: string) => Promise<Response>;
     callback: (query: string) => Promise<Response>;
   }) => Promise<void>,
@@ -51,11 +69,11 @@ async function withOAuth(
   const published: Event[] = [];
   const connections: ConnectionRow[] = [];
   const memberships: MembershipRow[] = [];
-  const grants: { upn: string; agent?: string; missing: string[] }[] = [];
+  const gate = fakeGate(TICKETS);
   const handler = createMicrosoftOAuth({
-    config: CONFIG,
+    config: () => Promise.resolve(CONFIG),
+    gate,
     creds,
-    onGrant: (g) => grants.push(g),
     now: () => LINKED_AT,
     store: {
       upsertConnections: (rows) => {
@@ -80,7 +98,7 @@ async function withOAuth(
       connections,
       memberships,
       creds,
-      grants,
+      gate,
       start: (query = "") =>
         handler(new Request(`https://x.example/oauth/microsoft/start${query}`)),
       callback: (query) =>
@@ -96,9 +114,9 @@ function stateOf(res: Response): string {
   return new URL(res.headers.get("location")!).searchParams.get("state")!;
 }
 
-Deno.test("start: 302 to the app's tenant, default scopes, the member picks the account", async () => {
+Deno.test("start: 302 to the app's tenant, the ticket's scopes, the member picks the account", async () => {
   await withOAuth(async (t) => {
-    const res = await t.start();
+    const res = await t.start("?ticket=t-ana");
     assertEquals(res.status, 302);
     const loc = new URL(res.headers.get("location")!);
     assertEquals(
@@ -114,9 +132,18 @@ Deno.test("start: 302 to the app's tenant, default scopes, the member picks the 
   });
 });
 
+Deno.test("start: a reconnect preselects its account; a link with no ticket is refused", async () => {
+  await withOAuth(async (t) => {
+    const loc = new URL((await t.start("?ticket=t-again")).headers.get("location")!);
+    assertEquals(loc.searchParams.get("login_hint"), "ana@contoso.com");
+    assertEquals(loc.searchParams.get("prompt"), null);
+    assertEquals((await t.start("?agent=ana")).status, 410);
+  });
+});
+
 Deno.test("callback: the grant writes the map — vault, connection, membership, event", async () => {
   await withOAuth(async (t) => {
-    const state = stateOf(await t.start("?agent=ana"));
+    const state = stateOf(await t.start("?ticket=t-ana"));
     const res = await t.callback(`?code=c0de&state=${state}`);
     assertEquals(res.status, 200);
     assertStringIncludes(await res.text(), "close this window");
@@ -140,13 +167,17 @@ Deno.test("callback: the grant writes the map — vault, connection, membership,
     assertEquals(t.memberships.length, 1);
     assertEquals(t.published.length, 1);
     assertEquals(t.published[0].envelope.service, "microsoft");
-    assertEquals(t.grants, [{ upn: "ana@contoso.com", agent: "ana", missing: [] }]);
+    assertEquals(t.gate.seen.judged, [{
+      ticket: "t-ana",
+      who: { address: "ana@contoso.com", email: "ana@contoso.com" },
+    }]);
+    assertEquals(t.gate.seen.landed, [{ ticket: "t-ana", account: "ana@contoso.com" }]);
   });
 });
 
-Deno.test("callback: --shared mints an ownerless grant — no membership, no owner", async () => {
+Deno.test("callback: an ownerless ticket mints an ownerless grant — no membership, no owner", async () => {
   await withOAuth(async (t) => {
-    const state = stateOf(await t.start());
+    const state = stateOf(await t.start("?ticket=t-org"));
     assertEquals((await t.callback(`?code=c&state=${state}`)).status, 200);
     assertEquals((await t.creds.get("microsoft:ana@contoso.com"))!.agentId, undefined);
     assertEquals(t.connections[0].agentId, undefined);
@@ -156,7 +187,7 @@ Deno.test("callback: --shared mints an ownerless grant — no membership, no own
 
 Deno.test("callback: a state is spent once; a refusal on the wire is reported as such", async () => {
   await withOAuth(async (t) => {
-    const state = stateOf(await t.start());
+    const state = stateOf(await t.start("?ticket=t-org"));
     assertEquals((await t.callback(`?code=c&state=${state}`)).status, 200);
     assertEquals((await t.callback(`?code=c&state=${state}`)).status, 400);
     const refused = await t.callback(
@@ -164,17 +195,19 @@ Deno.test("callback: a state is spent once; a refusal on the wire is reported as
     );
     assertEquals(refused.status, 400);
     assertStringIncludes(await refused.text(), "declined to consent");
+    // with the state on it, the refusal ends the sign-in the state names
+    const named = stateOf(await t.start("?ticket=t-ana"));
+    await t.callback(`?error=access_denied&error_description=declined&state=${named}`);
+    assertEquals(t.gate.seen.failed, [{ ticket: "t-ana", why: "declined" }]);
   });
 });
 
 Deno.test("callback: a shortfall is reported in the ask's spelling, OpenID scopes aside", async () => {
   await withOAuth(async (t) => {
-    const state = stateOf(
-      await t.start("?agent=ana&scopes=openid%20offline_access%20User.Read%20Sites.ReadWrite.All"),
-    );
+    const state = stateOf(await t.start("?ticket=t-narrow"));
     const res = await t.callback(`?code=c&state=${state}`);
     assertStringIncludes(await res.text(), "Sites.ReadWrite.All");
-    assertEquals(t.grants[0].missing, ["Sites.ReadWrite.All"]);
+    assertEquals(t.gate.seen.landed[0].missing, ["Sites.ReadWrite.All"]);
   });
 });
 

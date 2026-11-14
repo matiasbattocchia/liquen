@@ -63,7 +63,7 @@ import type {
   RoomMember,
 } from "../../types.ts";
 import { roomPart } from "../../room.ts";
-import { setState } from "../health.ts";
+import { setState, type StateStore } from "../health.ts";
 import { type Bios, floodSeconds } from "./bio.ts";
 import { fromTelegram } from "./text.ts";
 import { reactionDiff, standingOn } from "./reactions.ts";
@@ -104,9 +104,11 @@ export interface TelegramIngestDeps {
   /** The newest row of a conversation, where a gap's reading starts. */
   read?: Reader["read"];
   /** The classifier and the map (§4): grant rows and the roster's declared handles resolve
-   *  senders, and the session's state lands on the account's row. Absent: pure mapping. */
+   *  senders, and the session's state lands on the account's row, whose owner the store's
+   *  own publish tells of a sign-out. Absent: pure mapping. */
   store?:
-    & Pick<Connections, "connection" | "connections" | "upsertConnections">
+    & Pick<Connections, "connection">
+    & StateStore
     & Partial<Pick<Registry, "agents">>;
   /** Where a message's file is kept. Absent: a file is named and not fetched. */
   storage?: Storage;

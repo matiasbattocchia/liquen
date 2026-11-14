@@ -45,8 +45,10 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
       "system/skill/skills/transcribe-audio",
       "system/skill/skills/workflows",
       ...[
+        "agent",
         "bash",
         "cancel",
+        "connect",
         "contact",
         "conversation",
         "edit",

@@ -12,15 +12,15 @@
  *         shared identity; xoxp → the dev's own leg, landed exactly as the user door lands
  *         one. Which carrier ingest opens is read off the vault, never chosen here: an
  *         xapp row is the socket, a signing secret is HTTP.
- *   user  a member's own leg through the OAuth handler (connect/slack/oauth.ts), served for
- *         exactly one sign-in: hand out /start, and the callback lands the grant. Ownership
- *         is decided HERE, at mint time — the agent arg rides `?agent=` — and Slack's
- *         verified `authed_user.id` is what the terminal reports against it. Slack registers
- *         https redirect URLs only, no loopback exception, so this door is the org's public
- *         one, `<edge.publicUrl>/slack/oauth/callback` (`callbackAddress`, edge.ts), and
- *         an org with no public address has no user door — a dev on their own machine
- *         pastes at `app --user`. The app door fills the manifest's redirect URL from it,
- *         and the edge forwards the callback to the door's socket (`serveDoor`).
+ *   user  a member's own leg through the OAuth handler (connect/slack/oauth.ts): the door
+ *         asks main for the sign-in (signin.ts), main serves the handler while it is open,
+ *         and the callback lands the grant. Ownership is decided by the ask — the agent
+ *         arg — and Slack's verified `authed_user.id` is what the terminal reports against
+ *         it. Slack registers https redirect URLs only, no loopback exception, so this
+ *         door is the org's public one, `<edge.publicUrl>/slack/oauth/callback`
+ *         (`callbackAddress`, edge.ts), and an org with no public address has no user door
+ *         — a dev on their own machine pastes at `app --user`. The app door fills the
+ *         manifest's redirect URL from it, and the edge forwards the callback to main.
  *
  * Either way THE GRANT WRITES THE MAP, and it is one function (`landSlackUser`) whichever
  * door the token came through:
@@ -49,15 +49,7 @@ import { findRoot, orgFlag } from "../../config.ts";
 import { callbackAddress, ingestAddress } from "../../edge.ts";
 import { timedFetch } from "../http.ts";
 import { declared, printNext, requireEdge } from "../declare.ts";
-import {
-  type DoorAddress,
-  doorAddress,
-  handOut,
-  oneShot,
-  openBrowser,
-  serveDoor,
-  terminalUser,
-} from "../door.ts";
+import { type DoorAddress, doorAddress, openBrowser, signInHere, terminalUser } from "../door.ts";
 import { missingScopes, SPEC } from "./config.ts";
 import { linked } from "../health.ts";
 import { entry } from "../../entry.ts";
@@ -236,27 +228,6 @@ export function slackDoor(redirectUri: string): DoorAddress {
     );
   }
   return door;
-}
-
-/** The user door's app: the only one, or the one `clientId` names. */
-export async function pickSlackApp(
-  creds: Pick<Credentials, "get" | "list">,
-  clientId?: string,
-): Promise<CredentialRow> {
-  if (clientId) {
-    const row = await creds.get(`${APP_PREFIX}${clientId}`);
-    if (!row) throw new Error(`no app ${clientId} — \`liquen connect slack app\` first`);
-    return row;
-  }
-  const apps = await creds.list(APP_PREFIX);
-  if (apps.length === 0) {
-    throw new Error("no slack app in the vault — `liquen connect slack app` first");
-  }
-  if (apps.length > 1) {
-    const ids = apps.map((a) => a.value.client_id).join("\n  ");
-    throw new Error(`several apps — pick one with --app <client_id>:\n  ${ids}`);
-  }
-  return apps[0];
 }
 
 /* ── the bot token: the org's shared identity ───────────────────────────────────────────── */
@@ -714,65 +685,20 @@ if (import.meta.main) {
       );
       Deno.exit(2);
     }
-    const registered = callbackAddress(edge, "slack");
     await requireEdge(root);
-    const { createSlackOAuth } = await import("./oauth.ts");
     const agent = positional[0] ?? me();
-    const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? userScopes;
+    const scopes = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean);
+    console.error(`Connecting Slack for "${agent}".\n`);
+    const code = await signInHere(root, {
+      service: "slack",
+      agent,
+      ...(flags.get("app") ? { app: flags.get("app") } : {}),
+      ...(scopes?.length ? { scopes } : {}),
+    });
+    if (code !== 0) Deno.exit(code);
     const creds = await store.vault();
     try {
-      const app = await pickSlackApp(creds, flags.get("app")).catch((e: Error) => {
-        console.error(e.message);
-        Deno.exit(2);
-      });
-      let door: DoorAddress;
-      try {
-        door = slackDoor(registered);
-      } catch (e) {
-        console.error(e instanceof Error ? e.message : String(e));
-        Deno.exit(2);
-      }
-      const log = await store.log();
-      let landed: { user: string; missing: string[] } | undefined;
-      const { handler, outcome } = oneShot(createSlackOAuth({
-        config: {
-          clientId: app.value.client_id,
-          clientSecret: app.value.client_secret,
-          redirectUri: door.callback,
-          userScopes: asked,
-        },
-        creds,
-        publish: log.publish,
-        store: log,
-        onGrant: (g) => (landed = g),
-      }));
-      let server: Deno.HttpServer;
-      try {
-        server = await serveDoor(root, "slack", handler);
-      } catch (e) {
-        console.error(e instanceof Error ? e.message : String(e));
-        await log.close();
-        Deno.exit(2);
-      }
-      const start = new URL(door.start);
-      start.searchParams.set("agent", agent);
-      console.error(
-        `Connecting Slack for "${agent}" via app ${app.value.client_id}.\nAsking for:\n  ${
-          asked.join("\n  ")
-        }\n`,
-      );
-      handOut(door, start, agent);
-      const res = await outcome;
-      await server.shutdown();
-      await log.close();
-      if (res.status !== 200 || !landed) {
-        console.error(`✗ not connected: ${(await res.text()).trim()}`);
-        Deno.exit(1);
-      }
-      console.error(`\n✓ connected: slack user ${landed.user} → ${agent}`);
-      report(landed.missing, "Approve them on the consent screen and run this again.");
       await owed(creds);
-      console.error("  (deno task status shows the map)");
     } finally {
       await creds.close();
     }

@@ -55,7 +55,7 @@ import {
   mirrorsOf,
 } from "../../store/connections.ts";
 import { SignedOut } from "../errors.ts";
-import { setState } from "../health.ts";
+import { setState, type StateStore } from "../health.ts";
 import { createMarks, marked } from "../marks.ts";
 import { SIGNED_OUT_NAMES } from "./dispatch.ts";
 import type { Registry } from "../../store/agents.ts";
@@ -1447,7 +1447,7 @@ export const UNAVAILABLE_AFTER_MS = 120_000;
  *  signed out by a refused open — and leaves a token a send found revoked to its own door. */
 export function socketHealth(deps: {
   carriers: number;
-  store: Pick<Connections, "connections" | "upsertConnections">;
+  store: StateStore;
   after?: number;
   onError?: (err: unknown) => void;
 }): { up(i: number): void; down(i: number, err?: unknown): void; stop(): Promise<void> } {

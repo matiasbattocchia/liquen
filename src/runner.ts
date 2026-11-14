@@ -9,7 +9,7 @@
  * into it, and the next invocation reads what it wrote.
  */
 
-import type { AgentConfig, Decision, XiPorts } from "./xi.ts";
+import type { AgentConfig, Decision, ExecTool, XiPorts } from "./xi.ts";
 import type { Log } from "./store/log.ts";
 import { type Policy, scoped } from "./policy.ts";
 import type { DocCalls, DocContext, Docs } from "./store/docs.ts";
@@ -42,6 +42,9 @@ export interface Host {
   warmth?: (agentId: string) => Warmth;
   /** The exec plane (§9). Absent: no shell, no ambient lines, no file scope — an edge host. */
   sandbox?: Sandbox;
+  /** The tools the host serves itself, a session's own (`connect`, `agent`): offered and
+   *  gated as every exec tool is. */
+  tools?: (agentId: string, sessionId: string) => Record<string, ExecTool>;
   contact?: XiPorts["contact"];
   rooms?: XiPorts["rooms"];
   media?: MediaLoader;
@@ -128,7 +131,10 @@ export function runnerFor(
   const slog = scoped(host.log, host.policy(agentId, sessionId));
   // the session's docs tools, where the docs are the table's
   const reach = host.reach?.({ agent: agentId });
-  const exec = box || reach ? { exec: { ...box?.exec, ...(reach ? docTools(reach) : {}) } } : {};
+  const own = host.tools?.(agentId, sessionId) ?? {};
+  const exec = box || reach || Object.keys(own).length
+    ? { exec: { ...box?.exec, ...(reach ? docTools(reach) : {}), ...own } }
+    : {};
   // the mind's next turn is always coming; a named session's work ends, and its cache with it
   const warmth = sessionId === MIND ? host.warmth?.(agentId) : undefined;
   return {

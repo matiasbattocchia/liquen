@@ -7,7 +7,7 @@
  * writing different fields of one credential, so both land.
  */
 
-import type { CredentialRow, Credentials } from "../credentials.ts";
+import type { CredentialRow, Credentials, TicketRow } from "../credentials.ts";
 import { connect, count, rows } from "./sql.ts";
 import { prepare } from "./schema.ts";
 
@@ -43,6 +43,23 @@ export async function openPgCredentials(
     value: JSON.parse(r.value) as Record<string, string>,
     ...(r.agent_id ? { agentId: r.agent_id } : {}),
     ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
+  });
+
+  type RawTicket = {
+    ticket: string;
+    service: string;
+    key: string;
+    agent_id: string | null;
+    extra: string | Record<string, unknown>;
+    deadline: string | number;
+  };
+  const ticketOf = (r: RawTicket): TicketRow => ({
+    ticket: r.ticket,
+    service: r.service,
+    key: r.key,
+    ...(r.agent_id ? { agentId: r.agent_id } : {}),
+    extra: typeof r.extra === "string" ? JSON.parse(r.extra) : r.extra,
+    deadline: Number(r.deadline),
   });
 
   return {
@@ -108,6 +125,66 @@ export async function openPgCredentials(
       );
       if (r === undefined) return null;
       return r.extra ? JSON.parse(r.extra) as Record<string, unknown> : {};
+    },
+
+    async openTicket(row): Promise<{ row: TicketRow; opened: boolean }> {
+      await count(sql, "DELETE FROM sign_ins WHERE settled = 1 AND deadline <= $1::bigint", [
+        now(),
+      ]);
+      const ticket = crypto.randomUUID();
+      await count(
+        sql,
+        `INSERT INTO sign_ins (ticket, service, key, agent_id, extra, deadline)
+         VALUES ($1::text, $2::text, $3::text, $4::text, $5::jsonb, $6::bigint)
+         ON CONFLICT DO NOTHING`,
+        [
+          ticket,
+          row.service,
+          row.key,
+          row.agentId ?? null,
+          JSON.stringify(row.extra),
+          row.deadline,
+        ],
+      );
+      const [open] = await rows<RawTicket>(
+        sql,
+        "SELECT * FROM sign_ins WHERE service = $1::text AND key = $2::text AND settled = 0",
+        [row.service, row.key],
+      );
+      return { row: ticketOf(open), opened: open.ticket === ticket };
+    },
+
+    async ticket(id): Promise<TicketRow | null> {
+      const [r] = await rows<RawTicket>(
+        sql,
+        "SELECT * FROM sign_ins WHERE ticket = $1::text AND settled = 0",
+        [id],
+      );
+      return r ? ticketOf(r) : null;
+    },
+
+    async tickets(): Promise<TicketRow[]> {
+      return (await rows<RawTicket>(
+        sql,
+        "SELECT * FROM sign_ins WHERE settled = 0 ORDER BY deadline, ticket",
+      )).map(ticketOf);
+    },
+
+    async noteTicket(id, extra): Promise<void> {
+      await count(
+        sql,
+        `UPDATE sign_ins SET extra = json_patch(extra, $1::jsonb)
+         WHERE ticket = $2::text AND settled = 0`,
+        [JSON.stringify(extra), id],
+      );
+    },
+
+    async settleTicket(id): Promise<boolean> {
+      return await count(
+        sql,
+        "UPDATE sign_ins SET settled = 1 WHERE ticket = $1::text AND settled = 0",
+        [id],
+      ) > 0;
     },
 
     async close(): Promise<void> {

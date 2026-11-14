@@ -7,7 +7,9 @@
  * rewritten by every process that restarts into it would move the "since" with each
  * restart. The comparison is against the row as stored, not a process's memory, for the
  * same reason. Only a live row is written: a state landing on a removed connection would
- * revive it (the upsert clears `deleted_at`).
+ * revive it (the upsert clears `deleted_at`). An owned row's move to `signed_out` also
+ * tells its owner, with one line in the owner's mind (`signedOutLine`); a shared row's
+ * sign-out is the anchor's down line, which every agent reads.
  *
  * The heartbeat is what a connector says by being there: every `HEARD_EVERY_MS` it stamps
  * `extra.heard_at` on its service's live rows, and the anchor reads a row unstamped for
@@ -28,17 +30,24 @@
 
 import type { ConnectionRow, Connections, ConnectionState } from "../store/connections.ts";
 import { HEARD_EVERY_MS } from "../store/connections.ts";
+import type { Appender } from "../store/log.ts";
+import type { AlarmEvent, Draft } from "../types.ts";
+import { LOCAL_CONNECTION, MIND, sessionAddress } from "../session.ts";
 import { findRoot, orgFlag } from "../config.ts";
 import { readConfig } from "../org.ts";
 import { ingestAddress, localBase, reached } from "../edge.ts";
 
 type Rows = Pick<Connections, "connections" | "upsertConnections">;
 
+/** What a state is written through: the rows, and the log a sign-out is told on. */
+export type StateStore = Rows & Pick<Appender, "publish">;
+
 /** Move the live row `service:address` to `state`, stamping when it moved; `error` rides
- *  along as the row's `error` (absent clears it), and `extra` merges as given. Answers
- *  whether the state moved. */
+ *  along as the row's `error` (absent clears it), and `extra` merges as given. An owned
+ *  row that moves to `signed_out` publishes `signedOutLine`. Answers whether the state
+ *  moved. */
 export async function setState(
-  store: Rows,
+  store: StateStore,
   row: { service: string; address: string },
   state: ConnectionState,
   opts: { error?: string; extra?: Record<string, unknown>; now?: string } = {},
@@ -53,17 +62,37 @@ export async function setState(
   const same = !moved && (live.extra?.error ?? null) === error &&
     Object.entries(extra).every(([k, v]) => (live.extra?.[k] ?? null) === v);
   if (same) return false;
+  const at = opts.now ?? new Date().toISOString();
   await store.upsertConnections([{
     service: row.service,
     address: row.address,
-    extra: {
-      ...extra,
-      state,
-      ...(moved ? { [`${state}_at`]: opts.now ?? new Date().toISOString() } : {}),
-      error,
-    },
+    extra: { ...extra, state, ...(moved ? { [`${state}_at`]: at } : {}), error },
   }]);
+  if (moved && state === "signed_out" && live.agentId) {
+    await store.publish(signedOutLine({ ...live, agentId: live.agentId }, at));
+  }
   return moved;
+}
+
+/** The line an owned account's sign-out writes into its owner's mind (§5), stamped when the
+ *  row moved: an alarm, since the harness is the one saying it, and `extra.signed_out`
+ *  names the account, which makes it wait as the world's lines do (xi's attention). Its
+ *  text names the account the way `connect` takes it, service and address. */
+export function signedOutLine(
+  row: Pick<ConnectionRow, "service" | "address"> & { agentId: string },
+  at: string,
+): Draft<AlarmEvent> {
+  return {
+    ts: at,
+    type: "alarm", // harness-authored: no `agent`, so it is news to the owner
+    envelope: {
+      service: "local",
+      connection_address: LOCAL_CONNECTION,
+      conversation: { address: sessionAddress(row.agentId, MIND) },
+    },
+    extra: { signed_out: { service: row.service, address: row.address } },
+    parts: [{ type: "text", kind: "alarm", text: `${row.service} ${row.address} is signed out` }],
+  };
 }
 
 /** What a door writes on the row of an account it has just linked: up, and no reason left

@@ -231,6 +231,7 @@ function renderInput(input: TurnInput, session: Session, env: Env, now: string):
     before: input.before,
     roster: input.roster,
     connections: input.connections,
+    offered: new Set(input.tools.map((t) => t.name)),
     compactAt: input.config.compactAt,
     cut: pinnedCut(input.events, session, input.config.compactAt, input.config.keepRecent),
   };

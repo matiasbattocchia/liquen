@@ -41,7 +41,7 @@ import {
   xi,
   type XiPorts,
 } from "./xi.ts";
-import { ownComplex, ownVoice, silenced } from "./render.ts";
+import { hhmm, ownComplex, ownVoice, silenced } from "./render.ts";
 import { LOCAL_CONNECTION, MIND, sessionAddress } from "./session.ts";
 import { historyFor, type Policy, policyFor, scoped } from "./policy.ts";
 import {
@@ -113,7 +113,16 @@ import {
   TICK_MS,
 } from "./config.ts";
 import { applyFile } from "./org.ts";
-import { IDLE_DAYS, idleAgents } from "./roster.ts";
+import { declareConnection, IDLE_DAYS, idleAgents } from "./roster.ts";
+import { reloaded } from "./reload.ts";
+import { createSignIns, ends, type SignInAsk, type Word } from "./connect/signin.ts";
+import { googleSignIn } from "./connect/google/signin.ts";
+import { microsoftSignIn } from "./connect/microsoft/signin.ts";
+import { slackSignIn } from "./connect/slack/signin.ts";
+import { createWhatsappSignIn } from "./connect/whatsapp/signin.ts";
+import { createGithubSignIn } from "./connect/github/signin.ts";
+import { CONNECT_SPEC, connectTool } from "./exec/connect.ts";
+import { AGENT_SPEC, agentTool } from "./exec/agent.ts";
 import { serveSocket } from "./connect/serve.ts";
 import { classifyFloors, ensureUser, requireTools, sealSystem } from "./users.ts";
 
@@ -269,12 +278,36 @@ export async function start(
         ...OWN_TOOLS,
         bashShape(catalog?.system.bashWaitMs ?? DEFAULT_BASH_WAIT_MS),
         ...Object.values(DOC_TOOLS),
+        { spec: CONNECT_SPEC },
+        { spec: AGENT_SPEC },
       ],
       (name) => docs.read(ctx, { scope: "system", kind: "tool", name }),
     );
   }
   // the vault: the model keys below, and the rooms' grants further down
   const creds = await store.vault();
+  // every sign-in in flight (connect/signin.ts): the tool's and the CLI doors', one table
+  // in the vault, each link service's door served here while one of its tickets is open
+  const root = config.root;
+  const signIns = root && catalog
+    ? createSignIns({
+      root,
+      creds,
+      log,
+      edge: catalog.edge,
+      declare: async (service) => {
+        if (await declareConnection(log, service)) {
+          console.error(`[sign-in] declared connections.${service}: ${await reloaded(root)}`);
+        }
+      },
+    }, {
+      google: googleSignIn,
+      microsoft: microsoftSignIn,
+      slack: slackSignIn,
+      whatsapp: createWhatsappSignIn(),
+      github: createGithubSignIn(),
+    })
+    : null;
   // one client per provider and key, the key read off the vault at every call (an agent's
   // own before the org's, the environment's when it holds none); a test's scripted edge
   // stands in for all of them
@@ -467,6 +500,23 @@ export async function start(
     docs,
     // where the docs are the table's, the session's read · write · edit tools (§9)
     ...(docs.as ? { reach: docs.as } : {}),
+    // the tools main serves itself: a sign-in from its table, an agent made on its roster
+    tools: (agentId, sessionId) => ({
+      ...(signIns
+        ? {
+          connect: connectTool({
+            agentId,
+            sessionId,
+            signIns,
+            log,
+            clock: (ms) => hhmm(new Date(ms).toISOString(), catalog?.shared.timezone),
+          }),
+        }
+        : {}),
+      ...(root
+        ? { agent: agentTool({ root, log, docs: docs.bed, up: (id) => reconcile(id) }) }
+        : {}),
+    }),
     media,
     policy: policyOf,
     // the agent's history (§6): what `search` reads, from any of its sessions — the
@@ -763,9 +813,38 @@ export async function start(
     reconciling = turn.catch(() => {});
     return turn;
   };
+  // a CLI door's sign-in (door.ts `askMain`): opened on the one table, every word streamed
+  // back a line each until the outcome. A door that hangs up leaves the sign-in open
+  const signInOver = async (req: Request): Promise<Response> => {
+    if (!signIns) return new Response("this main holds no sign-ins", { status: 409 });
+    const { caller: _caller, ...ask } = await req.json() as SignInAsk;
+    const encoder = new TextEncoder();
+    let open = true;
+    let out!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start: (c) => void (out = c),
+      cancel: () => void (open = false),
+    });
+    const hear = (w: Word) => {
+      if (!open) throw new Error("the door hung up");
+      out.enqueue(encoder.encode(`${JSON.stringify(w)}\n`));
+      if (ends(w)) {
+        open = false;
+        out.close();
+      }
+    };
+    try {
+      await signIns.open(ask, hear);
+    } catch (err) {
+      return new Response(err instanceof Error ? err.message : String(err), { status: 409 });
+    }
+    return new Response(body, { headers: { "content-type": "application/x-ndjson" } });
+  };
   // main's socket (roster.ts): a caller that wrote the roster pokes here, and is answered
-  // with what main did. The harness's own user's alone: an agent's user cannot connect
+  // with what main did; a CLI door asks for a sign-in at `/sign-in`. The harness's own
+  // user's alone: an agent's user cannot connect
   const asked = await serveSocket(`${dir}/run/main.sock`, async (req) => {
+    if (new URL(req.url).pathname === "/sign-in") return await signInOver(req);
     try {
       const body = req.method === "POST" ? await req.json() : {};
       const names = typeof body.agent === "string"
@@ -779,6 +858,8 @@ export async function start(
     }
   });
   await Deno.chmod(`${dir}/run/main.sock`, 0o600);
+  // the sign-ins the last run left open: lapsed, served again, or their polls taken up
+  await signIns?.resume().catch((err) => console.error("[sign-in] resume:", err));
 
   // boot is up for each row, its first look held until every tail below is listening; a
   // paused agent's door opens on its rooms alone
@@ -944,6 +1025,7 @@ export async function start(
       for (const unsub of [...unsubs, ...subs.values()]) unsub();
       await asked.shutdown(); // no change to the roster is taken from here on
       await Deno.remove(`${dir}/run/main.sock`).catch(() => {});
+      await signIns?.close(); // the doors shut; the tickets stay for the next main
       await doors.close(); // stop taking syscalls before the log goes away
       // Bound the settle. A turn wedged on a hung model connection (e.g. a network
       // outage during shutdown) must not block teardown forever — the sandbox's close

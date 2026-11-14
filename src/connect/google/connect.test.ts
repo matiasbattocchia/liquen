@@ -1,5 +1,8 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { APP_PREFIX, appGuide, connectGoogleApp, pickGoogleApp } from "./connect.ts";
+import { APP_PREFIX, appGuide, connectGoogleApp } from "./connect.ts";
+import { appOf } from "../signin.ts";
+
+const COMMAND = "liquen connect google account";
 import { DEFAULT_SCOPES } from "./config.ts";
 import { doorAddress } from "../door.ts";
 import { callbackAddress } from "../../edge.ts";
@@ -51,15 +54,15 @@ Deno.test("app: a re-paste rotates the secret", async () => {
 
 Deno.test("pick: the only app is the choice; several demand a name; none is an error", async () => {
   await withVault(async (creds) => {
-    await assertRejects(() => pickGoogleApp(creds), Error, "no google app");
+    const pick = (named?: string) => appOf(creds, APP_PREFIX, COMMAND, named);
+    await assertRejects(() => pick(), Error, "`liquen connect google app` adds one");
     await connectGoogleApp({ clientId: "cid1", clientSecret: "s" }, creds);
-    assertEquals((await pickGoogleApp(creds)).value.client_id, "cid1");
+    assertEquals((await pick()).value.client_id, "cid1");
     await connectGoogleApp({ clientId: "cid2", clientSecret: "s" }, creds);
-    const err = await assertRejects(() => pickGoogleApp(creds), Error);
-    assertStringIncludes(err.message, "--app");
-    assertStringIncludes(err.message, "cid2");
-    assertEquals((await pickGoogleApp(creds, "cid2")).value.client_id, "cid2");
-    await assertRejects(() => pickGoogleApp(creds, "nope"), Error, "no app nope");
+    const err = await assertRejects(() => pick(), Error);
+    assertStringIncludes(err.message, `${COMMAND} --app <id>`);
+    assertEquals((await pick("cid2")).value.client_id, "cid2");
+    await assertRejects(() => pick("nope"), Error, "no app nope");
   });
 });
 
