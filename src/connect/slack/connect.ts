@@ -345,6 +345,10 @@ export async function connectSlackBot(
 
 export const SOCKET_PREFIX = "slack:socket:";
 
+/** The app-level token's scopes, picked by hand in the console: the socket, and every
+ *  installation an event reached (`apps.event.authorizations.list`). */
+export const APP_TOKEN_SCOPES = ["connections:write", "authorizations:read"];
+
 /** The app id an app-level token carries: `xapp-1-<app id>-<issued>-<secret>`. Socket
  *  Mode is APP-scoped — one socket serves every workspace the app is installed in — so
  *  the app id is the carrier's whole identity, and keying by anything else (a team, a
@@ -453,7 +457,8 @@ export function slackNext(have: SlackHave): string[] {
   if (!have.appToken && !have.signingSecret) {
     next.push(
       "nothing to receive events over, so the connection refuses to start — Basic " +
-        "Information → App-Level Tokens → Generate Token and Scopes (`connections:write`), " +
+        "Information → App-Level Tokens → Generate Token and Scopes " +
+        `(${APP_TOKEN_SCOPES.map((s) => `\`${s}\``).join(", ")}), ` +
         "pasted at `liquen connect slack app` (or the app's signing secret there, for events " +
         "over HTTP at a PUBLIC request URL)",
     );
@@ -638,6 +643,11 @@ if (import.meta.main) {
           if (signingSecret) carrier = true;
         }
 
+        console.error(
+          `The app-level token takes its scopes by hand (App-Level Tokens → Generate Token ` +
+            `and Scopes): ${APP_TOKEN_SCOPES.join(", ")}. The bot and user scopes came with ` +
+            `the manifest.`,
+        );
         const appToken = ask("App-level token (xapp-…):");
         if (appToken) {
           const { appId } = await connectSlackSocket(appToken, { creds });

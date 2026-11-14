@@ -101,28 +101,27 @@ export function rosterSuite(s: Substrate): void {
     });
   });
 
-  Deno.test("slack: a member's DM recorded on the shared bot is their own agent's surface, when it runs and counts them", async () => {
+  Deno.test("slack: a member's DM with the shared bot, recorded on the workspace stub, is their own agent's surface, when it runs and counts them", async () => {
     const agents: AgentPut[] = [
       { agentId: "matias", mind: "mind@matias", principals: ["matias"] },
       { agentId: "sol", mind: "mind@sol", email: "sol@acme.co", settings: { mind: false } },
       { agentId: "lucia", mind: "mind@lucia", principals: ["matias"] },
     ];
     const connections: ConnectionRow[] = [
-      { service: "slack", address: "T1" },
       {
         service: "slack",
-        address: "T1:UBOT",
-        credentialKey: "slack:T1:org",
-        // the ingest's record of who has DMed the bot
+        address: "T1",
+        // the ingest's record of who has DMed the bot, on the stub every DM anchors to
         extra: { mirrors: { dms: { matias: "D78", sol: "D77", lucia: "D80", stranger: "D79" } } },
       },
+      { service: "slack", address: "T1:UBOT", credentialKey: "slack:T1:org" },
     ];
     assertEquals(speaksThrough(agents[0], connections).map((c) => c.address), ["T1:UBOT"]);
     await withRoster(agents, connections, async (log) => {
       // sol's agent does not run, lucia's is not steered by her, a stranger has none
-      assertEquals((await log.aliases()).filter((a) => a.connection === "T1:UBOT"), [{
+      assertEquals((await log.aliases()).filter((a) => a.connection === "T1"), [{
         service: "slack",
-        connection: "T1:UBOT",
+        connection: "T1",
         conversation: "D78",
         agentId: "matias",
         principal: "matias",

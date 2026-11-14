@@ -17,7 +17,7 @@
  * the same mapping (`mapMessage`), the same membership mirror — with the workspace's own
  * tokens as the delivery's `authorizations`: the bot's, then every bound user's, so a room
  * the bot is in anchors to the bot and a room only a member is in anchors to the workspace,
- * exactly as its events do. Each user token's room list is that user's membership as the
+ * a DM to the workspace whoever is in it, exactly as its events do. Each user token's room list is that user's membership as the
  * wire holds it now, so the joins and leaves the gap swallowed land here too.
  *
  * Not read back: an edit or a delete of a message that was already in the log (history
@@ -223,7 +223,7 @@ export function createSlackCatchUp(
     const skipped: string[] = [];
     let stopped: unknown;
     reading: for (const [channel, room] of rooms) {
-      const anchor = anchorOf(team, room.auths);
+      const anchor = anchorOf(team, room.auths, room.type === "im");
       const from = (await newest({ conversation: channel })) ?? since;
       const oldest = (Date.parse(from) / 1000).toFixed(3);
       const one = (m: Historic) =>

@@ -509,7 +509,8 @@ listening stopped, the newest row in a room is where that room stopped, and
 `conversations.history` from there (plus `conversations.replies` for any thread whose last
 reply is newer) is the gap. The rooms come from `users.conversations` on every token the
 workspace has — the bot's, then each bound user's — which are also the delivery's
-`authorizations`, so a room the bot is in anchors to the bot as its events do; a user
+`authorizations`, so a room the bot is in anchors to the bot as its events do, and a DM to
+the workspace stub whoever is in it; a user
 token's room list is that member's membership as the wire holds it now, and the joins and
 leaves the gap swallowed are mirrored from it. A room is read with the first of its tokens
 that can (a channel shared from another workspace may refuse the bot and not a member); a
@@ -572,8 +573,22 @@ holds it. The bot leaving (`member_left_channel` for its own user, `channel_left
 `group_left`, its `channel_leave` line) or the channel's archive line patches the key
 away. `channel_left` is also the room's line of the
 account out of it, unless the room's own leave line for the bot came within the minute
-before. A bot pasted with `--agent` is that agent's own account: it hosts no room, and its
-principals' DMs with it are recorded as `mirrors.dms`.
+before.
+
+**The DMs with the bot.** Every `im` anchors to the workspace stub, which grants nothing of
+itself, so no DM with the bot is the shared inbox. A member's is recorded there as
+`mirrors.dms.<member>` the first line they write, when the bot is among the delivery's
+installations (a member's DM with a colleague, seen by their own grant alone, never is):
+their own agent's surface when it runs and counts them, nobody's otherwise.
+
+**Every installation a delivery reached.** Slack sends one event per app and names one
+installation. When that one is a member's grant and the event carries an `event_context`,
+the ingest asks `apps.event.authorizations.list` for the rest, every page, kept to the
+delivery's workspace, on the delivering app's own app-level token (`api_app_id` →
+`slack:socket:<app id>`), so a line the bot saw anchors to the bot and every member grant is
+enrolled. The app-level token needs `authorizations:read` beside `connections:write`; the
+door lists both. No token, a refusal or a failed call leaves the one Slack named, said once
+per app and reason.
 
 Remaining:
 
@@ -583,8 +598,8 @@ Remaining:
 - **Connect options** — `liquen connect slack bot` (xoxb → the workspace anchor) and
   `liquen connect slack socket` (xapp → `slack:socket:<app id>`) are separate doors: an
   identity is workspace-scoped, a carrier is app-scoped, and the ingest opens one socket
-  per vaulted app token. Still open: `--agent <name>` / `--shared` — per-agent apps for
-  per-agent bots (one bot per app × workspace).
+  per vaulted app token. Still open: per-agent apps for per-agent bots (one bot per app ×
+  workspace), each bot shared; each app's delivery completes only its own installations.
 
 ## 5. Gmail — the mail connector, polled
 

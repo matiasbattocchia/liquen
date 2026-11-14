@@ -259,6 +259,10 @@ export interface SlackWebhookDeps {
    *  acks for itself): the handler answers only once the processing settled — 200 when the
    *  publish landed, 500 when it did not — so the carrier's ack means the row exists. */
   track?: (work: Promise<void>) => void;
+  /** Every installation an event reached (`apps.event.authorizations.list` on the app's
+   *  own app-level token), by the delivery's app and `event_context`; null when it cannot
+   *  be asked or was refused. Absent ⇒ the one installation Slack named stands. */
+  installations?: (app: string, context: string, team: string) => Promise<Authorization[] | null>;
   now?: () => string;
 }
 
@@ -323,10 +327,21 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     }
   };
 
-  async function handle(payload: EventsEnvelope): Promise<void> {
-    const team = payload.team_id;
-    const e = payload.event;
+  /** Every installation the delivery reached (§4). Slack names one, so when that one is
+   *  not the bot the whole list is asked for; a failure leaves the one it named. */
+  async function reached(payload: EventsEnvelope): Promise<Authorization[] | undefined> {
+    const named = payload.authorizations;
+    const { api_app_id: app, event_context: context, team_id: team } = payload;
+    if (!deps.installations || !app || !context || !team) return named;
+    if (named?.length !== 1 || named[0].is_bot) return named;
+    return (await deps.installations(app, context, team)) ?? named;
+  }
+
+  async function handle(delivered: EventsEnvelope): Promise<void> {
+    const team = delivered.team_id;
+    const e = delivered.event;
     if (!team || !e) return;
+    const payload = { ...delivered, authorizations: await reached(delivered) };
 
     // the name directory's push leg: profile changes arrive as events — the fresh fact
     // lands in the cache, nothing published
@@ -410,7 +425,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     if (e.type === "reaction_added" || e.type === "reaction_removed") {
       const item = e.item;
       if (item?.type !== "message" || !item.channel || !item.ts) return;
-      const anchor = anchorOf(team, payload.authorizations);
+      const anchor = anchorOf(team, payload.authorizations, isIm(item.channel));
       const who = e.user
         ? await deps.names?.nameOf(team, e.user, boundUsers(payload.authorizations))
         : undefined;
@@ -447,7 +462,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     }
     if (e.type !== "message") return;
 
-    const anchor = anchorOf(team, payload.authorizations);
+    const anchor = anchorOf(team, payload.authorizations, e.channel_type === "im");
     // a room the bot is met in may be an agent's steering room: recorded before the line
     // that met it lands, so that line is already the room's. The room's line of the bot
     // leaving, or of the channel archived, is the bot out of it
@@ -485,10 +500,23 @@ export interface MapCtx {
 export type Store = NonNullable<SlackWebhookDeps["store"]>;
 
 /** The delivery's anchor (§4): the BOT's own grant (`<team>:<bot user>`) when the bot
- *  witnessed it, the bare workspace when only personal grants did. */
-export function anchorOf(team: string, auths: Authorization[] | undefined): string {
-  const bot = auths?.find((a) => a.is_bot && a.user_id);
+ *  witnessed it, the bare workspace when only personal grants did. A DM (`im`) anchors to
+ *  the bare workspace whoever saw it: a DM with the shared bot is its sender's agent's
+ *  surface or nobody's, never the shared inbox. */
+export function anchorOf(team: string, auths: Authorization[] | undefined, im = false): string {
+  const bot = im ? undefined : auths?.find((a) => a.is_bot && a.user_id);
   return bot ? `${team}:${bot.user_id}` : team;
+}
+
+/** Whether the bot is among a delivery's installations. */
+function sawBot(auths: Authorization[] | undefined): boolean {
+  return (auths ?? []).some((a) => a.is_bot);
+}
+
+/** A DM by its channel id: Slack's DM ids begin with `D`, which is all a reaction says of
+ *  its place. */
+function isIm(channel: string): boolean {
+  return channel.startsWith("D");
 }
 
 /** The bot user an anchor names, or undefined on the bare workspace. */
@@ -532,20 +560,21 @@ async function memberOf(
 
 /** A member's DM with the shared bot is a surface of the mind of their own agent (§4), and
  *  Slack's id for it is opaque — so the first line a member sends the bot in an `im`
- *  RECORDS the channel on the bot's row (`extra.mirrors.dms`, member → channel), where the
- *  alias derivation reads it. Whether that agent runs and counts them is decided there,
- *  not here. */
+ *  RECORDS the channel on the workspace stub (`extra.mirrors.dms`, member → channel), the
+ *  row every DM anchors to, where the alias derivation reads it. The whole conversation
+ *  rides the stub: their lines, the mirror's copies out, the echoes. Whether that agent
+ *  runs and counts them is decided there, not here. */
 async function recordDm(
   store: Store,
-  anchor: string,
+  team: string,
   member: string,
   channel: string,
 ): Promise<void> {
-  const row = await store.connection("slack", anchor);
+  const row = await store.connection("slack", team);
   if (!row || row.agentId || mirrorsOf(row).dms?.[member] === channel) return;
   await store.upsertConnections([{
     service: "slack",
-    address: anchor,
+    address: team,
     extra: { mirrors: { dms: { [member]: channel } } },
   }]);
 }
@@ -760,9 +789,11 @@ export async function mapMessage(
   // names a member is that member — `agent.id` alone (a Slack client is not the harness,
   // so no session_id); turn_id, never this stamp, marks the model's voice
   const owner = await memberOf(store, names, team, m.user, via);
-  // a member's DM with the bot: written down where the mind's surfaces are derived (§4)
-  if (owner && store && e.channel_type === "im" && anchor !== team) {
-    await recordDm(store, anchor, owner, conversation);
+  // a member's DM with the bot: written down where the mind's surfaces are derived (§4).
+  // The bot among the installations is what says the DM is with it, not a member's DM
+  // with a colleague that only their own grant sees
+  if (owner && store && e.channel_type === "im" && sawBot(authorizations)) {
+    await recordDm(store, team, owner, conversation);
   }
   return [{
     ts: slackTime(edit ? e.event_ts : m.ts, ctx.now),
@@ -1347,12 +1378,71 @@ export interface Authorization {
   is_bot?: boolean;
 }
 
+/** The `installations` seam (§4): `apps.event.authorizations.list` on the app's own
+ *  app-level token, every page, kept to the delivery's workspace (a shared channel lists
+ *  another's too). An app with no token here answers null; so does a refusal, said once
+ *  per app and reason. */
+export function slackInstallations(
+  appToken: (app: string) => Promise<string | undefined>,
+  fetchApi: typeof fetch = timedFetch,
+  say: (line: string) => void = (line) => console.error(line),
+): (app: string, context: string, team: string) => Promise<Authorization[] | null> {
+  const said = new Set<string>();
+  const refused = (app: string, why: string): null => {
+    if (!said.has(`${app} ${why}`)) {
+      said.add(`${app} ${why}`);
+      say(
+        `[ingest] slack app ${app}: the installations an event reached are unread (${why}); ` +
+          "the one Slack named stands. The app-level token needs authorizations:read",
+      );
+    }
+    return null;
+  };
+  return async (app, context, team) => {
+    const token = await appToken(app);
+    if (!token) return null;
+    const found: Authorization[] = [];
+    let cursor: string | undefined;
+    try {
+      do {
+        const res = await fetchApi("https://slack.com/api/apps.event.authorizations.list", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({ event_context: context, ...(cursor ? { cursor } : {}) }),
+        });
+        const body = await res.json() as {
+          ok: boolean;
+          error?: string;
+          authorizations?: { team_id?: string; user_id?: string; is_bot?: boolean }[];
+          response_metadata?: { next_cursor?: string };
+        };
+        if (!body.ok) return refused(app, body.error ?? `HTTP ${res.status}`);
+        for (const a of body.authorizations ?? []) {
+          if (!a.user_id || (a.team_id !== undefined && a.team_id !== team)) continue;
+          found.push({ user_id: a.user_id, ...(a.is_bot ? { is_bot: true } : {}) });
+        }
+        cursor = body.response_metadata?.next_cursor || undefined;
+      } while (cursor);
+    } catch (err) {
+      return refused(app, err instanceof Error ? err.message : String(err));
+    }
+    return found.length ? found : null;
+  };
+}
+
 interface EventsEnvelope {
   type?: string;
   challenge?: string;
   team_id?: string;
-  /** the installed user this delivery is for — what names the LEG (§4) */
+  /** the app the delivery is for: whose app-level token asks for the rest */
+  api_app_id?: string;
+  /** the installed users this delivery is for — Slack names one (§4) */
   authorizations?: Authorization[];
+  /** the event's handle for `apps.event.authorizations.list` */
+  event_context?: string;
   event?: SlackEvent;
 }
 
@@ -1583,6 +1673,10 @@ export async function runIngest(): Promise<() => Promise<void>> {
     store: log, // identities + memberships live on the Log (§4) — the wire fills the map
     media,
     names,
+    // every installation a live event reached, asked with the delivering app's own token
+    installations: slackInstallations(async (app) =>
+      (await creds.get(`${SOCKET_PREFIX}${app}`))?.value.app_token
+    ),
   };
   const release = async () => {
     await creds.close();
