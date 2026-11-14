@@ -27,8 +27,8 @@ out, since a send needs only the grant.
 
 `listen` is the org's, for every account. One member's mailbox stays out while the org's
 is read when that member signs in without the mail scope: the scopes the sign-in asks for
-are the catalog's `connections.<name>.scopes`, and the door's `--scopes "…"`, or `?scopes=`
-on a `/start` link, replaces them for that one sign-in. With no `gmail.readonly` (or
+are the catalog's `connections.<name>.scopes`, and the door's `--scopes "…"` replaces them
+for that one sign-in; a reconnect asks what the grant held. With no `gmail.readonly` (or
 `gmail.modify`) on Google, or no `Mail.Read`/`Mail.ReadWrite` on Microsoft, the mailbox is
 neither polled nor readable through the tool:
 
@@ -97,10 +97,36 @@ shipped or the org's own, is on the internet the moment the org is, with nothing
 declare, no port of its own and nothing to add to the edge. The edge routes by the
 grammar, not by a table, so the connection's name is the route: lowercase letters, digits
 and dashes, starting with a letter, which boot checks. A listener on a TCP port of its own
-is not behind the edge. A sign-in door is `serveDoor` over a handler that answers
-`/start` and `/callback` by suffix, wrapped in `oneShot` so the door returns when the
-first callback lands; `doorAddress` reads the start link off the registered callback and
-says whether it is this machine's browser (`openBrowser`) or a link to send. A door hands a service that address
+is not behind the edge. An org's own sign-in door is `serveDoor` over a handler that
+answers `/start` and `/callback` by suffix, wrapped in `oneShot` so the door returns when
+the first callback lands; `doorAddress` reads the start link off the registered callback
+and says whether it is this machine's browser (`openBrowser`) or a link to send.
+
+A shipped service's sign-in is main's (`src/connect/signin.ts`), whoever asks for it: the
+`connect` tool, or a CLI door over main's socket (`signInHere`, door.ts). Each sign-in is a
+ticket in the vault (`sign_ins`), keyed by service and by who signs in: the account when it
+is known before the sign-in (a reconnect, a WhatsApp pairing code's number), else whom the
+grant is for. A second ask under an open key gets the first one back, so a link goes out
+once and a phone is never linked twice.
+
+- **A link service** (Google, Microsoft, Slack's user leg) has its handler served by main on
+  the oauth socket while any of its tickets is open, and shut when the last one ends. The
+  link carries the ticket alone, so nobody holding it can change whom it binds. Each click
+  mints a state pointing at the ticket, and the first callback settles it.
+- **A code service** (WhatsApp's pairing code or QR, GitHub's device flow) runs its poll in
+  main, noting on the ticket what a restart needs to take it up (the bridge's pending
+  session, the device code). The device code itself never leaves the vault.
+- **The judge.** Before anything is written, the handler or the poll hands the account the
+  service vouched for to the ticket (`Gate.judge`). A reconnect lands only as its account; a
+  grant for another agent only as the handle on their row (email, or phone for WhatsApp);
+  and an account someone else owns, or a shared one asked as anyone's own, is never taken
+  over. The first callback settles the ticket whatever it brings.
+- **The outcome** is said once: to each call that asked, as its update, final, and to each CLI
+  still listening. A ticket past its deadline (15 minutes for a link, the service's life for
+  a code) lapses the same way. Leaving the CLI leaves the sign-in open, and the same command
+  finds it again.
+
+A door hands a service that address
 with `ingestAddress(base, name)` — `edge.publicUrl` for a dialer on the internet,
 `localBase(edge.port)` for one on this host — or `callbackAddress(edge, name)`, and says
 whether it answers with `reachLine`: `serveIngest` makes every ingest name itself to a

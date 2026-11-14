@@ -1305,8 +1305,21 @@ The 3×2 grid, each cell real and distinct:
   Docker the files are broker-owned.
   Connecting is **interactive, dev-shaped** — `gh login` / `claude login` is the pattern
   devs expect (Claude-Code MCP logins likewise): a `liquen connect <service>` flow writes the
-  connection row + vault rows; the same flow is later steerable through the agent (§8
-  conversational setup), since the REPL into the mind is already the operator console.
+  connection row + vault rows.
+  **Every sign-in is main's** (`src/connect/signin.ts`), asked for at the terminal or by an
+  agent. A CLI door asks over main's socket and says what main streams back; the `connect`
+  tool asks from a turn, gated `ask`, and answers at once with the link or the code, the
+  outcome arriving later as the call's update, final. Both reach one table: a ticket in
+  the vault per sign-in, keyed by service and by who signs in (the account when it is known
+  before, else whom the grant is for), so two asks share one sign-in. A link service's
+  handler is served by main while one of its tickets is open, and a code service's poll
+  runs there, noting on the ticket what a restart needs. The handler hands the account the
+  service vouched for to the ticket before anything is written: a reconnect lands only as
+  its account, a grant for another agent only as the handle on their row, and nobody's
+  account changes owner. The link carries the ticket's id alone, so whom it binds is the
+  ticket's, never the link's. With the `agent` tool beside it, offered only where an
+  agent's `tools` names it, one agent provisions another: the agent made with a member's
+  email, then a sign-in for it sent to that member.
   **The two Slack doors (`liquen connect slack {app,user}`, `connect/slack/connect.ts`)**: the dashboard's
   "Install to Workspace" button IS an OAuth flow with Slack hosting the redirect, so a
   dev self-serves tokens with zero public surface — `app` is one sitting at the console:
@@ -1316,12 +1329,11 @@ The 3×2 grid, each cell real and distinct:
   (`slack:socket:<app id>`), and with `--bot`/`--user` the tokens the install issued
   (`slack:<team>:org`, the dev's own leg). `auth.test` resolves the workspace (a token
   string never identifies one) before the map writes. A paste serves whoever is at the
-  terminal; `user` serves a member who is not, through the OAuth handler mounted for one
-  sign-in at the org's public door (`<edge.publicUrl>/slack/oauth/callback`, which the
-  manifest registers) — the link carries the agent
-  name the way Google's does, Slack's verified `authed_user.id` is what the terminal
-  reports against it, and the grant lands through the same `landSlackUser` a paste lands
-  through. Only user scopes are asked there: the bot is the org's, from the install. Facts
+  terminal; `user` serves a member who is not, through main's sign-in door at the org's
+  public address (`<edge.publicUrl>/slack/oauth/callback`, which the manifest registers) —
+  the ticket names the agent as Google's does, Slack's verified `authed_user.id` is what
+  the terminal reports against it, and the grant lands through the same `landSlackUser` a
+  paste lands through. Only user scopes are asked there: the bot is the org's, from the install. Facts
   that shaped it: one app × workspace = ONE bot (reinstall rotates the token, never a
   second bot; more bots ⇒ more apps — per-agent apps named after the agent), multiple
   apps coexist under ONE anchor row (per-bot identity lives in the vault, and the
@@ -3861,9 +3873,9 @@ loudly, the same law as an unknown config key.
   reads on.
 - **One port, and the connectors listen where they live.** The org binds one port,
   `edge.port`, and nothing else: every connector serves its ingest on a Unix socket under
-  the org's own folder, `data/run/<service>.sock`, and a sign-in door on
-  `data/run/<service>-oauth.sock` while it is open (`socketOf`, src/edge.ts; `serveIngest`,
-  src/connect/serve.ts). The location is the whole address, so a connector declares
+  the org's own folder, `data/run/<service>.sock`, and main serves a sign-in door on
+  `data/run/<service>-oauth.sock` while one of its sign-ins is open (`socketOf`,
+  src/edge.ts; `serveIngest`, src/connect/serve.ts). The location is the whole address, so a connector declares
   nothing to be reachable, two orgs on one machine never meet, and a socket somebody
   already answers on is refused rather than stolen. Whatever dials the org on this host —
   a browser here, the whatsmeow bridge, `gh webhook forward` — dials the edge,

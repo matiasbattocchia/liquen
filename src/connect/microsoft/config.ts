@@ -89,7 +89,7 @@ export const SPEC: ConnectorSpec = {
     {
       key: "scopes",
       value: DEFAULT_SCOPES,
-      doc: "OAuth scopes a new grant asks for (a /start ?scopes= overrides per-link)",
+      doc: "OAuth scopes a new grant asks for (the door's --scopes overrides one sign-in)",
       check: checkStrings,
     },
   ],

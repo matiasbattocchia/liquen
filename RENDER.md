@@ -101,6 +101,8 @@ goes with its words. Each skill the system describes is one file under
 | News that undoes what you said | ✓ | Conduct |
 | `→` happened, `—` didn't | ✗ | |
 | `sent`, then an update on failure | ✗ | `send.md` |
+| `Open this link to sign in: …` or `The code is …`, `good until 15:42`, then an update `signed in: google ana@example.com` or `not signed in: …` | ✗ | `connect.md`. `, without <scopes>` when the grant came back short |
+| `ana made, and ana up. data/agents/ana/instructions.md says who they are` | ✗ | `agent.md` |
 | `the script made N calls (…): K failed, J asked your principal` | ✗ | |
 | `status="failed" error=`, `status="withdrawn"` | ✗ | `cancel.md` |
 

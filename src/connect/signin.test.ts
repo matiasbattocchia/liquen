@@ -76,6 +76,10 @@ async function harness(
         published.push(stored);
         return Promise.resolve(stored);
       }) as Appender["publish"],
+      agents: () =>
+        Promise.resolve(
+          ["ana", "bo"].map((agentId) => ({ agentId, mind: `mind@${agentId}` })),
+        ),
       connections: () => Promise.resolve(opts.connections ?? []),
       upsertConnections: () => Promise.resolve(),
       upsertMemberships: () => Promise.resolve(),
@@ -323,6 +327,20 @@ Deno.test("open: a service with no flow is refused, naming the CLI", async () =>
       Error,
       "`liquen connect telegram`",
     );
+  } finally {
+    await h.close();
+  }
+});
+
+Deno.test("open: a grant for a name off the roster is refused in a sentence", async () => {
+  const h = await harness({ svc: linkFlow() });
+  try {
+    await assertRejects(
+      () => h.signIns.open({ service: "svc", agent: "eve" }),
+      Error,
+      'no agent "eve"',
+    );
+    assertEquals(await h.creds.tickets(), []);
   } finally {
     await h.close();
   }

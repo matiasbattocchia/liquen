@@ -168,7 +168,7 @@ export async function askMain(
   const sock = mainSocket(root);
   if (!(await socketUp(sock))) {
     console.error(
-      `main is not running — it holds every sign-in, and \`liquen start\` runs it\n` +
+      `main is not running: it holds every sign-in, and \`liquen start\` runs it\n` +
         `  waiting up to ${Math.round(waitMs / 1_000)}s for it…`,
     );
     const deadline = Date.now() + waitMs;

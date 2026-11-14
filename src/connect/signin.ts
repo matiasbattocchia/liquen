@@ -21,6 +21,7 @@ import type { CredentialRow, Credentials, TicketRow } from "../store/credentials
 import type { Appender } from "../store/log.ts";
 import type { Connections } from "../store/connections.ts";
 import type { Gates } from "../store/gates.ts";
+import type { Registry } from "../store/agents.ts";
 import type { CallRef } from "../xi.ts";
 import { updateDraft } from "../late.ts";
 import { socketOf } from "../edge.ts";
@@ -110,6 +111,7 @@ export interface Gate {
 /** The writes a sign-in makes and the rows it reads. */
 export type SignInLog =
   & Pick<Appender, "publish">
+  & Pick<Registry, "agents">
   & Pick<Connections, "connections" | "upsertConnections" | "upsertMemberships">
   & Partial<Pick<Gates, "unended">>;
 
@@ -362,6 +364,9 @@ export function createSignIns(
         throw new Error(
           `${ask.service} signs in at the terminal: \`liquen connect ${ask.service}\``,
         );
+      }
+      if (ask.agent && !(await log.agents()).some((a) => a.agentId === ask.agent)) {
+        throw new Error(`no agent "${ask.agent}": a grant binds to an agent on the roster`);
       }
       await sweep();
       const prepared = await flow.prepare(ask, ctx);
