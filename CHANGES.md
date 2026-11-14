@@ -56,9 +56,23 @@ and who: the account for a reconnect, the agent the grant is for when it is new.
 - **Deadlines.** A link lives 15 minutes (`SIGN_IN_MS`). A code lives as long as its
   service keeps it: about 3 minutes for a WhatsApp pairing code, GitHub's `expires_in` for
   a device code.
-- **Restarts.** A ticket lives in the vault beside the sign-in states (`mintState`), with
-  what its poll needs (the bridge's pending session, the device code), so a main that
-  restarts serves and polls the open ones again.
+- **Where a ticket lives.** In the vault, in a table of its own beside `oauth_states`:
+  - the ticket's id, its service and its key;
+  - what it binds: the agent, the pinned account, the scopes, the caller and its session;
+  - what its poll needs: the bridge's pending session, GitHub's device code;
+  - its own deadline, since a state's fixed 10 minutes is shorter than a link's life;
+  - whether it settled.
+
+  A unique index on the key over unsettled rows makes the same key's second call find the
+  open one. `/start` mints an ordinary state pointing at the ticket, one per click. The
+  callback settles the ticket in one `UPDATE`, as a state is consumed, and a sweep settles
+  one past its deadline as lapsed. A ticket for an agent that is removed goes with it, as
+  its keys do.
+- **Restarts.** Main reads the open tickets at boot, serves the sockets they need, and
+  resumes their polls.
+- **What stays in the vault.** The answer carries the link, or the code the person types,
+  and the log keeps it. GitHub's `device_code`, which redeems the token once the person
+  approves, stays in the ticket.
 - **No count limit.** Every tool call waits on the principal (`ask`), and that is the
   throttle.
 - **The outcome.** A sign-in that lands writes what its door writes today, and declares
