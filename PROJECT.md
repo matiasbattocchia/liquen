@@ -6868,6 +6868,27 @@ Open:
 - A sign-in made while the connection runs is taken up by restarting its process, every
   account's session with it.
 
+### Witnesses, and a Teams DM with an org account (2026-09-27) — NEVER MERGED
+
+Two pieces of work written on 26 and 27 Sep never reached main, whether forgotten or
+abandoned. They stood uncommitted in a worktree until 13 Nov, and branch `teams-alias`
+(c90c73b) now holds them as they were. It starts from f7a0abb, far behind main, so it is a
+reference to read, not a patch to apply. Its PROJECT and DESIGN text tells the whole of it.
+
+- **A principal's Teams DM with an org account as a mind surface.** The first line a
+  member sends in a oneOnOne with the org account records the chat on the account's row,
+  and the chat is hidden and mirrored into `mind@<agent>` as a Slack bot DM is. Main went
+  another way on 2026-10-20: a DM is a mind surface only on an account the agent owns, and
+  an org account reaches a mind through a steering room alone.
+- **A row names every account it reached the log through.** `events.witnesses` lists them,
+  the upsert unites the lists on a merge, and the law reads a witness as it reads the
+  anchor. Slack asks `apps.event.authorizations.list` for every installation a delivery
+  reached, since the event names only one; Teams anchors to the tenant and names the
+  grants in the place; dispatch picks the account it speaks through with `speakerOf`.
+  None of it is on main, where a Slack row anchors to the one account the delivery names.
+  Where a bot and a personal grant share a place, the other may never see the row; main
+  has not been checked against that.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
