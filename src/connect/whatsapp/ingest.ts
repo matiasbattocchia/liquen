@@ -30,12 +30,17 @@
  * coexistence is unattributable from the wire, §4).
  *
  * Ingest is a CLASSIFIER (§3): `conversation.kind` from the jid shape (`@g.us` → group,
- * `@broadcast` → broadcast, digits → direct); a sender resolves by point lookup of its
- * grant row on the connections map, else by the name the message carries. Names are
- * DENORMALIZED onto every row: the bridge stamps `sender_name`/`conversation_name` per
- * message (address book first — a directory liquen has no table for), and the `contacts`/
- * `rooms` feeds fill in for a bridge that doesn't. Either way a rename reaches rows from
- * the next message on, never retroactively (decided 2026-08-11).
+ * `@broadcast` and `@newsletter` → broadcast, digits → direct), and a list's message from
+ * somebody else lands in the direct chat with its author, where the phone shows it; a
+ * sender resolves by point lookup of its grant row on the connections map, else by the
+ * name the message carries. A group's line carries the group's facts (members, the account
+ * an admin, its community): the first two meet the connection's knobs in the marked
+ * publish (`connect/marks.ts`) and are dropped, the third stays as `extra.community`.
+ *
+ * Names are DENORMALIZED onto every row: the bridge stamps `sender_name`/`conversation_name`
+ * per message (address book first — a directory liquen has no table for), and the
+ * `contacts`/`rooms` feeds fill in for a bridge that doesn't. Either way a rename reaches
+ * rows from the next message on, never retroactively (decided 2026-08-11).
  *
  * Edits are their OWN events (§3) — the original row stays sealed, the edit renders in a
  * later WUM; revokes are MERGE-ONLY drafts — no `parts` key, so `json_patch` leaves the stored
@@ -68,6 +73,7 @@ import type {
 import { roomPart } from "../../room.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { entry } from "../../entry.ts";
+import { createMarks, marked } from "../marks.ts";
 
 /* ── the bridge's wire shapes (openbsp.go is the source of truth — the bridge's own
  *    contract, not a platform API, so hand-rolled here is honest) ─────────────────── */
@@ -113,7 +119,21 @@ export interface WAMessage {
    *  renders nowhere; `search` is the door. */
   muted?: boolean;
   archived?: boolean;
+  /** What a group's message says of the group as it arrived: how many are in it, whether
+   *  the account is an admin there, and the name of the community it belongs to. The
+   *  first two feed the crowd rule (`connect/marks.ts`); the third rides the row as
+   *  `extra.community`. Absent on every other chat. */
+  conversation_members?: number;
+  conversation_admin?: boolean;
+  conversation_community?: string;
 }
+
+/** A group's facts as an edit or a room's line carries them, under the names a message
+ *  gives them. */
+type GroupFacts = Pick<
+  WAMessage,
+  "conversation_members" | "conversation_admin" | "conversation_community"
+>;
 
 export interface WABatch {
   organization_address: string;
@@ -132,7 +152,7 @@ export interface WABatch {
    *  group's subject first seen, a group's change as WhatsApp announced it, a call, a
    *  direct chat's timer, and the account's own view of the chat (see `WARoom`). */
   rooms?: WARoom[];
-  edits?: {
+  edits?: ({
     external_id?: string; // the edit's OWN protocol-message id (newer bridges)
     original_message_id: string;
     conversation_address?: string;
@@ -142,7 +162,7 @@ export interface WABatch {
     timestamp: string;
     muted?: boolean; // an edit is its own event, so it carries the chat state too —
     archived?: boolean; //   else an edit in a muted chat would wake what the chat can't
-  }[];
+  } & GroupFacts)[];
   revokes?: {
     external_id?: string;
     original_message_id: string;
@@ -204,6 +224,10 @@ export interface WARoom {
   timestamp?: string;
   muted?: boolean;
   archived?: boolean;
+  /** A group's facts, as its messages carry them (`WAMessage.conversation_members` …). */
+  members?: number;
+  admin?: boolean;
+  community?: string;
 }
 
 export interface WALink {
@@ -368,11 +392,33 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
 type Store = NonNullable<WhatsAppWebhookDeps["store"]>;
 
 /** The jid shape IS the platform fact (§3): group jids are `…@g.us`, broadcast lists
- *  `…@broadcast`, direct chats bare canonical digits. */
+ *  `…@broadcast` and channels `…@newsletter` (the bridge carries only the ones the account
+ *  runs), direct chats bare canonical digits. */
 export function kindOf(address: string): NonNullable<Conversation["kind"]> {
   if (address.endsWith("@g.us")) return "group";
-  if (address.endsWith("@broadcast")) return "broadcast";
+  if (address.endsWith("@broadcast") || address.endsWith("@newsletter")) return "broadcast";
   return "direct";
+}
+
+/** Where a line lands: its chat, save a broadcast list's message from somebody else. The
+ *  bridge addresses that one at the list, the author as its sender; the phone shows it in
+ *  the direct chat with its author, so it lands there. The account's own message to a list
+ *  stays at the list's address. */
+function placed(address: string, sender: string | undefined, connection: string): string {
+  return address.endsWith("@broadcast") && sender && sender !== connection ? sender : address;
+}
+
+/** A group's facts on the conversation, where the crowd rule reads and drops them. */
+function factsOf(f: GroupFacts): Pick<Conversation, "members" | "admin"> {
+  return {
+    ...(typeof f.conversation_members === "number" ? { members: f.conversation_members } : {}),
+    ...(typeof f.conversation_admin === "boolean" ? { admin: f.conversation_admin } : {}),
+  };
+}
+
+/** The community a group belongs to, as the row keeps it. */
+function communityOf(f: GroupFacts): { community?: string } {
+  return f.conversation_community ? { community: f.conversation_community } : {};
 }
 
 /** The bridge's file kinds are already liquen's `MediaKind` vocabulary (both open-bsp's). */
@@ -487,12 +533,9 @@ function mapMessage(
     part.text = nameMentionTokens(part.text, m.content.mentions, pushnames);
   }
 
-  const address = m.conversation_address;
-  // the message's own names first, the batch caches after: a per-message name is a fact
-  // the row keeps forever, while a cache only knows whoever has spoken since this process
-  // started — which is why a restart used to leave whole conversations anonymous
-  const name = m.conversation_name || groupNames.get(address);
   const sender = m.sender_address || undefined; // "" = the wire couldn't name the account side
+  const address = placed(m.conversation_address, sender, connection);
+  const moved = address !== m.conversation_address;
   // sender.name is the SERVICE's display fact — what the account calls this person, nothing
   // of ours: identity resolution (who a grant binds) is the classifier's business (§3).
   // The row KEEPS the name, the account's own side included — the bridge stamps
@@ -503,6 +546,11 @@ function mapMessage(
   // answer (`agent_id`), and only render spends it — an own-side line wears `org` or its
   // principal's mark and shows no sender at all (§5). The log records; the window decides.
   const who = m.sender_name || (sender ? pushnames.get(sender) : undefined);
+  // the message's own names first, the batch caches after: a per-message name is a fact
+  // the row keeps forever, while a cache only knows whoever has spoken since this process
+  // started. A direct chat is its peer, so a list's message placed there wears its
+  // author's name.
+  const name = (moved ? who : m.conversation_name) || groupNames.get(address);
   const state = m.status ? stateOf(m.status) : undefined;
   // the SERVICE-NEUTRAL silencing marks (§3 extra, §5): a consumer skipping history or a
   // muted chat reads the same keys across every connector
@@ -513,6 +561,7 @@ function mapMessage(
     // the name is the account's word for them, out of its address book (§3 sender_saved):
     // `contact`, where a pushname is anyone's to choose
     ...(who && m.sender_saved && who === m.sender_name ? { [SENDER_SAVED]: true } : {}),
+    ...communityOf(m),
   };
 
   return {
@@ -525,6 +574,7 @@ function mapMessage(
         address,
         kind: kindOf(address),
         ...(name ? { name } : {}),
+        ...factsOf(m),
       },
       ...(sender
         ? {
@@ -553,7 +603,13 @@ function mapEdit(
 ): Draft<MessageEvent> | null {
   if (!e.original_message_id) return null;
   const ts = e.timestamp || now();
-  const marks = { ...(e.muted ? { muted: true } : {}), ...(e.archived ? { archived: true } : {}) };
+  const marks = {
+    ...(e.muted ? { muted: true } : {}),
+    ...(e.archived ? { archived: true } : {}),
+    ...communityOf(e),
+  };
+  const address = e.conversation_address &&
+    placed(e.conversation_address, e.sender_address, connection);
   const mentioned = (e.mentions ?? [])
     .filter((m): m is { address: string; name?: string } => !!m.address)
     .map((m) => ({ address: m.address, ...(m.name ? { name: m.name } : {}) }));
@@ -571,8 +627,9 @@ function mapEdit(
       service: SERVICE,
       connection_address: connection,
       conversation: {
-        address: e.conversation_address ?? "",
-        ...(e.conversation_address ? { kind: kindOf(e.conversation_address) } : {}),
+        address: address || "",
+        ...(address ? { kind: kindOf(address) } : {}),
+        ...factsOf(e),
       },
       ...(e.sender_address ? { sender: { address: e.sender_address } } : {}),
       external_id: externalId(e.external_id ?? `edit.${e.original_message_id}.${ts}`),
@@ -664,10 +721,16 @@ function mapRoom(
   const sender = by ?? joined[0] ?? left[0];
   const ts = r.timestamp || now();
   const name = r.name || groupNames.get(r.address);
+  const facts: GroupFacts = {
+    conversation_members: r.members,
+    conversation_admin: r.admin,
+    conversation_community: r.community,
+  };
   const marks = {
     ...(backfill ? { backfill: true } : {}),
     ...(r.muted ? { muted: true } : {}),
     ...(r.archived ? { archived: true } : {}),
+    ...communityOf(facts),
   };
   // who moved and the new subject read in the id as they always have; anything else the
   // line says, as a digest of it: two changes in one second differ, one posted twice not
@@ -684,7 +747,12 @@ function mapRoom(
     envelope: {
       service: SERVICE,
       connection_address: connection,
-      conversation: { address: r.address, kind: kindOf(r.address), ...(name ? { name } : {}) },
+      conversation: {
+        address: r.address,
+        kind: kindOf(r.address),
+        ...(name ? { name } : {}),
+        ...factsOf(facts),
+      },
       ...(sender ? { sender } : {}),
       external_id: externalId(`room.${connection}.${r.address}.${ts}.${change}`),
     },
@@ -736,6 +804,8 @@ function mapRevoke(
 ): Draft<MessageEvent>[] {
   if (!r.original_message_id) return [];
   const ts = r.timestamp || now();
+  const address = r.conversation_address &&
+    placed(r.conversation_address, r.sender_address, connection);
   return [
     {
       ts,
@@ -745,8 +815,8 @@ function mapRevoke(
         service: SERVICE,
         connection_address: connection,
         conversation: {
-          address: r.conversation_address ?? "",
-          ...(r.conversation_address ? { kind: kindOf(r.conversation_address) } : {}),
+          address: address || "",
+          ...(address ? { kind: kindOf(address) } : {}),
         },
         ...(r.sender_address ? { sender: { address: r.sender_address } } : {}),
         external_id: externalId(r.external_id ?? `del.${r.original_message_id}.${ts}`),
@@ -877,15 +947,19 @@ export function bridgeTokenOf(env: string | undefined): string {
 export async function runIngest(): Promise<() => Promise<void>> {
   const { openStore } = await import("../../store/mod.ts");
   const { mediaSecret, serveMedia } = await import("../../store/media.ts");
+  const { whatsappConfig } = await import("./config.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
+  const knobs = await whatsappConfig(root);
   const store = await openStore(root);
   const log = await store.log();
   const creds = await store.vault();
   const storage = store.storage();
 
   const handler = createWhatsAppWebhook({
-    publish: log.publish,
+    // a group's facts meet the connection's knobs before the batch lands: the crowd rule,
+    // and a line for the account, the account's address being the connection's own
+    publish: marked(log.publish, createMarks({ read: (q) => log.read(q), knobs })),
     store: log, // connections live on the Log (§4) — session events write the map
     storage,
     bridgeToken: bridgeTokenOf(Deno.env.get("WA_BRIDGE_TOKEN")),

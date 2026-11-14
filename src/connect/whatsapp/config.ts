@@ -14,7 +14,7 @@
  * is right whenever the sidecar shares the host.
  */
 
-import type { ConnectorSpec } from "../../config.ts";
+import type { ConnectorSpec, RoomKnobs } from "../../config.ts";
 import { connectorConfig } from "../../org.ts";
 import { ingestAddress, localBase } from "../../edge.ts";
 
@@ -66,7 +66,8 @@ export const SPEC: ConnectorSpec = {
   ],
 };
 
-/** Read `connections.whatsapp` as the org's store holds it. */
-export function whatsappConfig(root: string): Promise<WhatsappConfig> {
+/** Read `connections.whatsapp` as the org's store holds it, the room knobs every connection
+ *  resolves beside its own. */
+export function whatsappConfig(root: string): Promise<WhatsappConfig & RoomKnobs> {
   return connectorConfig<WhatsappConfig>(root, SPEC);
 }
