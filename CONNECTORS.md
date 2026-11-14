@@ -953,6 +953,7 @@ either way.
 
 **The account's view.** A chat the account muted or archived marks its rows `muted` or
 `archived`, read from the dialog list at boot and kept current from the settings updates.
+Every line of the chat carries the marks, a reaction and a delete as much as a message.
 
 **Reactions** (`reactions.ts`). Telegram says the whole set a message wears, never a
 change, so the set is compared with what the log holds of the message: a glyph with no

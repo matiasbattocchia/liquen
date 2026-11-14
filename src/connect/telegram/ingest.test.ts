@@ -615,6 +615,34 @@ Deno.test("telegram ingest: a message's reactions become adds and removes agains
   assertEquals(published.length, 2);
 });
 
+Deno.test("telegram ingest: a reaction and a delete in a muted or archived chat are silenced as its messages are", async () => {
+  const views: Record<string, { muted?: boolean; archived?: boolean }> = {
+    "-4100": { muted: true },
+    "-1009000": { archived: true },
+  };
+  const { ingest, published } = harness({
+    wire: fakeWire({ view: (chat: string) => views[chat] ?? {} }),
+    read: () => Promise.resolve([]),
+  });
+  await ingest.handle({
+    type: "reactions",
+    chat: TEAM,
+    id: 41,
+    reactions: [{ by: SOL, emoji: "👍", date: NOW }],
+  });
+  assertEquals(published[0].extra, { muted: true });
+  await ingest.handle({ type: "delete", ids: [9], chat: "-1009000" });
+  assertEquals(published[1].extra, { archived: true });
+  // a chat the app holds plainly marks nothing
+  await ingest.handle({
+    type: "reactions",
+    chat: SOL,
+    id: 42,
+    reactions: [{ by: SOL, emoji: "👍", date: NOW }],
+  });
+  assertEquals(published[3].extra, undefined);
+});
+
 Deno.test("telegram ingest: the session's state lands on the account's row", async () => {
   const upserts: ConnectionRow[] = [];
   const row: ConnectionRow = {

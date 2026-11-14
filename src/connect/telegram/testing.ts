@@ -82,6 +82,7 @@ export function fakeWire(over: Partial<TgWire> = {}): FakeWire {
     remove: noted("remove", () => undefined),
     rename: noted("rename", () => undefined),
     history: noted("history", () => [] as TgMessage[]),
+    view: () => ({}),
   };
   const wire = { ...base, calls } as FakeWire;
   for (const [op, fn] of Object.entries(over)) {
