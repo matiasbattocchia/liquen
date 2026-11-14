@@ -32,7 +32,7 @@ export function parseTokenArgs(argv: string[]): TokenArgs {
   let hosts: string[] | undefined;
   let paths: string[] | undefined;
   let agentId: string | undefined;
-  let org = false;
+  let shared = false;
   let probe: string | undefined;
   const list = (v: string) => v.split(",").map((x) => x.trim()).filter(Boolean);
   const value = (flag: string, i: number): string => {
@@ -47,12 +47,12 @@ export function parseTokenArgs(argv: string[]): TokenArgs {
     else if (a === "--paths") paths = list(value(a, i++));
     else if (a === "--agent") agentId = value(a, i++);
     else if (a === "--probe") probe = value(a, i++);
-    else if (a === "--org") org = true;
+    else if (a === "--shared") shared = true;
     else if (a.startsWith("--")) throw new Error(`unknown flag ${a}`);
     else if (name === undefined) name = a;
     else throw new Error(`one name — got "${name}" and "${a}"`);
   }
-  if (org && agentId) throw new Error("--org or --agent <id>, not both");
+  if (shared && agentId) throw new Error("--shared or --agent <id>, not both");
   return checkTokenArgs({
     name: name ?? "",
     env: env ?? "",

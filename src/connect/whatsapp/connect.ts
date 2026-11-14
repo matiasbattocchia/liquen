@@ -163,7 +163,7 @@ export async function connectWhatsApp(
 /* ── local entry: drive the pairing against the bridge, QR in the terminal ──────────
  *
  * The positional is the principal (default: the OS username — a session choice, so an
- * argument); `--org` pairs a number nobody owns, the one an org agent speaks through;
+ * argument); `--shared` pairs a number nobody owns, read by every agent;
  * the number is a flag, international digits, no `+`. The flow is chosen by
  * the number's presence because the code flow CANNOT exist without it (whatsmeow's
  * PairPhone mints the code for that specific number), while the QR flow needs nothing.
@@ -174,12 +174,12 @@ export async function connectWhatsApp(
  *
  * Env: WA_BRIDGE_TOKEN (the secret); the knobs are connections.whatsapp. */
 const USAGE = `usage: liquen connect whatsapp [agent] [--phone <digits>]
-       liquen connect whatsapp --org [--phone <digits>]
+       liquen connect whatsapp --shared [--phone <digits>]
 
   Pair a WhatsApp number through the whatsmeow bridge; knobs: connections.whatsapp.
 
   [agent]           the roster member whose phone this is (default: your OS username)
-  --org             the org's own number — owned by nobody, spoken through by its agents
+  --shared          a shared number: owned by nobody, read by every agent
   --phone <digits>  the pairing-code flow for that number (international digits, no +);
                     without it, a QR code to scan from the phone
   --dir <org>       the org, when run from elsewhere`;
@@ -197,17 +197,17 @@ if (import.meta.main) {
     const store = await openStore(root);
     const flags = new Map<string, string>();
     const positional: string[] = [];
-    let orgOwned = false;
+    let shared = false;
     for (let i = 0; i < org.args.length; i++) {
-      if (org.args[i] === "--org") orgOwned = true;
+      if (org.args[i] === "--shared") shared = true;
       else if (org.args[i].startsWith("--")) flags.set(org.args[i].slice(2), org.args[++i] ?? "");
       else positional.push(org.args[i]);
     }
-    if (orgOwned && positional.length > 0) {
-      console.error("--org pairs the org's own number: no agent to name");
+    if (shared && positional.length > 0) {
+      console.error("--shared pairs a number nobody owns: no agent to name");
       Deno.exit(2);
     }
-    const principal = orgOwned ? undefined : positional[0] ?? (() => {
+    const principal = shared ? undefined : positional[0] ?? (() => {
       try {
         return userInfo().username;
       } catch {

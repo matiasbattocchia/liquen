@@ -10,8 +10,8 @@
  *   signed in → the vault: `telegram:<user id>`, the session string
  *             → connections: ONE row at the account's user id, the anchor every event
  *               carries. Owned by the member whose account it is, with their chat with
- *               themselves (Saved Messages) as `mirrors.self`; or the org's, owned by
- *               nobody and spoken through by its agents
+ *               themselves (Saved Messages) as `mirrors.self`; or shared, owned by
+ *               nobody and read by every agent
  *             → membership: the `connect` conversation, so the note reaches the owner
  *             → the log: the grant crosses the frontier as an event (§4)
  *
@@ -116,14 +116,14 @@ export async function connectTelegram(deps: TelegramConnectDeps): Promise<{ acco
 
 const USAGE = `usage: liquen connect telegram app
        liquen connect telegram [agent] [--phone <number>]
-       liquen connect telegram --org [--phone <number>]
+       liquen connect telegram --shared [--phone <number>]
 
   Sign a Telegram account in over MTProto; knobs: connections.telegram.
 
   app               store the application's api id and api hash (my.telegram.org →
                     API development tools); once per org, before any account
   [agent]           the roster member whose account this is (default: your OS username)
-  --org             the org's own account: owned by nobody, spoken through by its agents
+  --shared          a shared account: owned by nobody, read by every agent
   --phone <number>  the code flow for that number (international, with or without +);
                     without it, a QR code to scan from the phone
   --dir <org>       the org, when run from elsewhere`;
@@ -137,9 +137,9 @@ if (import.meta.main) {
     const store = await openStore(root);
     const flags = new Map<string, string>();
     const positional: string[] = [];
-    let orgOwned = false;
+    let shared = false;
     for (let i = 0; i < org.args.length; i++) {
-      if (org.args[i] === "--org") orgOwned = true;
+      if (org.args[i] === "--shared") shared = true;
       else if (org.args[i].startsWith("--")) flags.set(org.args[i].slice(2), org.args[++i] ?? "");
       else positional.push(org.args[i]);
     }
@@ -166,10 +166,10 @@ if (import.meta.main) {
         return;
       }
 
-      if (orgOwned && positional.length > 0) {
-        throw new Error("--org signs in the org's own account: no agent to name");
+      if (shared && positional.length > 0) {
+        throw new Error("--shared signs in an account nobody owns: no agent to name");
       }
-      const principal = orgOwned ? undefined : positional[0] ?? terminalUser();
+      const principal = shared ? undefined : positional[0] ?? terminalUser();
       if (principal) {
         const member = (await readConfig(root)).agents[principal];
         if (!member) {
