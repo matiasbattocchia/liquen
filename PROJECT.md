@@ -6979,13 +6979,8 @@ did:
 
 Open:
 
-- Two Slack apps in one workspace each complete only their own installations, so a member
-  grant of one never learns the other's bot saw the line; the merged row keeps the anchor
-  it got first.
 - A bot-named delivery enrolls no member, which nothing reads while a row the bot saw is
   read by every agent; per-agent access to shared rows would revisit it.
-- The first lines of a DM sent before the member's agent runs are never copied into its
-  mind: the mirror tails live.
 - Nothing here has met a live workspace; turtle's app-level token needs
   `authorizations:read` added by hand.
 
