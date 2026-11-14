@@ -6,9 +6,9 @@
  * that rotates). Once the phone pairs, the ticket judges the number and the map is
  * written (`landWhatsApp`). A restart takes the poll up from the noted session.
  *
- * The service must be declared, with its ingest up, before a pairing starts: from the
- * pairing on the bridge delivers to that ingest, the history first. The CLI door declares
- * it; a pairing asked for an org that has never paired is refused, naming that door.
+ * The service is declared, with its ingest up, before a pairing starts: from the pairing on
+ * the bridge delivers to that ingest, the history first. An org's first pairing declares
+ * it, naming the bridge's tenant after the org's folder, as the CLI door does.
  */
 
 import { basename } from "node:path";
@@ -56,15 +56,12 @@ export function createWhatsappSignIn(
     life: (ask) => ask.pair ? PAIRING_CODE_MS : PAIRING_TTL_MS,
 
     async prepare(_ask, ctx) {
+      const tenant = (await configOf(ctx.root)).organizationId ?? basename(ctx.root);
       if (!("whatsapp" in (await readConfig(ctx.root)).connections)) {
-        throw new Error(
-          "WhatsApp is not set up in this org yet: `liquen connect whatsapp` at the terminal " +
-            "sets it up",
-        );
+        await ctx.declare("whatsapp", { organizationId: tenant });
       }
       await waitIngest(ctx.root, "whatsapp");
-      const cfg = await configOf(ctx.root);
-      return { organizationId: cfg.organizationId ?? basename(ctx.root) };
+      return { organizationId: tenant };
     },
 
     async run(t, ctx, gate, signal) {

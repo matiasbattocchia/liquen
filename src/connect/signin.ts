@@ -23,6 +23,7 @@ import type { Connections } from "../store/connections.ts";
 import type { Gates } from "../store/gates.ts";
 import type { Registry } from "../store/agents.ts";
 import type { CallRef } from "../xi.ts";
+import type { Json } from "../types.ts";
 import { updateDraft } from "../late.ts";
 import { socketOf } from "../edge.ts";
 import { MIND } from "../session.ts";
@@ -121,8 +122,9 @@ export interface FlowCtx {
   creds: Credentials;
   log: SignInLog;
   edge: { publicUrl: string | null; port: number };
-  /** Declare the service when it is new, and reload the running org. */
-  declare(service: string): Promise<void>;
+  /** Declare the service when it is new, with the knobs it starts with, and reload the
+   *  running org. */
+  declare(service: string, knobs?: Record<string, Json>): Promise<void>;
 }
 
 /** One service's sign-in. */

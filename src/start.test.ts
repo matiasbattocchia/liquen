@@ -2,6 +2,7 @@ import { assert, assertEquals, assertThrows } from "@std/assert";
 import { backoffMs, comesBack, failing, type Kept, pause, plan, reads, roster } from "./start.ts";
 import { REFUSAL } from "./entry.ts";
 import { type OrgConfig, starterConfig } from "./config.ts";
+import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
 
 Deno.test("failing: a failure and the indented trace under it, and nothing else", () => {
   const lines: [string, boolean][] = [
@@ -91,6 +92,13 @@ Deno.test("reads: each process restarts on its own part of the file and nothing 
     changed(catalog({ connections: { slack: {}, whatsapp: { bridgeUrl: "http://b:1" } } })),
     ["main", "whatsapp"],
   );
+  // declaring WhatsApp leaves main be: the address it resolves is the default either way
+  const bare = catalog({ connections: { slack: {} } });
+  const declared = catalog({
+    connections: { slack: {}, whatsapp: { bridgeUrl: DEFAULT_BRIDGE_URL } },
+  });
+  assertEquals(reads("main", declared), reads("main", bare));
+  assertEquals(reads("main", base), reads("main", bare));
   // the roster and every agent's settings restart nobody: main reconciles each agent
   // from its row while it runs
   const agents = { ana: { mind: true } } as unknown as OrgConfig["agents"];

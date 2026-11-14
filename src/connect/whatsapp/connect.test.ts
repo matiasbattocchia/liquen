@@ -9,6 +9,13 @@ import { newId } from "../../store/id.ts";
 import { ingestUrlOf, type WhatsappConfig } from "./config.ts";
 import { fakeGate, ticket } from "../testing.ts";
 import type { FlowCtx } from "../signin.ts";
+import type { Json } from "../../types.ts";
+import { basename } from "node:path";
+import { materialize, starterConfig } from "../../config.ts";
+import { serveIngest } from "../serve.ts";
+import { openStore } from "../../store/mod.ts";
+import { declareConnection } from "../../roster.ts";
+import { readConfig } from "../../org.ts";
 
 /** A scripted bridge: `create` answers the first state, each `pending` poll the next. */
 function fakeBridge(first: WAPairingState, ...polls: WAPairingState[]) {
@@ -202,6 +209,38 @@ Deno.test("a shared number binds nobody — an ownerless, credentialed row and n
   assertEquals(memberships, []);
   const note = published[0] as MessageEvent;
   assertStringIncludes(note.parts[0].type === "text" ? note.parts[0].text : "", "the org");
+});
+
+Deno.test("an org's first pairing declares WhatsApp, its tenant named after the folder; a later one declares nothing", async () => {
+  const root = await Deno.makeTempDir();
+  await Deno.writeTextFile(`${root}/config.yaml`, materialize(starterConfig()));
+  const ingest = await serveIngest(root, "whatsapp", () => new Response("ok"));
+  const declared: [string, Record<string, Json> | undefined][] = [];
+  // main's hook: the declaration in the store, as main writes it
+  const ctx = {
+    root,
+    declare: async (service: string, knobs?: Record<string, Json>) => {
+      declared.push([service, knobs]);
+      const log = await (await openStore(root)).log();
+      try {
+        await declareConnection(log, service, knobs);
+      } finally {
+        await log.close();
+      }
+    },
+  } as unknown as FlowCtx;
+  const flow = createWhatsappSignIn({ bridge: () => fakeBridge(pending()).bridge });
+  try {
+    const tenant = basename(root);
+    assertEquals(await flow.prepare({ service: "whatsapp" }, ctx), { organizationId: tenant });
+    assertEquals(declared, [["whatsapp", { organizationId: tenant }]]);
+    assertEquals((await readConfig(root)).connections.whatsapp?.organizationId, tenant);
+    assertEquals(await flow.prepare({ service: "whatsapp" }, ctx), { organizationId: tenant });
+    assertEquals(declared.length, 1);
+  } finally {
+    await ingest.shutdown();
+    await Deno.remove(root, { recursive: true });
+  }
 });
 
 Deno.test("ingestUrlOf: the declared address, else this machine's edge", () => {

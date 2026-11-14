@@ -61,6 +61,7 @@ import { entry, REFUSAL } from "./entry.ts";
 import { claim, holder, MAIN, SUPERVISOR } from "./stop.ts";
 import { applied, moved, type Moves, runSocket } from "./reload.ts";
 import { RUNNING, SHIPPED } from "./connect/connect.ts";
+import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
 import { helpFlag } from "./connect/help.ts";
 import { serveSocket } from "./connect/serve.ts";
 import { openRunLog, RUN_LOG, type RunLog, sayConsole } from "./runlog.ts";
@@ -226,15 +227,18 @@ export function roster(root: string, cfg: Pick<OrgConfig, "connections" | "edge"
 /** The part of the org's configuration a process reads once, at its start, as a reload
  *  compares it. Every liquen process reads where the store is, the machinery's knobs and
  *  the org's clock; main reads the WhatsApp bridge's address too, because it speaks to the
- *  bridge itself (the address book, the rooms); a connection reads the edge and its own
- *  scope; the edge its section; the tunnel is its argv. The roster and every agent's
- *  settings are in none of them: main reconciles an agent from its row while it runs. */
+ *  bridge itself (the address book, the rooms), and reads it as it resolves, the default
+ *  until one is declared, so declaring WhatsApp moves main only when the address does; a
+ *  connection reads the edge and its own scope; the edge its section; the tunnel is its
+ *  argv. The roster and every agent's settings are in none of them: main reconciles an
+ *  agent from its row while it runs. */
 export function reads(name: string, cfg: OrgConfig): string {
   const { agents: _agents, connections, edge, shared, ...rest } = cfg;
   const { agents: _defaults, ...clock } = shared;
   const common = { ...rest, shared: clock };
   if (name === "main") {
-    return JSON.stringify({ ...common, bridge: connections.whatsapp?.bridgeUrl });
+    const bridge = connections.whatsapp?.bridgeUrl ?? DEFAULT_BRIDGE_URL;
+    return JSON.stringify({ ...common, bridge });
   }
   if (name === "edge") return JSON.stringify(edge);
   if (name === "tunnel") return JSON.stringify(edge.tunnel);

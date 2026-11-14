@@ -7058,6 +7058,9 @@ and merged in.
   `ask`; its answer is the link or the code, and the outcome is the call's update, final.
   `agent({id, name?, email?, phone?})` makes an agent and brings it up, gated `ask` and
   offered only where an agent's `tools` names it; an id that exists is refused.
+- **A first WhatsApp pairing declares the service.** Main reads the bridge's address as it
+  resolves (`reads`, start.ts), so declaring WhatsApp leaves main running, and the tool's
+  pairing declares it and waits for its ingest, as the CLI door does.
 - **A sign-out says so.** An owned row that moves to `signed_out` writes one alarm into its
   owner's mind (`signedOutLine`, health.ts), including the WhatsApp session route that
   writes the state itself. It waits out the night and the digest as world lines do, and
@@ -7067,8 +7070,11 @@ Open:
 
 - Nothing has met a live sign-in: a Google reconnect of a grant refused as `invalid_grant`
   is the first to try, through the tool and through the CLI.
-- WhatsApp through the tool needs the service declared: a pairing asked of an org that has
-  never paired is refused, naming the CLI door, since declaring it would restart main.
+- A first WhatsApp pairing needs a bridge at `bridgeUrl` and `WA_BRIDGE_TOKEN` in the env
+  `liquen start` read. Without the token the ingest refuses, and the call waits two
+  minutes before it says so; either way WhatsApp is left declared, as the CLI leaves it.
+- A pairing code sent over WhatsApp itself is untried. WhatsApp's help names no bar on it,
+  and the phone shows the device's name and place, asking to confirm an unknown one.
 - The mirror, the REPL, export, tail and turns show the signed-out line as a plain alarm.
 - An org's own connectors keep their one-shot doors (`oneShot`, `serveDoor`), outside
   main's table.
