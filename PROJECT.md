@@ -6905,6 +6905,57 @@ Open:
   who hides their number and connects nothing writes as a stranger, and their DM steers
   nothing.
 
+### Big rooms stay quiet, forums split, and a sign-in brings sixty days (2026-11-14) — LANDED
+
+The CHANGES batch of 14 Nov, all eight items. The core was built first; Telegram, WhatsApp
+and Slack with Teams were built on it in parallel.
+
+- **A crowded room is silenced.** `connect/marks.ts` stamps `extra.crowded` on a line in a
+  room past `crowd` members (20) and `busy` lines a day (40) that the account does not
+  administer, unless the connection follows it. Each connector stamps the two facts on the
+  draft's conversation (`members`, `admin`) and publishes through `marked`; the row drops
+  them. The knobs are `shared.connections`, which every connection inherits.
+- **Muted lets the account's own line through.** A muted or crowded room's line that
+  mentions the account or replies to its line is stamped `addressed` and is news;
+  archived and history stay silent. `silenced` and the SQL on both engines read the same
+  rule, and the anchor counts what muted and crowded rooms left out in one line.
+- **A conversation names its community.** `extra.community`, rendered `<conv community>`:
+  a Telegram topic's forum, a WhatsApp group's community, a Teams channel's team (whose
+  `name` is now the channel's own).
+- **Telegram forums.** A topic is `<chat>/<topic>`, named by its title; ids stay the
+  supergroup's numbering, a delete takes its line's conversation from the log, a send to a
+  topic goes into it.
+- **A removal ends the Telegram session.** Through the process's socket before the key
+  goes, or by the removal itself when nothing answers; the reconcile ends one only on a
+  soft-deleted row whose key is gone (`connection()` now says `deletedAt`).
+- **Sixty days at a sign-in.** Telegram imports every chat's last `historyDays` (60) as
+  backfill, and any line dated before the sign-in is history. The WhatsApp bridge asks for
+  a full sync of 60 days (`HISTORY_DAYS`).
+- **WhatsApp lists and channels.** A list's message from somebody else lands in the direct
+  chat with them; a channel the account runs is a broadcast, one it follows is dropped.
+
+Open:
+
+- None of it has met a live account: Telegram's topics, import and removal, WhatsApp's
+  channels and lists, the crowd rule on any wire.
+- The bridge's share is on branch `batch` (cd7b093, worktree `~/open-bsp-whatsmeow-batch`),
+  neither merged nor deployed: the bridge serves OpenBSP too. Two of its changes reach
+  OpenBSP: the account's own list messages in history are addressed by the list's jid, and
+  a group's first message in a bridge process waits up to ten seconds for its group info.
+- Whether a linked device receives the posts of a channel the account runs is unconfirmed;
+  every post there is taken as the account's.
+- A reply that quotes a received list message finds no target: its id does not match the
+  stored row.
+- A number paired before whatsmeow stored the account's own LID may mention it as a LID,
+  which `marks.ts`'s default `self` misses.
+- On Slack, a channel's admin is its creator alone; a normal token sees no channel managers.
+- A Teams group chat the rooms port makes lists every member as owner, so it never reads
+  as crowded.
+- `community` is a sidecar key, not a column: nothing searches by it.
+- Each Telegram account owes its last sign-in's history at the first boot of this code
+  (no marker yet), so each imports sixty days once. One chat's import stops at 5,000
+  messages.
+
 ### Witnesses, and a Teams DM with an org account (2026-09-27) — NEVER MERGED
 
 Two pieces of work written on 26 and 27 Sep never reached main, whether forgotten or
