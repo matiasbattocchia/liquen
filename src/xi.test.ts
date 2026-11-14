@@ -7,6 +7,8 @@ import {
   decide,
   downOn,
   gateOf,
+  HUSHED_READ,
+  hushedOn,
   relevant,
   specsOf,
   UNANSWERED_ROOMS,
@@ -1427,6 +1429,34 @@ const line = (
     ...(over.payload ? { payload: over.payload } : {}),
   }) as Event;
 const T = (m: number) => `2026-09-16T14:${String(m).padStart(2, "0")}:00.000Z`;
+
+Deno.test("hushedOn: what muted and crowded rooms left out is counted in one line, above the floor", async () => {
+  const row = (room: string) => ({
+    envelope: { service: "telegram", conversation: { address: room } },
+  });
+  const asked: unknown[] = [];
+  const log = (rows: unknown[]) => ({
+    read: (q: unknown) => {
+      asked.push(q);
+      return Promise.resolve(rows as Event[]);
+    },
+  });
+  assertEquals(await hushedOn([], undefined, log([])), []);
+  assertEquals(
+    await hushedOn([], "2026-11-14T00:00:00Z", log([row("-4100"), row("-4100"), row("-4200")])),
+    ["— 3 lines in 2 muted conversations not shown — search to read them —"],
+  );
+  assertEquals(asked[1], {
+    after: "2026-11-14T00:00:00Z",
+    types: ["message"],
+    hushed: true,
+    limit: HUSHED_READ + 1,
+  });
+  const many = Array.from({ length: HUSHED_READ + 1 }, () => row("-4100"));
+  assertEquals(await hushedOn([], undefined, log(many)), [
+    `— ${HUSHED_READ}+ lines in 1 muted conversation not shown — search to read them —`,
+  ]);
+});
 
 Deno.test("unansweredOn: a room whose last word is a peer's is listed, newest room first, counting their run", () => {
   const lines = unansweredOn(

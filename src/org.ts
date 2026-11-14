@@ -21,6 +21,7 @@ import {
   type OrgConfig,
   orgOf,
   readFile,
+  type RoomKnobs,
   validateOrg,
 } from "./config.ts";
 import type { AgentRow, ConfigRow, Registry } from "./store/agents.ts";
@@ -60,7 +61,7 @@ export async function connectorConfig<T extends object>(
   root: string,
   spec: ConnectorSpec,
   log?: Registry,
-): Promise<T> {
+): Promise<T & RoomKnobs> {
   return knobsOf<T>(await readConfig(root, log), spec, root);
 }
 

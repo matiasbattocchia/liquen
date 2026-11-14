@@ -250,14 +250,22 @@ triggers wait: a trigger-less poke has no burst to wait for, and the agent's own
 how one turn CHAINS to the next.
 
 Beneath all three classes sit the **silencing marks** — `extra.backfill` (imported
-history) and `extra.muted` · `extra.archived` (the chat's platform-synced state when the
+history), `extra.muted` · `extra.archived` (the chat's platform-synced state when the
 message arrived; WhatsApp's phone-side mute/archive rides whatsmeow app state, stamped
-per message by the bridge — the same denormalization as names, never retroactive). A
-marked row is not news at all: it never wakes — not even into a pile, so a muted group
-never comes due — never renders, never mirrors; the
-turn window's read drops it in SQL (`silenced: false`) and `search` is the door. Slack
-has no wire equivalent (mute is a private client preference the bot can't see) — a
-liquen-side mute waits for the conversations table.
+per message by the bridge — the same denormalization as names, never retroactive), and
+`extra.crowded` (a room with more than `crowd` members and more than `busy` lines in the
+last day, that the account does not administer; `src/connect/marks.ts` decides it for
+every wire from the facts each connector stamps on the draft's conversation, `members`
+and `admin`, and the connection's knobs). A marked row is not news at all: it never wakes
+— not even into a pile, so a muted group never comes due — never renders, never mirrors;
+the turn window's read drops it in SQL (`silenced: false`) and `search` is the door. One
+exception, as a phone badges it: a muted or crowded room's line FOR THE ACCOUNT (its
+`mentions` name the account, or it replies to the account's line) is stamped
+`extra.addressed`, and is news. History and an archived chat stay silent whatever they
+say. What muted and crowded rooms left out is counted in the anchor, one line, so the
+agent knows a search there would find something. Slack has no wire equivalent of mute (a
+private client preference the bot can't see) — a liquen-side mute waits for the
+conversations table; the crowd rule reaches it all the same.
 
 `relevant` — authorship and class only, never payloads — and never visibility: the trigger
 arrives through the agent's scoped subscription, already readable (§6).
@@ -3707,7 +3715,10 @@ or a gateway, which needs the docs in the database · mounts · sandboxSleepMinu
 (what every agent shares: timezone · locale ·
 backlogHours — the clock is the ORG's alone, one deployment one wall time — plus
 `shared.agents`, the defaults every agent inherits: model · effort · maxTokens · the
-window, compactAt · keepRecent · provider · tools · rules · the attention knobs · presence), `processors` (media→text commands, §5), `agents`
+window, compactAt · keepRecent · provider · tools · rules · the attention knobs · presence,
+and `shared.connections`, the defaults every connection inherits: crowd · busy, the crowd
+rule of §2's silencing marks, each overridden by a `connections.<name>` subsection, which
+also lists the rooms it always reads, `follow`), `processors` (media→text commands, §5), `agents`
 (the roster: each entry sets `shared.agents` keys sparsely, plus `identity` —
 `name`/`email`/`phone`, the agent's own: the name it goes by and the handles of the
 account it acts as, the roster's columns; whether that account is a

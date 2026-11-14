@@ -51,6 +51,11 @@ export const CONFIG_FILE = "config.yaml";
 export const DEFAULT_BACKLOG_HOURS = 24;
 export const DEFAULT_TIMEZONE = "UTC"; // explicit, so two boxes render the same stamps
 
+// shared.connections — every connection's defaults (a `connections.<name>` entry re-declares
+// these, key by key)
+export const DEFAULT_CROWD = 20; // members past which a busy room is crowded
+export const DEFAULT_BUSY = 40; // lines a day past which a room past the crowd is crowded
+
 // shared.agents — every agent's defaults (an `agents.<name>` entry re-declares these, key by key)
 export const DEFAULT_MODEL = "claude-sonnet-5";
 export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + tools + text
@@ -216,6 +221,7 @@ export interface OrgConfig {
     locale: string | null; // LANG in every agent shell and media processor
     backlogHours: number;
     agents: AgentDefaults;
+    connections: ConnectionDefaults;
   };
   processors: {
     /** Shell command: audio bytes on stdin → transcript text on stdout (non-zero exit =
@@ -371,6 +377,59 @@ const SHARED: Entry[] = [
   },
 ];
 
+/** What every connection's rooms are read by (§5): a room is crowded when it has more than
+ *  `crowd` members, more than `busy` lines landed in it in the last day, and the account
+ *  is no admin there. */
+export interface ConnectionDefaults {
+  crowd: number;
+  busy: number;
+}
+
+const CONNECTION: Entry[] = [
+  {
+    key: "crowd",
+    value: DEFAULT_CROWD,
+    doc: "members past which a busy room is crowded: its lines are kept and searchable, " +
+      "and only a line for the account (a mention, a reply to its own) wakes or shows; a " +
+      "room the account administers is never crowded",
+  },
+  {
+    key: "busy",
+    value: DEFAULT_BUSY,
+    doc: "lines in the last 24 hours past which a room with more than crowd members is " +
+      "crowded: a calm room is read whatever its size",
+  },
+];
+
+/** What every connection resolves beside its connector's own knobs. */
+export interface RoomKnobs extends ConnectionDefaults {
+  /** The rooms always read, by address, whatever `crowd` and `busy` say. */
+  follow: string[];
+}
+
+/** The keys every connection has beside its connector's own: the two above, its own
+ *  values over the org's, and the rooms it always reads. */
+function connectionEntries(cfg: OrgConfig): ConnectorSpec["entries"] {
+  const count = (v: unknown) =>
+    Number.isInteger(v) && (v as number) >= 0 ? null : "must be a whole number, 0 or more";
+  return [
+    ...CONNECTION.map((e) => ({
+      ...e,
+      value: cfg.shared.connections[e.key as keyof ConnectionDefaults],
+      check: count,
+    })),
+    {
+      key: "follow",
+      value: [],
+      doc: "the rooms always read, by address, whatever crowd and busy say",
+      check: (v: unknown) =>
+        Array.isArray(v) && v.every((s) => typeof s === "string" && s)
+          ? null
+          : "must be an array of addresses",
+    },
+  ];
+}
+
 const AGENT: Entry[] = [
   { key: "model", value: DEFAULT_MODEL, doc: "the model an agent runs on" },
   {
@@ -521,7 +580,11 @@ function defaults(): OrgConfig {
   return {
     system: fromEntries(SYSTEM),
     deployment: fromEntries(DEPLOYMENT),
-    shared: { ...fromEntries(SHARED), agents: fromEntries(AGENT) },
+    shared: {
+      ...fromEntries(SHARED),
+      agents: fromEntries(AGENT),
+      connections: fromEntries(CONNECTION),
+    },
     processors: fromEntries(PROCESSORS),
     edge: fromEntries(EDGE),
     agents: {},
@@ -618,6 +681,7 @@ const SCOPES: Record<string, Entry[]> = {
   system: SYSTEM,
   shared: SHARED,
   "shared.agents": AGENT,
+  "shared.connections": CONNECTION,
   processors: PROCESSORS,
   edge: EDGE,
 };
@@ -664,7 +728,11 @@ export function parseDeclared(raw: string, path: string): Declared {
   for (const section of Object.keys(found)) {
     if (!(section in SECTION_DOCS)) throw new Error(`${path}: unknown section "${section}"`);
   }
-  const { agents: sharedAgents, ...shared } = asObject(found.shared, path, "shared");
+  const { agents: sharedAgents, connections: sharedConnections, ...shared } = asObject(
+    found.shared,
+    path,
+    "shared",
+  );
   const out: Declared = {
     deployment: mergeSection(
       asObject(found.deployment, path, "deployment"),
@@ -681,6 +749,13 @@ export function parseDeclared(raw: string, path: string): Declared {
         "shared.agents",
         path,
         "shared.agents",
+      ),
+      ...leavesOf(
+        asObject(sharedConnections, path, "shared.connections"),
+        CONNECTION,
+        "shared.connections",
+        path,
+        "shared.connections",
       ),
       ...leavesOf(
         asObject(found.processors, path, "processors"),
@@ -799,6 +874,8 @@ export function orgOf(
   for (const { scope, key, value } of rows) {
     if (scope === "shared.agents") {
       (cfg.shared.agents as unknown as Record<string, Json>)[key] = value;
+    } else if (scope === "shared.connections") {
+      (cfg.shared.connections as unknown as Record<string, Json>)[key] = value;
     } else if (scope in SCOPES) sections[scope][key] = value;
     else if (scope.startsWith("connections.")) {
       const body = cfg.connections[scope.slice("connections.".length)] ??= {};
@@ -826,14 +903,19 @@ export function settingsOf(cfg: OrgConfig, name: string): AgentDefaults {
 
 /** A connector's knobs, off the org as it stands: its scope over its spec's defaults —
  *  an unknown key errors, and each `check` runs. `label` names where the org was read. */
-export function knobsOf<T extends object>(cfg: OrgConfig, spec: ConnectorSpec, label: string): T {
+export function knobsOf<T extends object>(
+  cfg: OrgConfig,
+  spec: ConnectorSpec,
+  label: string,
+): T & RoomKnobs {
+  const entries = [...spec.entries, ...connectionEntries(cfg)];
   const merged = mergeSection(
     cfg.connections[spec.name] ?? {},
-    spec.entries,
+    entries,
     label,
     `connections.${spec.name}`,
   );
-  for (const e of spec.entries) {
+  for (const e of entries) {
     const complaint = e.check?.(merged[e.key]);
     if (complaint) {
       throw new Error(
@@ -842,7 +924,7 @@ export function knobsOf<T extends object>(cfg: OrgConfig, spec: ConnectorSpec, l
       );
     }
   }
-  return merged as unknown as T;
+  return merged as unknown as T & RoomKnobs;
 }
 
 /* ── the file, rendered ──────────────────────────────────────────────────── */
@@ -915,6 +997,21 @@ export function materialize(
       }
       lines.push("  agents:");
       emit("    ", "shared.agents", AGENT, cfg.shared.agents as unknown as Record<string, unknown>);
+      if (docs) {
+        lines.push(
+          ...wrap(
+            "every connection's defaults — a connections.<name> entry sets these, key by key",
+            "  ",
+          ),
+        );
+      }
+      lines.push("  connections:");
+      emit(
+        "    ",
+        "shared.connections",
+        CONNECTION,
+        cfg.shared.connections as unknown as Record<string, unknown>,
+      );
     }
     lines.push("");
   }

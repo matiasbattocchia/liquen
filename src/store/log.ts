@@ -124,12 +124,17 @@ export interface ReadQuery {
   /** Rows whose lifecycle stands at this stage (`status.state`, indexed). A dispatcher
    *  opens on `queued`: every offer made before it existed, read off the rows. */
   state?: DeliveryStatus;
-  /** `false` ⇒ drop silenced rows (`extra.backfill` · `muted` · `archived` — imported
-   *  history and muted/archived-chat traffic, §5). The TURN WINDOW passes it: those rows
+  /** `false` ⇒ drop silenced rows (`extra.backfill` · `archived`, and `muted` · `crowded`
+   *  unless `addressed`: imported history, archived chats, and muted or crowded rooms'
+   *  traffic that is not for the account, §5; `silenced` in render.ts is the same rule).
+   *  The TURN WINDOW passes it: those rows
    *  reach no prompt (render drops them), so reading them would spend the window's N
    *  slots on rows that are then thrown away — a window of pure history renders empty.
    *  Omitted ⇒ included, which is what `search` wants: silenced rows are its whole point. */
   silenced?: boolean;
+  /** `true` ⇒ only the rows a muted or a crowded room silenced: what the window leaves
+   *  out and counts (§5). History and archived chats are no part of it. */
+  hushed?: true;
   /** `false` ⇒ drop rows in a broadcast (a calendar, a status feed); `true` ⇒ only those.
    *  `send` asks both ways: its destination is never a broadcast, and a primary calendar
    *  shares its address with the account's own mailbox. Omitted ⇒ both. */

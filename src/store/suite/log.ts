@@ -652,6 +652,31 @@ export function logSuite(s: Substrate): void {
     });
   });
 
+  Deno.test("read: a muted or crowded room's line for the account is news; hushed reads the rest", async () => {
+    await withLog(async (log) => {
+      const marked = async (ext: string, extra: Record<string, unknown>) => {
+        const e = msg(ext, "C9", ext);
+        e.extra = extra;
+        await log.publish(e);
+      };
+      await marked("muted", { muted: true });
+      await marked("crowded", { crowded: true });
+      await marked("muted-for-us", { muted: true, addressed: true });
+      await marked("crowded-for-us", { crowded: true, addressed: true });
+      await marked("archived-for-us", { archived: true, addressed: true });
+      await marked("history-for-us", { backfill: true, addressed: true });
+      await marked("live", {});
+      const text = (rows: Event[]) =>
+        rows.map((e) => ((e as MessageEvent).parts[0] as { text: string }).text).sort();
+      assertEquals(text(await log.read({ silenced: false })), [
+        "crowded-for-us",
+        "live",
+        "muted-for-us",
+      ]);
+      assertEquals(text(await log.read({ hushed: true })), ["crowded", "muted"]);
+    });
+  });
+
   Deno.test("read({broadcasts}) splits a broadcast from a room sharing its address", async () => {
     await withLog(async (log) => {
       // a calendar wears its account's email, and a mail thread may be filed there too
