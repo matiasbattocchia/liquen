@@ -178,6 +178,8 @@ export interface TgOutbound {
 export interface TgWire {
   /** The account. */
   self: TgPeer;
+  /** How the account's own app holds `chat` now: muted, archived. */
+  view(chat: string): { muted?: boolean; archived?: boolean };
   /** Post one message in `chat`: an address the log holds, or a handle (`@name`) for a
    *  first contact. Answers the message's id and the chat it landed in. */
   send(chat: string, out: TgOutbound): Promise<{ id: number; chat: TgPeer }>;

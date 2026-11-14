@@ -85,8 +85,9 @@ const RETRY_MS = 1_000;
 const RETRY_CAP_MS = 30_000;
 
 export interface TelegramIngestDeps {
-  /** The account's session: its own identity, and the history a gap is read back from. */
-  wire: Pick<TgWire, "self" | "history">;
+  /** The account's session: its own identity, how its app holds a chat, and the history a
+   *  gap is read back from. */
+  wire: Pick<TgWire, "self" | "view" | "history">;
   publish: Appender["publish"];
   /** The newest row of a conversation, where a gap's reading starts. */
   read?: Reader["read"];
@@ -374,10 +375,21 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
       status,
     }) as unknown as Draft<MessageEvent>;
 
+  /** The silencing marks of a line that is no message (a delete, a reaction): how the
+   *  account's app holds its chat as it arrives, as a message carries them. */
+  const chatMarks = (chat: string) => {
+    const view = deps.wire.view(chat);
+    return {
+      ...(view.muted ? { muted: true } : {}),
+      ...(view.archived ? { archived: true } : {}),
+    };
+  };
+
   const mapDelete = (ids: number[], chat: string | undefined): Draft<MessageEvent>[] => {
     const ts = now();
     return ids.flatMap((id) => {
       const where = chat ?? recent.get(id) ?? "";
+      const marks = where ? chatMarks(where) : {};
       return [
         {
           ts,
@@ -393,6 +405,7 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
             external_id: externalId(connection, where, `${id}.deleted`),
           },
           parts: [],
+          ...(Object.keys(marks).length ? { extra: marks } : {}),
         },
         mergeOnly(where, id, { state: "deleted", deleted_at: ts }),
       ];
@@ -478,6 +491,8 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
       standing: await standingOn(deps.read, connection, event.chat.id, target),
       now: now(),
     });
+    const marks = chatMarks(event.chat.id);
+    if (Object.keys(marks).length) { for (const d of drafts) d.extra = { ...d.extra, ...marks }; }
     const phones = new Map<string, string>();
     for (const r of event.reactions) if (r.by.phone) phones.set(r.by.id, r.by.phone);
     await classify(drafts, phones);

@@ -563,6 +563,7 @@ export function createTelegramWire(
         }
       }),
     rename: (chat, title) => asked(() => client.setChatTitle(target(chat), title)),
+    view: (chat) => ({ ...views.get(chat) }),
     history: (chat, since) =>
       asked(async () => {
         const out: Message[] = [];
