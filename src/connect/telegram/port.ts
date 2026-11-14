@@ -131,20 +131,30 @@ const LEGS: Record<string, Leg> = {
   "rooms/rename": (wire, b) => wire.rename(text(b.conversation), text(b.name)),
 };
 
-/** The connector's side: each leg over the live session of the account the call names. */
+/** The process's own leg, beside the session's: a removal's ask to end an account's
+ *  session on Telegram before its key leaves the vault. */
+export const END_LEG = "accounts/end";
+
+/** The connector's side: each leg over the live session of the account the call names,
+ *  and `END_LEG` over the process's accounts. */
 export function createPortHandler(
   wireOf: (connection: string) => TgWire | undefined,
+  end?: (account: string) => Promise<boolean>,
 ): (req: Request) => Promise<Response> {
   const say = (status: number, message: string) => new Response(message, { status });
   return async (req) => {
-    const leg = LEGS[new URL(req.url).pathname.slice(1)];
-    if (req.method !== "POST" || !leg) return say(404, "no such leg");
+    const path = new URL(req.url).pathname.slice(1);
+    const leg = LEGS[path];
+    if (req.method !== "POST" || (!leg && !(path === END_LEG && end))) {
+      return say(404, "no such leg");
+    }
     let body: Body;
     try {
       body = await req.json() as Body;
     } catch {
       return say(400, "invalid json");
     }
+    if (!leg) return Response.json({ ended: await end!(text(body.connection)) });
     const wire = wireOf(text(body.connection));
     if (!wire) return say(503, `no Telegram session is up for ${text(body.connection)}`);
     try {
@@ -160,9 +170,10 @@ export function createPortHandler(
 export async function servePort(
   dir: string,
   wireOf: (connection: string) => TgWire | undefined,
+  end?: (account: string) => Promise<boolean>,
 ): Promise<() => Promise<void>> {
   const path = portSocket(dir);
-  const server = await serveSocket(path, createPortHandler(wireOf));
+  const server = await serveSocket(path, createPortHandler(wireOf, end));
   await Deno.chmod(path, 0o600);
   return async () => {
     await server.shutdown();
@@ -173,7 +184,15 @@ export async function servePort(
 /** One call across the socket: the leg's answer, or its refusal as a `DispatchError`. */
 export type PortCall = (leg: string, body: object) => Promise<unknown>;
 
-/** main's side of the socket. A connector that is not running is a 503 in a sentence. */
+/** Nothing answers on the socket: the connector is not running. */
+export class PortDown extends DispatchError {
+  constructor() {
+    super("the telegram connector is not answering: is the org running?", 503);
+  }
+}
+
+/** main's side of the socket. A connector that is not running is a `PortDown`, a 503 in
+ *  a sentence. */
 export function portCall(dir: string): PortCall {
   const path = portSocket(dir);
   let client: Deno.HttpClient | undefined;
@@ -189,7 +208,7 @@ export function portCall(dir: string): PortCall {
         signal: AbortSignal.timeout(API_TIMEOUT_MS),
       });
     } catch {
-      throw new DispatchError("the telegram connector is not answering: is the org running?", 503);
+      throw new PortDown();
     }
     if (!res.ok) {
       throw new DispatchError((await res.text()).slice(0, 256) || `HTTP ${res.status}`, res.status);

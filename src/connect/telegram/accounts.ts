@@ -7,10 +7,15 @@
  * opens, one removed closes, and one signed in again, whose session string changed,
  * swaps. A swap closes the old session first and only then opens the new one, since two
  * clients on one account's cache would contend for it, and ends the old session on
- * Telegram so the account's list of devices does not keep it. A removed account's
- * session is left standing on Telegram, as every removal leaves the platform's side.
+ * Telegram so the account's list of devices does not keep it.
  *
- * Calls are serialized: a reconcile asked while one runs runs after it, once.
+ * A removal ends the account's session on Telegram, since a session whose key left the
+ * vault can never be used again. The removal asks for it (`end`, over the socket) before
+ * it deletes the key. The reconcile ends one too, when two facts a removal writes both
+ * stand: the row soft-deleted and its key gone from the vault. A row it merely cannot
+ * find is closed with its session kept, so a read that comes back short costs nothing.
+ *
+ * Calls are serialized: a reconcile or an end asked while one runs runs after it.
  */
 
 import type { ConnectionRow } from "../../store/connections.ts";
@@ -18,24 +23,31 @@ import { SignedOut } from "../errors.ts";
 import { sessionKey } from "./config.ts";
 import { SERVICE, type TgWire } from "./wire.ts";
 
-/** How often the process reconciles of its own accord: a removal says nothing it hears. */
+/** How often the process reconciles of its own accord: a removal it was not asked about
+ *  is met here. */
 export const RECONCILE_MS = 60_000;
 
 /** An account's session, open. */
 export interface Opened {
   wire: TgWire;
   stop: () => Promise<void>;
+  /** End the session on Telegram, then close it. */
+  logOut: () => Promise<void>;
 }
 
 export interface AccountsDeps {
   /** The live connection rows. */
   rows: () => Promise<ConnectionRow[]>;
+  /** An account's row when it stands soft-deleted, a removal's own word; else nothing. */
+  removed: (account: string) => Promise<ConnectionRow | undefined>;
   /** The session string a vault key holds, if any. */
   session: (key: string) => Promise<string | undefined>;
   /** Open an account's session. Throws `SignedOut` when Telegram no longer takes it. */
   open: (row: ConnectionRow, session: string) => Promise<Opened>;
   /** End a replaced session on Telegram. */
   logOut: (session: string) => Promise<void>;
+  /** Drop what the process keeps of an ended account beside the vault: its cache. */
+  forget: (account: string) => Promise<void>;
   /** Say an account down on its row. */
   signedOut: (row: ConnectionRow, error: string) => Promise<void>;
   onError?: (account: string, what: string, err: unknown) => void;
@@ -44,6 +56,9 @@ export interface AccountsDeps {
 
 export interface Accounts {
   reconcile: () => Promise<void>;
+  /** End an account's session on Telegram and forget its cache: a removal's ask. Answers
+   *  whether a session was open to end. */
+  end: (account: string) => Promise<boolean>;
   wireOf: (account: string) => TgWire | undefined;
   /** Close every session, its cursors kept. */
   stop: () => Promise<void>;
@@ -51,8 +66,8 @@ export interface Accounts {
 
 export function createAccounts(deps: AccountsDeps): Accounts {
   const open = new Map<string, Opened & { session: string }>();
-  // the session strings a row failed to open with: tried again only once the vault holds
-  // another, by a sign-in
+  // the session strings a row failed to open with, or a removal ended: tried again only
+  // once the vault holds another, by a sign-in
   const refused = new Map<string, string>();
   let running: Promise<void> | undefined;
   let again = false;
@@ -69,7 +84,24 @@ export function createAccounts(deps: AccountsDeps): Accounts {
     }
   };
 
-  const pass = async () => {
+  /** End an open session on Telegram and forget the account's cache. Its session string
+   *  is never opened again: the vault may still hold it until the removal deletes it. */
+  const ended = async (account: string): Promise<boolean> => {
+    const held = open.get(account);
+    if (held) {
+      open.delete(account);
+      refused.set(account, held.session);
+      try {
+        await held.logOut();
+      } catch (err) {
+        deps.onError?.(account, "ending the session", err);
+      }
+    }
+    await deps.forget(account).catch((err) => deps.onError?.(account, "forgetting", err));
+    return held !== undefined;
+  };
+
+  const align = async () => {
     const rows = (await deps.rows()).filter((r) => r.service === SERVICE);
     const wanted = new Set<string>();
     for (const row of rows) {
@@ -110,8 +142,24 @@ export function createAccounts(deps: AccountsDeps): Accounts {
       }
     }
     for (const account of [...open.keys()]) {
-      if (!wanted.has(account)) await close(account);
+      if (wanted.has(account)) continue;
+      const row = await deps.removed(account);
+      const gone = row !== undefined &&
+        !(await deps.session(row.credentialKey ?? sessionKey(account)));
+      if (gone) await ended(account);
+      else await close(account);
     }
+  };
+
+  // the ends a removal asked for, taken at the start of the next pass
+  const asked = new Map<string, ((was: boolean) => void)[]>();
+  const pass = async () => {
+    for (const [account, waiting] of [...asked]) {
+      asked.delete(account);
+      const was = await ended(account);
+      for (const resolve of waiting) resolve(was);
+    }
+    await align();
   };
 
   const reconcile = (): Promise<void> => {
@@ -131,12 +179,24 @@ export function createAccounts(deps: AccountsDeps): Accounts {
     return running;
   };
 
+  const end = (account: string): Promise<boolean> => {
+    if (stopped) return Promise.resolve(false);
+    const done = new Promise<boolean>((resolve) => {
+      asked.set(account, [...(asked.get(account) ?? []), resolve]);
+    });
+    void reconcile();
+    return done;
+  };
+
   return {
     reconcile,
+    end,
     wireOf: (account) => open.get(account)?.wire,
     stop: async () => {
       stopped = true;
       await running?.catch(() => {});
+      for (const waiting of asked.values()) for (const resolve of waiting) resolve(false);
+      asked.clear();
       for (const account of [...open.keys()]) await close(account);
     },
   };

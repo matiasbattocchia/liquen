@@ -94,6 +94,24 @@ Deno.test("telegram dispatch: a reply names the message it answers; a supergroup
   assertEquals(log.patches[0].patch.external_id, "telegram:700100.-1009000.501");
 });
 
+Deno.test("telegram dispatch: a send to a forum topic goes into it, keyed by its supergroup, and stays put", async () => {
+  const { log, wire } = harness();
+  log.push(outbound({
+    envelope: {
+      service: "telegram",
+      connection_address: "700100",
+      conversation: { address: "-1009000/45", kind: "group" },
+      status: "queued",
+    },
+    payload: { action: "reply", ref_external_id: "telegram:700100.-1009000.77" },
+  }));
+  await settle();
+  assertEquals(sends(wire)[0][0], "-1009000/45");
+  assertEquals(sends(wire)[0][1].reply, 77);
+  assertEquals(log.patches[0].patch.external_id, "telegram:700100.-1009000.501");
+  assertEquals(log.patches[0].patch.conversation, undefined);
+});
+
 Deno.test("telegram dispatch: a first contact by handle moves the row to the chat it landed in", async () => {
   const { log, wire } = harness();
   log.push(outbound({

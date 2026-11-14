@@ -14,11 +14,13 @@
  *                has no live connection left, so `liquen start` spawns nothing for it. One
  *                `config.yaml` declares stays: the file is where it is removed.
  *
- * The platform's side stays as it is: the app install, the OAuth grant, the paired device
- * are the platform's to revoke, and the last line says where.
+ * The platform's side is ended where the connector can end it (`end`, before the secret
+ * goes: a Telegram account's session). Elsewhere it stays as it is: the app install, the
+ * OAuth grant, the paired device are the platform's to revoke, and the last line says
+ * where.
  */
 
-import type { Connections } from "../store/connections.ts";
+import type { ConnectionRow, Connections } from "../store/connections.ts";
 import type { Credentials } from "../store/credentials.ts";
 
 /** Where each service's side of a grant is revoked, as its owner finds it. */
@@ -44,6 +46,10 @@ export interface RemoveDeps {
   /** The services a door grants under (`available`). A vault key outside them is the
    *  harness's own — the media signing key — and no target. */
   services: string[];
+  /** End the platform's side of a grant, where its connector can, while the secret still
+   *  stands: answers what was done in a sentence, nothing where the connector cannot, and
+   *  throws when it tried and failed. */
+  end?: (row: ConnectionRow) => Promise<string | undefined>;
 }
 
 /** Undo one grant and say what was undone, a line per record. Throws, touching nothing,
@@ -53,10 +59,21 @@ export async function removeConnection(target: string, deps: RemoveDeps): Promis
   const said: string[] = [];
   const row = live.find((r) => `${r.service}:${r.address}` === target);
   if (row) {
-    await deps.store.deleteConnections([{ service: row.service, address: row.address }]);
-    said.push(`${target} removed — nothing new enters through it; what it brought in stays`);
     const key = row.credentialKey;
     const sharer = key && live.find((r) => r !== row && r.credentialKey === key);
+    const where = REVOKE_AT[row.service] ?? "there";
+    // a secret another connection uses is a grant still held: its platform side stays
+    let platform: string | undefined;
+    if (!sharer && deps.end) {
+      try {
+        platform = await deps.end(row);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        platform = `${row.service} could not be reached to end it (${why}) — revoke it ${where}`;
+      }
+    }
+    await deps.store.deleteConnections([{ service: row.service, address: row.address }]);
+    said.push(`${target} removed — nothing new enters through it; what it brought in stays`);
     if (sharer) {
       said.push(`its secret ${key} stays — ${sharer.service}:${sharer.address} uses it too`);
     } else if (key && await deps.creds.delete(key)) {
@@ -74,8 +91,9 @@ export async function removeConnection(target: string, deps: RemoveDeps): Promis
         said.push(err instanceof Error ? err.message : String(err));
       }
     }
-    const where = REVOKE_AT[row.service] ?? "there";
-    said.push(`${row.service} itself still holds the grant — revoke it ${where} to end it`);
+    said.push(
+      platform ?? `${row.service} itself still holds the grant — revoke it ${where} to end it`,
+    );
     return said;
   }
   const owner = live.find((r) => r.credentialKey === target);

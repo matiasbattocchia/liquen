@@ -96,6 +96,13 @@ Deno.test("marks: a line for the account lifts muted and crowded, never archived
     line({ extra: { muted: true }, payload: { ref_external_id: "telegram:700100.7" } }),
   ]);
   assertEquals(reply.extra, { muted: true, addressed: true });
+  const [said] = await marks([
+    line({
+      extra: { muted: true },
+      payload: { action: "reply", ref_external_id: "telegram:700100.7" },
+    }),
+  ]);
+  assertEquals(said.extra, { muted: true, addressed: true });
 
   // a reply to someone else, a reaction to the account's line, and a plain line stay silent
   const [other] = await marks([

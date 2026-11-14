@@ -157,6 +157,12 @@ async function remove(root: string, target: string): Promise<void> {
       creds,
       undeclare: (service) => undeclareConnection(root, log, service),
       services: available(root),
+      end: async (row) => {
+        if (row.service !== "telegram") return undefined;
+        const { endTelegram } = await import("./telegram/end.ts");
+        const { portCall } = await import("./telegram/port.ts");
+        return await endTelegram(row, { root, creds, call: portCall(`${root}/data`) });
+      },
     });
     for (const line of said) console.log(line);
   } finally {

@@ -1,8 +1,10 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import {
   createPortHandler,
+  END_LEG,
   type PortCall,
   portCall,
+  PortDown,
   portSocket,
   servePort,
   telegramContact,
@@ -173,18 +175,26 @@ Deno.test("telegram port: the legs cross a real socket, and a connector that is 
     const call = portCall(dir);
     const down = await assertRejects(
       () => call("rooms/leave", { connection: SELF.id, conversation: "-4100" }),
-      DispatchError,
+      PortDown,
       "not answering",
     );
     assertEquals(down.code, 503);
     const wire = fakeWire();
-    const stop = await servePort(dir, (c) => (c === SELF.id ? wire : undefined));
+    const ended: string[] = [];
+    const stop = await servePort(dir, (c) => (c === SELF.id ? wire : undefined), (account) => {
+      ended.push(account);
+      return Promise.resolve(account === SELF.id);
+    });
     try {
       assertEquals((await Deno.stat(portSocket(dir))).mode! & 0o777, 0o600);
       assertEquals(
         await telegramContact(portCall(dir)).lookup!({ connection: SELF.id, query: "sol" }),
         [{ name: "Sol Ruiz", address: "700200" }],
       );
+      // a removal's ask reaches the process's accounts, a session up or not
+      assertEquals(await portCall(dir)(END_LEG, { connection: SELF.id }), { ended: true });
+      assertEquals(await portCall(dir)(END_LEG, { connection: "999" }), { ended: false });
+      assertEquals(ended, [SELF.id, "999"]);
     } finally {
       await stop();
     }

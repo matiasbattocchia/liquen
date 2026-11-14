@@ -24,7 +24,10 @@ export function connectionsSuite(s: Substrate): void {
         { service: "slack", address: "T1", credentialKey: "slack:T1:org" },
         { service: "whatsapp", address: "549", agentId: "ana", extra: { state: "connected" } },
       ]);
-      assertEquals((await log.connection("google", "gone@x.io"))?.agentId, "ana"); // identity persists
+      const gone = await log.connection("google", "gone@x.io");
+      assertEquals(gone?.agentId, "ana"); // identity persists
+      assertEquals(typeof gone?.deletedAt, "string"); // and says it was removed
+      assertEquals((await log.connection("slack", "T1"))?.deletedAt, undefined);
     } finally {
       await log.close();
       await store.drop();

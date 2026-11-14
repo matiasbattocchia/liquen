@@ -906,6 +906,7 @@ reads those, pure over data.
 | `port.ts` | the address book and the rooms, across the socket |
 | `reactions.ts` | a message's set of reactions, against what the log holds |
 | `accounts.ts` | the sessions held open, in line with the store |
+| `end.ts` | a removal's end of an account's session on Telegram |
 | `bio.ts` | a stranger's about text, read sparingly |
 | `text.ts` | common markdown to Telegram's entities and back |
 
@@ -922,8 +923,24 @@ every other account's session as it was.
 **The accounts follow the store** (`accounts.ts`). The sessions the process holds are the
 live rows with a session in the vault, brought in line at boot, on a door's note, and
 every minute: an account signed in opens, one signed in again swaps its session and ends
-the old one on Telegram, one removed closes. A removed account's session stays on
-Telegram, where the account ends it under Devices.
+the old one on Telegram.
+
+**A removal ends the session** (`end.ts`). A session whose key leaves the vault can never
+be used again, so `liquen connect --remove telegram:<id>` ends it on Telegram before it
+deletes the key: it asks the running process over its socket (`accounts/end`), which logs
+the session out and forgets its cache; with no process answering, or none holding the
+session, the removal logs it out itself. The reconcile ends a session too, when its row
+stands soft-deleted and its key is gone, two facts only a removal writes; a row a read
+merely leaves out is closed with its session kept. If Telegram cannot be reached, the
+removal says so and points to Devices.
+
+**A sign-in imports the history.** An opening that follows a sign-in reads every chat's
+last `historyDays` (60), one chat at a time behind the live session, sitting out a flood
+wait, and publishes it as `backfill`: kept and searchable, never news. After the sign-in,
+any line dated before it is history, the import's and the session's replay alike. A file
+is named and left on Telegram, and a stranger's about text is not read. The sign-in is the
+door's grant note; the one whose history is in is kept beside the cache
+(`data/telegram/<id>.history`), so a restart resumes and a new sign-in imports again.
 
 **The credential and the cache.** The vault holds the session string. mtcute keeps a
 SQLite file per account under `data/telegram/`: the peers it has met, with the access
@@ -936,6 +953,21 @@ for a supergroup or a channel. `conversation.kind` comes from the chat's type: a
 `direct`, a basic group or a supergroup a `group`, a supergroup with a public handle a
 `channel`, and a channel the account posts in a `broadcast`. A channel the account only
 follows is a newsletter, and nothing of it is published.
+
+**A forum's topics are conversations.** A topic is `<chat>/<topic>`, the topic being its
+opening message's id: `-1009000/45`. General is topic 1 and takes every line that names no
+topic. A topic is the kind its supergroup is, named by its own title, and its lines carry
+the forum's name as `extra.community` (`<conv community>`). The titles are read once and
+kept current by the topics' service messages. A delete names only the chat, so it takes
+the conversation of the line it deletes, read from the log; a reaction says its topic. A
+send to a topic goes into it, and the rooms port acts on the supergroup, save `rename`,
+which renames the topic. Rows the log holds under a forum's plain address stay there.
+
+**Room facts.** A group's lines carry its member count and whether the account is its
+creator or an admin (`conversation.members`, `conversation.admin`), which the crowd rule
+reads before the line lands (`connect/marks.ts`) and the row drops. A basic group says
+both on itself; a supergroup's count is read off its full chat once in six hours. Every
+line is published through the marks.
 
 **`external_id`** is `telegram:<account>.<message id>` in a direct chat or a basic group,
 whose ids the account's inbox shares, and `telegram:<account>.<chat>.<message id>` where
@@ -955,15 +987,16 @@ account reaches anyone, so its DMs and groups steer nobody: they are the shared 
 **Room lines.** A service message is the room's line (§1), one `room` part from whoever
 made the change: created, added, joined (by link, by approval), left, removed, the title,
 the photo, a pin (pointing at its message), the disappearing timer, a call, a move to a
-supergroup (`moved`). A topic made, renamed or closed, and any service message with no
-word in the vocabulary, ride `changed` under Telegram's own name. A person joining
-Telegram is no room's change and makes no line.
+supergroup (`moved`). In a forum, what changes the supergroup is General's line, and a
+topic made, renamed, closed or reopened is that topic's own. A topic's change and any
+service message with no word in the vocabulary ride `changed` under Telegram's own name.
+A person joining Telegram is no room's change and makes no line.
 
 **The gap is replayed.** With its cursors kept, the session asks Telegram for what the
 account received while the process was away, and each replayed line merges on its id. A
 supergroup that fell further behind than Telegram replays is read from its history
-instead, from the newest row the log holds of it. A room the log never heard is left
-alone. A publish that fails is tried again until it lands, since the cursor moves on
+instead, from the newest row the log holds of it, a forum's across its topics. A room the
+log never heard is left alone. A publish that fails is tried again until it lands, since the cursor moves on
 either way.
 
 **The account's view.** A chat the account muted or archived marks its rows `muted` or
