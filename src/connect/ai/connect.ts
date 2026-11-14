@@ -17,7 +17,7 @@
  * The key is tried before anything is written: one model listing through the provider's
  * own client, so a key the provider refuses never lands. `--no-probe` writes it untried.
  *
- * Args: `<provider> [--agent <id> | --org] [--no-probe]`. The key is pasted at a prompt, or
+ * Args: `<provider> [--agent <id> | --shared] [--no-probe]`. The key is pasted at a prompt, or
  * piped (one line). Env: none.
  */
 
@@ -43,7 +43,7 @@ export const ENV_KEY: Record<ProviderName, string> = {
 export function parseAiArgs(argv: string[]): AiArgs {
   let provider: string | undefined;
   let agentId: string | undefined;
-  let org = false;
+  let shared = false;
   let probe = true;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -52,7 +52,7 @@ export function parseAiArgs(argv: string[]): AiArgs {
       if (agentId === undefined || agentId.startsWith("--")) {
         throw new Error("--agent needs a value");
       }
-    } else if (a === "--org") org = true;
+    } else if (a === "--shared") shared = true;
     else if (a === "--no-probe") probe = false;
     else if (a.startsWith("--")) throw new Error(`unknown flag ${a}`);
     else if (provider === undefined) provider = a;
@@ -62,7 +62,7 @@ export function parseAiArgs(argv: string[]): AiArgs {
   if (!(PROVIDERS as readonly string[]).includes(provider)) {
     throw new Error(`no provider "${provider}" — one of ${PROVIDERS.join(", ")}`);
   }
-  if (org && agentId) throw new Error("--org or --agent <id>, not both");
+  if (shared && agentId) throw new Error("--shared or --agent <id>, not both");
   return { provider: provider as ProviderName, ...(agentId ? { agentId } : {}), probe };
 }
 
@@ -125,7 +125,7 @@ async function defaultProbe(provider: ProviderName, key: string): Promise<void> 
   }
 }
 
-const USAGE = `usage: liquen connect ai <provider> [--agent <id> | --org] [--no-probe]
+const USAGE = `usage: liquen connect ai <provider> [--agent <id> | --shared] [--no-probe]
 
   A model provider's API key, kept in the vault: main reads it at every model call, so it
   is spent from the next call on, no restart. With none, the provider's SDK reads the
@@ -134,8 +134,8 @@ const USAGE = `usage: liquen connect ai <provider> [--agent <id> | --org] [--no-
 
   <provider>      ${PROVIDERS.join(" · ")}: the vault key is ai:<provider>
   --agent <id>    that agent's own (ai:<provider>:<id>), spent by it alone and before the
-                  org's; default: the org's, every agent's
-  --org           say the default out loud
+                  shared one; default: shared, every agent's
+  --shared        say the default out loud
   --no-probe      write the key untried; by default one model listing tries it first
   --dir <org>     the org, when run from elsewhere`;
 

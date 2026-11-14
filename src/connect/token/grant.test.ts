@@ -29,7 +29,7 @@ Deno.test("parseTokenArgs: name, env, hosts; the org by default, an agent by fla
     env: "CRM_TOKEN",
     hosts: ["api.crm.io", "*.crm.io"],
   });
-  assertEquals(parseTokenArgs([...BASE, "--org"]).agentId, undefined);
+  assertEquals(parseTokenArgs([...BASE, "--shared"]).agentId, undefined);
   assertEquals(parseTokenArgs([...BASE, "--agent", "ana"]).agentId, "ana");
   assertEquals(
     parseTokenArgs([...BASE, "--probe", "https://api.crm.io/me"]).probe,
@@ -57,7 +57,7 @@ Deno.test("parseTokenArgs: refuses what the proxy could not front", () => {
     ["crm", "--env", "X", "--hosts", "localhost:8080", "--probe", "http://localhost:9090/"],
     "outside --hosts",
   );
-  bad([...BASE, "--org", "--agent", "ana"], "not both");
+  bad([...BASE, "--shared", "--agent", "ana"], "not both");
   bad([...BASE, "--probe", "nope"], "is a URL");
   bad([...BASE, "--probe", "https://evil.io/echo"], "outside --hosts");
   bad([...BASE, "--nope"], "unknown flag");

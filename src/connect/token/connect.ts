@@ -26,7 +26,7 @@
  * This file is the door's flags and prompt; the grant itself is `grant.ts`, the one path a
  * connector that provisions tokens takes too.
  *
- * Args: `<name> --env <VAR> --hosts <h1,h2,…> [--paths <p1,p2,…>] [--agent <id> | --org]
+ * Args: `<name> --env <VAR> --hosts <h1,h2,…> [--paths <p1,p2,…>] [--agent <id> | --shared]
  * [--probe <url>]`.
  * The token is pasted at a prompt, or piped (one line). Env: none.
  */
@@ -36,7 +36,7 @@ import { entry } from "../../entry.ts";
 import { connectToken, parseTokenArgs } from "./grant.ts";
 
 const USAGE = `usage: liquen connect token <name> --env <VAR> --hosts <h1,h2,…> [--paths <p1,p2,…>]
-                           [--agent <id> | --org] [--probe <url>]
+                           [--agent <id> | --shared] [--probe <url>]
 
   A bearer token for any API, fronted through the egress proxy: the agent's environment
   holds a handle under <VAR>, and \`fetch -H "Authorization: Bearer $VAR" https://<host>/…\`
@@ -52,8 +52,8 @@ const USAGE = `usage: liquen connect token <name> --env <VAR> --hosts <h1,h2,…
                   everything under it, by whole segments (\`/organization/42/\` holds
                   \`/organization/42/deals\`, never \`/organization/420\`); default: any
   --agent <id>    file the grant as that agent's own (fronted in its pocket alone; the key
-                  becomes token:<name>:<id>); default: the org's, every agent's fallback
-  --org           say the default out loud
+                  becomes token:<name>:<id>); default: shared, every agent's fallback
+  --shared        say the default out loud
   --probe <url>   GET it once with the token before writing; a status outside 2xx refuses
   --dir <org>     the org, when run from elsewhere`;
 

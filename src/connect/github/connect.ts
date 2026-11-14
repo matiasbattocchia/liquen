@@ -509,7 +509,7 @@ export function githubNext(have: GithubHave): string[] {
   } else if (!have.org) {
     next.push(
       "no org identity — `liquen connect github bot` binds the App's installation, or " +
-        "`liquen connect github user --org --token` pastes a machine user's; without one, " +
+        "`liquen connect github user --shared --token` pastes a machine user's; without one, " +
         "only the agents who have their own leg can post",
     );
   }
@@ -595,7 +595,7 @@ async function defaultWhoami(token: string): Promise<{ login?: string; message?:
  * too: a device flow wants a human at a browser, and a secret manager isn't one. */
 const USAGE = `usage: liquen connect github app
        liquen connect github bot [account] [--app <app_id>]
-       liquen connect github user [agent] [--org] [--token] [--app <app_id>]
+       liquen connect github user [agent] [--shared] [--token] [--app <app_id>]
 
   Connect GitHub. Two identities can exist and either alone is enough to start: the ORG's,
   which every agent falls back to, and an AGENT's own, which posts under that person's
@@ -607,12 +607,12 @@ const USAGE = `usage: liquen connect github app
           flow signs people in with them). Several may coexist.
   bot     the org's identity from the App's INSTALLATION: nothing static is stored and the
           token is minted hourly. Needs an app; for an org that has none, the token route
-          below with --org is the whole setup.
+          below with --shared is the whole setup.
   user    a grant by the DEVICE FLOW — a code you type at github.com, no secret through the
           terminal — or by paste. Whose it is: [agent] (default: your OS username), or the
-          org's with --org.
+          org's with --shared.
 
-  --org         file the grant as the org's, ownerless, rather than an agent's
+  --shared      file the grant as shared, ownerless, rather than an agent's
   --token       paste a token rather than run the device flow; also what happens on its own
                 when the vault holds no app with a client id
   --app <id>    which App (its numeric App ID), when the vault holds several
@@ -726,7 +726,7 @@ if (import.meta.main) {
       Deno.exit(0);
     }
 
-    const principal = flags.has("--org") ? undefined : ((first === "user" ? rest[0] : first) ??
+    const principal = flags.has("--shared") ? undefined : ((first === "user" ? rest[0] : first) ??
       (() => {
         try {
           return userInfo().username;

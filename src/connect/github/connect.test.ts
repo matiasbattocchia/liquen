@@ -410,7 +410,7 @@ Deno.test("bot door: --app picks the app when the vault holds several", async ()
   });
 });
 
-Deno.test("user door, --org: the anchor itself carries the credential — no owner, no membership", async () => {
+Deno.test("user door, --shared: the anchor itself carries the credential — no owner, no membership", async () => {
   await withVault(async (creds) => {
     const h = harness();
     const out = await connectGithubUser("ghp_machine", {
@@ -440,7 +440,7 @@ Deno.test("user door, --org: the anchor itself carries the credential — no own
   });
 });
 
-Deno.test("user door, --org: a paste that is not a token is refused before the network", async () => {
+Deno.test("user door, --shared: a paste that is not a token is refused before the network", async () => {
   await withVault(async (creds) => {
     const h = harness();
     let called = false;

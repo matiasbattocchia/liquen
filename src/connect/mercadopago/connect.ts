@@ -7,13 +7,14 @@
  * with is the account's address. One vault row, `mercadopago:<user_id>`, holds the token
  * and carries the proxy declaration (§9) — `MP_ACCESS_TOKEN` toward `api.mercadopago.com`
  * — so an agent's `mpcli` works with no real credential in user space. One connection row
- * maps the account to its principal (or to the org), and a note crosses into the log.
+ * maps the account to its principal (or to nobody, shared), and a note crosses into the
+ * log.
  *
  * Payments arrive by the poll, every one of the account's, a minute late at most. A
  * payment link an agent creates with `notification_url` set to the org's ingest notifies
  * as it is paid; the note says the address, so the agent that holds the account has it.
  *
- * Arg: the principal (default: the OS username), or `--org`. Env: none.
+ * Arg: the principal (default: the OS username), or `--shared`. Env: none.
  */
 
 import { helpFlag } from "../help.ts";
@@ -135,7 +136,7 @@ async function defaultWhoami(
   return await res.json();
 }
 
-const USAGE = `usage: liquen connect mercadopago [agent] [--org]
+const USAGE = `usage: liquen connect mercadopago [agent] [--shared]
 
   An account's production Access Token (APP_USR-…, from its application's Credentials at
   https://www.mercadopago.com.ar/developers/panel/app), pasted at a prompt or piped (one
@@ -145,7 +146,7 @@ const USAGE = `usage: liquen connect mercadopago [agent] [--org]
   MP_ACCESS_TOKEN.
 
   [agent]       whose account it is (default: your OS username)
-  --org         file the grant as the org's, ownerless, rather than an agent's
+  --shared      file the grant as shared, ownerless, rather than an agent's
   --dir <org>   the org, when run from elsewhere
 
   Knobs: none.`;
@@ -159,10 +160,10 @@ if (import.meta.main) {
     helpFlag(org.args, USAGE);
     const root = findRoot(org);
     const flags = new Set(org.args.filter((a) => a.startsWith("--")));
-    const unknown = [...flags].filter((f) => f !== "--org");
+    const unknown = [...flags].filter((f) => f !== "--shared");
     if (unknown.length) throw new Error(`unknown flag ${unknown[0]}\n${USAGE}`);
     const [named] = org.args.filter((a) => !a.startsWith("--"));
-    const principal = flags.has("--org") ? undefined : named ?? (() => {
+    const principal = flags.has("--shared") ? undefined : named ?? (() => {
       try {
         return userInfo().username;
       } catch {

@@ -897,7 +897,7 @@ reads those, pure over data.
 
 **The door.** `liquen connect telegram app` asks for the application's api id and hash
 (my.telegram.org → API development tools) and stores them as `telegram:app`; every session
-of the org signs in as that application. `liquen connect telegram [agent]`, or `--org`,
+of the org signs in as that application. `liquen connect telegram [agent]`, or `--shared`,
 signs an account in: a QR code to scan (Settings → Devices → Link Desktop Device), or with
 `--phone` the code Telegram sends, then the two-step password when the account has one.
 It writes the session string to the vault as `telegram:<user id>`, one connection row at

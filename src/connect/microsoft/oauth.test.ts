@@ -144,7 +144,7 @@ Deno.test("callback: the grant writes the map — vault, connection, membership,
   });
 });
 
-Deno.test("callback: --org mints an ownerless grant — no membership, no owner", async () => {
+Deno.test("callback: --shared mints an ownerless grant — no membership, no owner", async () => {
   await withOAuth(async (t) => {
     const state = stateOf(await t.start());
     assertEquals((await t.callback(`?code=c&state=${state}`)).status, 200);

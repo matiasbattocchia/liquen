@@ -120,7 +120,7 @@ Deno.test("a failed pairing throws and writes NOTHING", async () => {
   assertEquals(published.length, 0);
 });
 
-Deno.test("--org: the pairing binds nobody — an ownerless, credentialed row and no membership (§4)", async () => {
+Deno.test("--shared: the pairing binds nobody — an ownerless, credentialed row and no membership (§4)", async () => {
   const { bridge, creates } = fakeBridge(
     pending(),
     { session_id: "p1", status: "paired", address: "5491177700000" },

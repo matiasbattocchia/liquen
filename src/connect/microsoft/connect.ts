@@ -10,8 +10,8 @@
  *            the org has it iff it connected Microsoft.
  *   account  a grant through the OAuth handler (connect/microsoft/oauth.ts), served for
  *            exactly one sign-in. Ownership (the connection's agent_id) is decided HERE,
- *            at mint time: the agent arg rides `?agent=`; `--org` mints an ownerless link,
- *            the org's shared account (§6).
+ *            at mint time: the agent arg rides `?agent=`; `--shared` mints an ownerless
+ *            link, a shared account (§6).
  *
  * The tenant rides on the app row because it is the app's: a registration lives in one
  * directory, and its endpoints are that directory's. `organizations` names an app
@@ -142,7 +142,7 @@ export function appGuide(callback: string, scopes: string[]): string {
 }
 
 const USAGE = `usage: liquen connect microsoft app
-       liquen connect microsoft account [agent] [--org] [--app <client_id>] [--scopes "…"]
+       liquen connect microsoft account [agent] [--shared] [--app <client_id>] [--scopes "…"]
 
   Connect Microsoft 365 from this terminal — the app registration into the vault, an
   account through the browser here; knobs: connections.microsoft.
@@ -150,7 +150,7 @@ const USAGE = `usage: liquen connect microsoft app
   app       the Entra app registration (client id, secret, tenant) the account door
             signs in with
   account   sign a Microsoft account in: [agent]'s (default: your OS username) or, with
-            --org, the org's own; --app picks the registration when the vault holds
+            --shared, one nobody owns; --app picks the registration when the vault holds
             several; --scopes overrides the catalog's (space- or comma-separated)
   --dir <org>   the org, when run from elsewhere`;
 
@@ -166,7 +166,7 @@ if (import.meta.main) {
     const flags = new Map<string, string>();
     const positional: string[] = [];
     for (let i = 0; i < rest.length; i++) {
-      if (rest[i] === "--org") flags.set("org", "1");
+      if (rest[i] === "--shared") flags.set("shared", "1");
       else if (rest[i].startsWith("--")) flags.set(rest[i].slice(2), rest[++i] ?? "");
       else positional.push(rest[i]);
     }
@@ -207,11 +207,11 @@ if (import.meta.main) {
         }
         printNext([
           "`liquen connect microsoft account <agent>` — sign an account in from this " +
-          "machine's browser (`--org` for the org's shared one)",
+          "machine's browser (`--shared` for a shared one)",
         ]);
       } else if (verb === "account") {
         const { createMicrosoftOAuth } = await import("./oauth.ts");
-        const agent = flags.has("org") ? undefined : positional[0] ?? terminalUser();
+        const agent = flags.has("shared") ? undefined : positional[0] ?? terminalUser();
         const app = await pickMicrosoftApp(creds, flags.get("app")).catch((e: Error) => {
           console.error(e.message);
           Deno.exit(2);

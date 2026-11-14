@@ -20,9 +20,9 @@ async function withVault(
 
 const took = () => Promise.resolve();
 
-Deno.test("parseAiArgs: a provider; the org by default, an agent by flag; tried unless told", () => {
+Deno.test("parseAiArgs: a provider; shared by default, an agent by flag; tried unless told", () => {
   assertEquals(parseAiArgs(["google"]), { provider: "google", probe: true });
-  assertEquals(parseAiArgs(["anthropic", "--org"]).agentId, undefined);
+  assertEquals(parseAiArgs(["anthropic", "--shared"]).agentId, undefined);
   assertEquals(parseAiArgs(["google", "--agent", "ana"]).agentId, "ana");
   assertEquals(parseAiArgs(["google", "--no-probe"]).probe, false);
 });
@@ -35,7 +35,7 @@ Deno.test("parseAiArgs: refuses what no transport could spend", () => {
   bad([], "provider is required");
   bad(["openai"], 'no provider "openai"');
   bad(["google", "anthropic"], "one provider");
-  bad(["google", "--org", "--agent", "ana"], "not both");
+  bad(["google", "--shared", "--agent", "ana"], "not both");
   bad(["google", "--agent"], "needs a value");
   bad(["google", "--nope"], "unknown flag");
 });
