@@ -207,12 +207,14 @@ Deno.test("slack dispatch: a crossing onto the shared bot's surface speaks as th
       ...agentMsg(id, `[agent] ${id}`, { connection, address }),
       extra: { via: { event: "e1", service: "local", conversation: "mind@a1" } },
     });
-    await publish(crossing("21", "T1:UBOT", "D78"));
+    await publish(crossing("21", "T1:UBOT", "C78"));
     await publish(crossing("22", "T1:UA1", "D11"));
     await publish(agentMsg("23", "to the channel", { connection: "T1:UBOT", address: "C1" }));
-    await waitFor(() => posts.length === 3);
+    // a member's DM with the bot rides the workspace stub, shared as the bot's row is
+    await publish(crossing("24", "T1", "D78"));
+    await waitFor(() => posts.length === 4);
     const by = Object.fromEntries(posts.map((p) => [p.target.channel, p.author]));
-    assertEquals(by, { D78: undefined, D11: "a1", C1: "a1" });
+    assertEquals(by, { C78: undefined, D11: "a1", C1: "a1", D78: undefined });
   }, { store: true });
 });
 

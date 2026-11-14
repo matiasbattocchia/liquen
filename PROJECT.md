@@ -6926,9 +6926,8 @@ reference to read, not a patch to apply. Its PROJECT and DESIGN text tells the w
   anchor. Slack asks `apps.event.authorizations.list` for every installation a delivery
   reached, since the event names only one; Teams anchors to the tenant and names the
   grants in the place; dispatch picks the account it speaks through with `speakerOf`.
-  None of it is on main, where a Slack row anchors to the one account the delivery names.
-  Where a bot and a personal grant share a place, the other may never see the row; main
-  has not been checked against that.
+  The column never reached main. The Slack ask did, in a form of its own, on 2026-11-14
+  (below): a row the bot saw anchors to the bot, and no column is needed.
 
 ### Who steers an agent, and through which connection (2026-11-14) — LANDED
 
@@ -6956,11 +6955,39 @@ changed shape.
 
 Open:
 
-- Slack names one installation per delivery, so a steering room or the shared inbox can
-  miss a line Slack attributes to a member's own grant instead of the bot (the witnesses
-  entry above). It matters more now, since a member with an augmented self may write in a
-  room on the bot.
 - Nothing here has met a live workspace.
+
+### Every installation a Slack delivery reached, and a DM with the bot kept private (2026-11-14) — LANDED
+
+Driven by turtle, where the shared bot steers sonar from `#sonar` and each member's DM with
+the bot is their augmented self's. CONNECTORS §4 holds the mechanics; what the building
+did:
+
+- **The installations, completed.** Slack names one installation per event. When it names
+  a member's grant, the ingest asks `apps.event.authorizations.list` for the rest
+  (`slackInstallations`, on the delivering app's own app-level token), so a line the bot
+  saw anchors to the bot and every member grant is enrolled. A delivery naming the bot
+  asks nothing; no token or a refusal leaves the one named, said once per app and reason.
+- **A DM with the bot is nobody's but its sender's agent.** Every `im` anchors to the
+  workspace stub, live, in the catch-up and on reactions (a reaction knows its DM by the
+  `D` of its channel id). A member's DM is recorded there when the bot is among the
+  installations, so their lines, the agent's copies out and the echoes all ride the stub,
+  and a paused agent's own lines never fall into the shared inbox. A stranger's DM is read
+  by nobody: sonar never sees, nor answers, a DM meant for someone's own agent.
+- **The door lists the app-level token's scopes**, `connections:write` and
+  `authorizations:read` (`APP_TOKEN_SCOPES`), at the paste and in what it says is owed.
+
+Open:
+
+- Two Slack apps in one workspace each complete only their own installations, so a member
+  grant of one never learns the other's bot saw the line; the merged row keeps the anchor
+  it got first.
+- A bot-named delivery enrolls no member, which nothing reads while a row the bot saw is
+  read by every agent; per-agent access to shared rows would revisit it.
+- The first lines of a DM sent before the member's agent runs are never copied into its
+  mind: the mirror tails live.
+- Nothing here has met a live workspace; turtle's app-level token needs
+  `authorizations:read` added by hand.
 
 ### What is open (2026-10-20)
 

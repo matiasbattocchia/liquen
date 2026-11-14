@@ -357,6 +357,7 @@ Deno.test("slackNext: a bot without a carrier is told where to generate one", ()
   assertEquals(next.length, 1);
   assertStringIncludes(next[0], "App-Level Tokens");
   assertStringIncludes(next[0], "connections:write");
+  assertStringIncludes(next[0], "authorizations:read");
 });
 
 Deno.test("slackNext: a signing secret is a carrier — events over HTTP owe no socket", () => {

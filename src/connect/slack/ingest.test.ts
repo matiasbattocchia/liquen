@@ -1,8 +1,10 @@
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import {
+  type Authorization,
   createSlackWebhook,
   httpSigningSecrets,
   looksLikeSignIn,
+  slackInstallations,
   slackNames,
   slackSocket,
   type SlackWebhookDeps,
@@ -79,10 +81,12 @@ function harness(
   media?: SlackWebhookDeps["media"],
   names?: SlackWebhookDeps["names"],
   publish?: Appender["publish"],
+  more: Partial<SlackWebhookDeps> = {},
 ) {
   const published: Event[] = [];
   const work: Promise<void>[] = [];
   const raw: WebhookHandler = createSlackWebhook({
+    ...more,
     // the store's `publish` in miniature: it mints ids (§3), both overloads
     publish: publish ?? (((one: Draft | Draft[]) => {
       const drafts = Array.isArray(one) ? one : [one];
@@ -1464,17 +1468,13 @@ Deno.test("the classifier reads the roster by email (§4): a profile email that 
   assertEquals(m.extra?.sender_email, "Sol@Acme.co");
 });
 
-Deno.test("a member's DM with the shared bot is recorded on the bot's row (§4): mirrors.dms, member → channel", async () => {
+Deno.test("a member's DM with the shared bot is recorded on the workspace stub (§4), where every DM anchors: mirrors.dms, member → channel", async () => {
   const { names } = fakeNames({}, { "T1:U7": "sol@acme.co" });
-  const bot: ConnectionRow = {
-    service: "slack",
-    address: "T1:UBOT",
-    credentialKey: "slack:T1:org",
-  };
+  const stub: ConnectionRow = { service: "slack", address: "T1" };
   const written: ConnectionRow[] = [];
   const store: NonNullable<SlackWebhookDeps["store"]> = {
     connection: (service, address) =>
-      Promise.resolve(service === "slack" && address === bot.address ? bot : null),
+      Promise.resolve(service === "slack" && address === stub.address ? stub : null),
     upsertMemberships: () => Promise.resolve(),
     upsertConnections: (rows) => {
       written.push(...rows);
@@ -1483,20 +1483,22 @@ Deno.test("a member's DM with the shared bot is recorded on the bot's row (§4):
     deleteMemberships: () => Promise.resolve(),
     agents: () => Promise.resolve([{ agentId: "sol", mind: "mind@sol", email: "sol@acme.co" }]),
   };
-  const { handler } = harness(SECRET, store, undefined, names);
-  const im = (channel: string, text: string) =>
+  const { handler, published } = harness(SECRET, store, undefined, names);
+  const im = (channel: string, text: string, ts = "1.2") =>
     signedReq(messageEvent({
       authorizations: [{ user_id: "UBOT", is_bot: true }],
-      event: { type: "message", channel, channel_type: "im", user: "U7", text, ts: "1.2" },
+      event: { type: "message", channel, channel_type: "im", user: "U7", text, ts },
     }));
   await handler(await im("D77", "hola"));
   assertEquals(written, [{
     service: "slack",
-    address: "T1:UBOT",
+    address: "T1",
     extra: { mirrors: { dms: { sol: "D77" } } },
   }]);
+  // the bot saw it, and the row is the stub's all the same: never the shared inbox
+  assertEquals(published[0].envelope.connection_address, "T1");
   // a channel the row already names writes nothing; a room is never a DM
-  bot.extra = { mirrors: { dms: { sol: "D77" } } };
+  stub.extra = { mirrors: { dms: { sol: "D77" } } };
   await handler(await im("D77", "otra vez"));
   await handler(
     await signedReq(messageEvent({
@@ -1512,7 +1514,7 @@ Deno.test("a member's DM with the shared bot is recorded on the bot's row (§4):
     })),
   );
   assertEquals(written.length, 1);
-  // a stranger's DM is the shared inbox's: nobody to record it for
+  // a stranger's DM is nobody's: nothing recorded, and the row on the stub
   await handler(
     await signedReq(messageEvent({
       authorizations: [{ user_id: "UBOT", is_bot: true }],
@@ -1527,6 +1529,126 @@ Deno.test("a member's DM with the shared bot is recorded on the bot's row (§4):
     })),
   );
   assertEquals(written.length, 1);
+  assertEquals(published.at(-1)?.envelope.connection_address, "T1");
+  // sol's DM with a colleague, seen by her own grant alone, is no DM with the bot
+  stub.extra = {};
+  await handler(
+    await signedReq(messageEvent({
+      authorizations: [{ user_id: "U7" }],
+      event: {
+        type: "message",
+        channel: "D80",
+        channel_type: "im",
+        user: "U7",
+        text: "x",
+        ts: "1.5",
+      },
+    })),
+  );
+  assertEquals(written.length, 1);
+  // a reaction in a DM rides the stub too, whoever Slack named
+  await handler(
+    await signedReq({
+      type: "event_callback",
+      team_id: "T1",
+      authorizations: [{ user_id: "UBOT", is_bot: true }],
+      event: {
+        type: "reaction_added",
+        user: "U7",
+        reaction: "thumbsup",
+        item: { type: "message", channel: "D77", ts: "1.2" },
+        event_ts: "1.6",
+      },
+    }),
+  );
+  assertEquals(published.at(-1)?.envelope.connection_address, "T1");
+});
+
+Deno.test("every installation a delivery reached (§4): a member-named one is asked for whole, and the bot in it anchors the row and every member grant is enrolled", async () => {
+  const { store, upserts } = fakeStore({ service: "slack", address: "T1:UBOT" });
+  const asked: string[] = [];
+  let answer: Authorization[] | null = [
+    { user_id: "U1" },
+    { user_id: "UBOT", is_bot: true },
+    { user_id: "U2" },
+  ];
+  const owners: Record<string, string> = { "T1:U1": "ana", "T1:U2": "bo" };
+  store.connection = (service, address) =>
+    Promise.resolve(
+      owners[address]
+        ? { service, address, agentId: owners[address] }
+        : address === "T1:UBOT"
+        ? { service, address, credentialKey: "slack:T1:org" }
+        : null,
+    );
+  const { handler, published } = harness(SECRET, store, undefined, undefined, undefined, {
+    installations: (app, context, team) => {
+      asked.push(`${app} ${context} ${team}`);
+      return Promise.resolve(answer);
+    },
+  });
+  const delivery = (auths: Authorization[], ts: string) =>
+    signedReq(messageEvent({
+      api_app_id: "A1",
+      event_context: `ctx-${ts}`,
+      authorizations: auths,
+      event: { type: "message", channel: "C9", channel_type: "channel", user: "U7", text: "x", ts },
+    }));
+
+  await handler(await delivery([{ user_id: "U1" }], "1.0"));
+  assertEquals(asked, ["A1 ctx-1.0 T1"]);
+  assertEquals(published[0].envelope.connection_address, "T1:UBOT");
+  assertEquals(upserts.map((m) => m.agentId).sort(), ["ana", "bo"]);
+
+  // a refusal leaves the one Slack named: the room only a member is in, as before
+  answer = null;
+  await handler(await delivery([{ user_id: "U1" }], "1.1"));
+  assertEquals(published[1].envelope.connection_address, "T1");
+
+  // a delivery that names the bot already anchors right, and asks nothing
+  await handler(await delivery([{ user_id: "UBOT", is_bot: true }], "1.2"));
+  assertEquals(asked.length, 2);
+  assertEquals(published[2].envelope.connection_address, "T1:UBOT");
+});
+
+Deno.test("slackInstallations: every page, kept to the workspace; no token or a refusal answers null, the refusal said once", async () => {
+  const pages: Record<string, unknown> = {
+    "": {
+      ok: true,
+      authorizations: [
+        { team_id: "T1", user_id: "U1", is_bot: false },
+        { team_id: "T9", user_id: "UX", is_bot: true }, // a shared channel's other workspace
+      ],
+      response_metadata: { next_cursor: "p2" },
+    },
+    p2: { ok: true, authorizations: [{ team_id: "T1", user_id: "UBOT", is_bot: true }] },
+  };
+  let refuse = false;
+  const bodies: string[] = [];
+  const said: string[] = [];
+  const list = slackInstallations(
+    (app) => Promise.resolve(app === "A1" ? "xapp-1" : undefined),
+    (_url, init) => {
+      const form = new URLSearchParams(String(init?.body));
+      bodies.push(`${form.get("event_context")} ${form.get("cursor") ?? ""}`);
+      const answer = refuse
+        ? { ok: false, error: "missing_scope" }
+        : pages[form.get("cursor") ?? ""];
+      return Promise.resolve(Response.json(answer));
+    },
+    (line) => said.push(line),
+  );
+  assertEquals(await list("A1", "ctx", "T1"), [
+    { user_id: "U1" },
+    { user_id: "UBOT", is_bot: true },
+  ]);
+  assertEquals(bodies, ["ctx ", "ctx p2"]);
+  assertEquals(await list("A2", "ctx", "T1"), null);
+  refuse = true;
+  assertEquals(await list("A1", "ctx", "T1"), null);
+  assertEquals(await list("A1", "ctx", "T1"), null);
+  assertEquals(said.length, 1);
+  assertStringIncludes(said[0], "missing_scope");
 });
 
 Deno.test("a channel named as an agent is its steering room on the shared bot (§4), whatever the agent owns: recorded once by id, released when the bot is out, said nowhere", async () => {

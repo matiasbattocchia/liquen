@@ -992,8 +992,11 @@ it, and conversation identity (§3) says which platforms can host them:
 - **A member's DM with the shared bot** — in a workspace, where everyone writing to the
   bot is a colleague: the DM is a surface of the member's own agent, the one the
   classifier stamps on their line, when that agent runs and counts them among its
-  principals. The ingest records it on the bot's row (`mirrors.dms`, member → channel) the
-  first time they write there; a stranger's DM stays in the shared inbox.
+  principals. Every DM with the bot anchors to the workspace stub, which grants nothing of
+  itself, and the ingest records a member's there (`mirrors.dms`, member → channel) the
+  first time they write: their lines, the agent's copies out and the echoes all ride the
+  stub. A DM nobody's agent takes, a stranger's or a paused agent's, is read by no one,
+  never the shared inbox.
 - **A steering room on a shared account** — the org-wide shape, and the one an account
   several agents share can host: a room where being in it is being a principal, so
   whoever writes there steers. One exception stands by default: a roster member the
@@ -1168,7 +1171,7 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
   at connect (`conversations.open` on the granting user's own id) and recorded as
   `mirrors.self` on the **grant row**, beside the ownership edge that already names the
   principal — the same "who a wire address IS" semantics as the sender check — and a
-  member's DM with the shared bot is recorded by the ingest on the bot's row
+  member's DM with the shared bot is recorded by the ingest on the workspace stub
   (`mirrors.dms`, member → channel) the first time that member writes there, since the
   channel id is opaque; which member a Slack user is comes from the email on their
   profile (`users.info`, the `users:read.email` scope) scanned against the roster, never
@@ -1259,24 +1262,25 @@ The 3×2 grid, each cell real and distinct:
   the stamped row keeps granting events up to the stamp — the agent keeps what it has
   seen, never the conversation's future (reads and writes alike). A rejoin revives:
   the conversation whole again, Slack's own join-shows-history rule.
-  **Slack: a workspace runs in ONE mode, and every row is a grant.** Operating
-  assumption (2026-08-15): bot installed ⇒ no personal user grants; personal grants ⇒
-  no bot. ORG mode: the bot's own row `<team>:<bot user>` (ownerless +
-  `credential_key: slack:<team>:org` ⇒ the shared inbox, §6) anchors every delivery —
-  `is_bot` in `authorizations` names it per event, no bot-location tracking. PERSONAL
-  mode: deliveries anchor the bare `<team>` row — a registration STUB (gate admission,
-  membership-only), because a delivery is authorized for MANY human grants and no
-  single user address can be an event's connection; visibility rides the memberships
-  the deliveries themselves enroll (and each connect flow enrolls its principal in the
-  grant-note conversation, so the note reaches them). Human grant rows
+  **Slack: the shared bot beside the members' own grants, and every row is a grant.**
+  A delivery anchors to the bot's own row `<team>:<bot user>` (ownerless +
+  `credential_key: slack:<team>:org` ⇒ the shared inbox, §6) when the bot is among the
+  installations that saw it, and otherwise to the bare `<team>` row — a registration
+  STUB (gate admission, membership-only), because a delivery is authorized for MANY
+  human grants and no single user address can be an event's connection; visibility
+  there rides the memberships the deliveries themselves enroll (and each connect flow
+  enrolls its principal in the grant-note conversation, so the note reaches them). A DM
+  anchors to the stub whoever saw it (§4). Slack sends one event per app and names ONE
+  installation, so when it names a member's grant the ingest asks
+  `apps.event.authorizations.list` for the rest, on the delivering app's own app-level
+  token (`authorizations:read`); a refusal leaves the one named, the stub's
+  membership-only view, which no agent of another reads. Human grant rows
   (`<team>:<user>`, owned) are the identity/credential map: a sender classifies by
   point lookup of ITS grant row (→ registry name), and credentials hang off grants
   (`credential_key`: `slack:<team>:<owner>` / `slack:<team>:org` by the connector's
   own convention — dispatch resolves author's grant → team bot → env from exactly the
-  envelope's anchor + author). The assumption is about reality, NOT enforced in
-  code: ingest derives the anchor per delivery either way, so a workspace that breaks
-  the assumption still maps gracefully (bot-witnessed → the bot's row, personal-only →
-  the stub) — and the ingredient survives verbatim in `extra.slack.authorizations`.
+  envelope's anchor + author). The installations a row was read from survive verbatim in
+  `extra.slack.authorizations`.
   *Credentials* is **the vault**: a key:value store in log.db (one substrate; its OWN
   accessor, so a policy-scoped log never carries credential capability into the agent
   plane) — `(key, value, agent_id?, extra)`, `value` the service-shaped secret blob
