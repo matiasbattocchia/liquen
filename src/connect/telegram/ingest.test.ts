@@ -366,6 +366,93 @@ Deno.test("telegram ingest: the classifier stamps a member by their own account,
   assertEquals(published[2].agent, undefined);
 });
 
+Deno.test("telegram ingest: a member's DM with an owned account is recorded before its line lands", async () => {
+  const BETO: TgPeer = { id: "700300", kind: "user", name: "Beto", phone: "5492615550103" };
+  const rows: Record<string, ConnectionRow> = {
+    "700100": { service: "telegram", address: "700100", agentId: "ana" },
+    "700200": { service: "telegram", address: "700200", agentId: "sol" },
+  };
+  const order: string[] = [];
+  const upserts: Partial<ConnectionRow>[] = [];
+  const store = {
+    connection: (_s: string, address: string) => Promise.resolve(rows[address] ?? null),
+    connections: () => Promise.resolve(Object.values(rows)),
+    upsertConnections: (patch: Partial<ConnectionRow>[]) => {
+      order.push("record");
+      upserts.push(...patch);
+      const row = rows[patch[0].address!];
+      row.extra = {
+        ...row.extra,
+        mirrors: {
+          dms: {
+            ...(row.extra?.mirrors as { dms?: object })?.dms,
+            ...(patch[0].extra?.mirrors as { dms: object }).dms,
+          },
+        },
+      };
+      return Promise.resolve();
+    },
+    agents: () =>
+      Promise.resolve([
+        { agentId: "beto", phone: "+54 9 261 555-0103" },
+      ]) as ReturnType<NonNullable<NonNullable<TelegramIngestDeps["store"]>["agents"]>>,
+  } as unknown as NonNullable<TelegramIngestDeps["store"]>;
+  const published: Draft<MessageEvent>[] = [];
+  const ingest = createTelegramIngest({
+    wire: fakeWire(),
+    store,
+    publish: ((drafts: Draft<MessageEvent>[]) => {
+      order.push("publish");
+      published.push(...drafts);
+      return Promise.resolve(drafts as unknown as Event[]);
+    }) as TelegramIngestDeps["publish"],
+    now: () => NOW,
+    sleep: () => Promise.resolve(),
+  });
+
+  // Sol, by her own account, and Beto, by his declared phone
+  await ingest.handle({ type: "message", message: message() });
+  await ingest.handle({ type: "message", message: message({ id: 42, chat: BETO, sender: BETO }) });
+  assertEquals(upserts, [
+    { service: "telegram", address: "700100", extra: { mirrors: { dms: { sol: "700200" } } } },
+    { service: "telegram", address: "700100", extra: { mirrors: { dms: { beto: "700300" } } } },
+  ]);
+  assertEquals(order, ["record", "publish", "record", "publish"]);
+
+  // once recorded, a chat is not written again; the account's own line and a stranger's
+  // record nothing
+  await ingest.handle({ type: "message", message: message({ id: 43 }) });
+  await ingest.handle({
+    type: "message",
+    message: message({ id: 44, sender: SELF, out: true }),
+  });
+  const ZOE: TgPeer = { id: "700500", kind: "user", name: "Zoe" };
+  await ingest.handle({ type: "message", message: message({ id: 45, chat: ZOE, sender: ZOE }) });
+  // a member in a group is no DM
+  await ingest.handle({ type: "message", message: message({ id: 46, chat: TEAM }) });
+  assertEquals(upserts.length, 2);
+});
+
+Deno.test("telegram ingest: a shared account records no DM", async () => {
+  const rows: Record<string, ConnectionRow> = {
+    "700100": { service: "telegram", address: "700100" },
+    "700200": { service: "telegram", address: "700200", agentId: "sol" },
+  };
+  let upserts = 0;
+  const store = {
+    connection: (_s: string, address: string) => Promise.resolve(rows[address] ?? null),
+    connections: () => Promise.resolve(Object.values(rows)),
+    upsertConnections: () => {
+      upserts++;
+      return Promise.resolve();
+    },
+  };
+  const { ingest, published } = harness({ store });
+  await ingest.handle({ type: "message", message: message() });
+  assertEquals(published[0].agent, { id: "sol" });
+  assertEquals(upserts, 0);
+});
+
 Deno.test("telegram ingest: a stranger's about rides their first line in each conversation", async () => {
   const waits: number[] = [];
   const bios = {

@@ -930,6 +930,14 @@ the delete event plus a `deleted` stamp on the original; a read receipt stamps t
 message the other side saw. The account's line typed on a phone is the same shape on a
 new id.
 
+**Mind surfaces.** On an account an agent owns, Saved Messages is `mirrors.self`, and a
+member's direct chat is recorded as `mirrors.dms` the first time they write there, before
+that line lands: a principal's DM with the agent's own account steers it (DESIGN §4). A
+member is known by their own connected account, or by the phone Telegram shows against
+the one the roster declares. A member hiding their number with no account connected is
+nobody the classifier knows, and their DM stays the account's like any other. A shared
+account reaches anyone, so its DMs and groups steer nobody: they are the shared inbox.
+
 **Room lines.** A service message is the room's line (§1), one `room` part from whoever
 made the change: created, added, joined (by link, by approval), left, removed, the title,
 the photo, a pin (pointing at its message), the disappearing timer, a call, a move to a
