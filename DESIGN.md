@@ -1162,8 +1162,9 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
   steering (§2) — so a member's DM with another agent's account, left visible there,
   would wake that member's alter-ego on an instruction meant for someone else. **No backfill**: the mirror tails live — a surface connected
   mid-conversation starts mid-stream; history is asked of the log (an interface's `tail`
-  takes a cursor), never replayed onto a surface. Per-service identification of a mind
-  surface (`aliases()`): **derived where platform structure gives it away, recorded where
+  takes a cursor), never replayed onto a surface. So a member's DM with the shared bot,
+  written before their agent runs, reaches that agent from its first line after.
+  Per-service identification of a mind surface (`aliases()`): **derived where platform structure gives it away, recorded where
   the id is opaque**, every record on the connection under `extra.mirrors` — WA, the
   self-chat is addressed by the connection's own number, so an owned connection IS the
   binding, nothing stored, and a principal's DM with an owned number is addressed by the
@@ -1280,7 +1281,9 @@ The 3×2 grid, each cell real and distinct:
   (`credential_key`: `slack:<team>:<owner>` / `slack:<team>:org` by the connector's
   own convention — dispatch resolves author's grant → team bot → env from exactly the
   envelope's anchor + author). The installations a row was read from survive verbatim in
-  `extra.slack.authorizations`.
+  `extra.slack.authorizations`. The list is the delivering app's: with two apps in one
+  workspace, each delivery knows only its own app's installations, and the row their merge
+  makes keeps the anchor it got first.
   *Credentials* is **the vault**: a key:value store in log.db (one substrate; its OWN
   accessor, so a policy-scoped log never carries credential capability into the agent
   plane) — `(key, value, agent_id?, extra)`, `value` the service-shaped secret blob
