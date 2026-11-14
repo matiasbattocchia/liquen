@@ -4,6 +4,9 @@ import {
   createSlackWebhook,
   httpSigningSecrets,
   looksLikeSignIn,
+  ROOM_FACTS_MS,
+  type RoomFacts,
+  slackAccounts,
   slackInstallations,
   slackNames,
   slackSocket,
@@ -12,6 +15,7 @@ import {
   type WebhookHandler,
 } from "./ingest.ts";
 import { SignedOut } from "../errors.ts";
+import { createMarks, type MarkDeps, marked } from "../marks.ts";
 import type { Draft, Event, MessageEvent } from "../../types.ts";
 import { newId } from "../../store/id.ts";
 import { type Appender, type Log, openLog } from "../../store/log.ts";
@@ -55,10 +59,16 @@ async function sign(ts: string, body: string): Promise<string> {
 }
 
 /** The name directory in miniature: seeded maps (users and rooms share the `${team}:${id}`
- *  key space — Slack ids never collide across the two), learns recorded. */
-function fakeNames(seed: Record<string, string> = {}, emails: Record<string, string> = {}) {
+ *  key space — Slack ids never collide across the two), learns recorded, and each
+ *  channel's facts as `facts` seeds them, the ones asked for recorded. */
+function fakeNames(
+  seed: Record<string, string> = {},
+  emails: Record<string, string> = {},
+  facts: Record<string, RoomFacts> = {},
+) {
   const known = new Map(Object.entries(seed));
   const learned: string[] = [];
+  const asked: string[] = [];
   const names: NonNullable<SlackWebhookDeps["names"]> = {
     nameOf: (team, user) => Promise.resolve(known.get(`${team}:${user}`) ?? null),
     emailOf: (team, user) => Promise.resolve(emails[`${team}:${user}`] ?? null),
@@ -71,8 +81,12 @@ function fakeNames(seed: Record<string, string> = {}, emails: Record<string, str
       known.set(`${team}:${channel}`, name);
       learned.push(`${team}:${channel}=${name}`);
     },
+    factsOf: (team, channel) => {
+      asked.push(`${team}:${channel}`);
+      return Promise.resolve(facts[`${team}:${channel}`] ?? null);
+    },
   };
-  return { names, learned };
+  return { names, learned, asked };
 }
 
 function harness(
@@ -639,6 +653,146 @@ Deno.test("slack: the room's name rides every message's conversation, from the d
   });
 });
 
+/** The account on workspace T1: its bot U0BOT and a user grant U1. */
+const ACCOUNT = () =>
+  slackAccounts(() =>
+    Promise.resolve([
+      { service: "slack", address: "T1" },
+      { service: "slack", address: "T1:U0BOT" },
+      { service: "slack", address: "T1:U1" },
+    ])
+  );
+
+Deno.test("slack: a channel line says how many members the room has and whether the account made it; a DM and an mpim say neither", async () => {
+  const { names, asked } = fakeNames({}, {}, {
+    "T1:C1": { members: 120, creator: "U0BOT" }, // the bot made it
+    "T1:C2": { members: 300, creator: "U7" }, // someone else did
+    "T1:C3": { members: 40, creator: "U1" }, // a user grant did
+    "T1:C4": { members: 8 }, // no creator said: no word on who runs it
+  });
+  const { handler, published } = harness(SECRET, undefined, undefined, names, undefined, {
+    accounts: ACCOUNT(),
+  });
+  const say = (channel: string, channel_type: string, ts: string) =>
+    signedReq(messageEvent({
+      event: { type: "message", channel, channel_type, user: "U7", text: "hola", ts },
+    }));
+  await handler(await say("C1", "channel", "1.1"));
+  await handler(await say("C2", "group", "1.2"));
+  await handler(await say("C3", "channel", "1.3"));
+  await handler(await say("C4", "channel", "1.4"));
+  await handler(await say("D1", "im", "1.5"));
+  await handler(await say("G1", "mpim", "1.6"));
+  assertEquals((published as MessageEvent[]).map((m) => m.envelope.conversation), [
+    { address: "C1", kind: "channel", members: 120, admin: true },
+    { address: "C2", kind: "group", members: 300, admin: false },
+    { address: "C3", kind: "channel", members: 40, admin: true },
+    { address: "C4", kind: "channel", members: 8 },
+    { address: "D1", kind: "direct" },
+    { address: "G1", kind: "direct" },
+  ]);
+  // a direct room is never asked
+  assertEquals(asked, ["T1:C1", "T1:C2", "T1:C3", "T1:C4"]);
+});
+
+Deno.test("slack: a channel's room lines, reactions and deletes say the room's facts too; the delete's stamp does not", async () => {
+  const { names, asked } = fakeNames({}, {}, { "T1:C2": { members: 300, creator: "U7" } });
+  const { handler, published } = harness(SECRET, undefined, undefined, names, undefined, {
+    accounts: ACCOUNT(),
+  });
+  const facts = { members: 300, admin: false };
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        channel: "C2",
+        channel_type: "channel",
+        subtype: "channel_join",
+        user: "U8",
+        ts: "2.1",
+      },
+    })),
+  );
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "reaction_added",
+        user: "U8",
+        reaction: "eyes",
+        item: { type: "message", channel: "C2", ts: "2.1" },
+        event_ts: "2.2",
+      },
+    })),
+  );
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "message",
+        subtype: "message_deleted",
+        channel: "C2",
+        channel_type: "channel",
+        deleted_ts: "1.0",
+        event_ts: "2.3",
+      },
+    })),
+  );
+  await handler(
+    await signedReq(messageEvent({
+      event: {
+        type: "reaction_added",
+        user: "U8",
+        reaction: "eyes",
+        item: { type: "message", channel: "D1", ts: "2.1" },
+        event_ts: "2.4",
+      },
+    })),
+  );
+  const [joined, reacted, deleted, stamp, dm] = published as MessageEvent[];
+  assertEquals(joined.envelope.conversation, { address: "C2", kind: "channel", ...facts });
+  assertEquals(reacted.envelope.conversation, { address: "C2", ...facts });
+  assertEquals(deleted.envelope.conversation, { address: "C2", ...facts });
+  assertEquals(stamp.envelope.conversation, { address: "C2" });
+  assertEquals(dm.envelope.conversation, { address: "D1" });
+  assertEquals(asked.includes("T1:D1"), false);
+});
+
+Deno.test("slack: published through the marks, a crowded channel's line is silenced and one naming the bot or a user grant is news", async () => {
+  const { names } = fakeNames({}, {}, { "T1:C2": { members: 300, creator: "U7" } });
+  const accounts = ACCOUNT();
+  // the day's count: well past `busy` in every room
+  const read = (() => Promise.resolve(Array.from({ length: 41 }, () => ({})))) as MarkDeps["read"];
+  const marks = createMarks({
+    read,
+    knobs: { crowd: 20, busy: 40, follow: [] },
+    self: accounts.of,
+  });
+  const stored: Draft<MessageEvent>[] = [];
+  const capture = ((one: Draft | Draft[]) => {
+    const list = (Array.isArray(one) ? one : [one]) as Draft<MessageEvent>[];
+    stored.push(...list);
+    return Promise.resolve(Array.isArray(one) ? list : list[0]);
+  }) as Appender["publish"];
+  const publish = marked(capture, async (drafts) => {
+    await accounts.read();
+    return await marks(drafts);
+  });
+  const { handler } = harness(SECRET, undefined, undefined, names, publish, { accounts });
+  const say = (text: string, ts: string) =>
+    signedReq(messageEvent({
+      authorizations: [{ user_id: "U0BOT", is_bot: true }],
+      event: { type: "message", channel: "C2", channel_type: "channel", user: "U7", text, ts },
+    }));
+  await handler(await say("hola a todos", "3.1"));
+  await handler(await say("<@U0BOT> mirá esto", "3.2"));
+  await handler(await say("<@U1> mirá esto", "3.3"));
+  await handler(await say("<@U8> mirá esto", "3.4"));
+  assertEquals(stored.map((d) => d.envelope.connection_address), Array(4).fill("T1:U0BOT"));
+  assertEquals(stored.map((d) => d.extra?.crowded), [true, true, true, true]);
+  assertEquals(stored.map((d) => d.extra?.addressed), [undefined, true, true, undefined]);
+  // the facts are read and dropped: no part of the row
+  assertEquals(stored[0].envelope.conversation, { address: "C2", kind: "channel" });
+});
+
 Deno.test("slack: a join, a leave and a rename are the room's own lines — from whoever made them", async () => {
   const { names, learned } = fakeNames({ "T1:U7": "Ana", "T1:U8": "Bea", "T1:C1": "general" });
   const { handler, published } = harness(SECRET, undefined, undefined, names);
@@ -1127,22 +1281,31 @@ Deno.test("slack: the name directory's users.info call carries a timeout signal"
   assert(stub.seen[0].signal instanceof AbortSignal, "the call is bounded");
 });
 
+/** The global fetch swapped for one that answers the Web API by `method?query`, each call
+ *  recorded the same way. */
+function stubApi(answers: Record<string, unknown> | ((q: string) => unknown)) {
+  const calls: string[] = [];
+  const real = globalThis.fetch;
+  const answer = typeof answers === "function" ? answers : (q: string) => answers[q];
+  globalThis.fetch = ((i: RequestInfo | URL) => {
+    const q = String(i).replace("https://slack.com/api/", "");
+    calls.push(q);
+    return Promise.resolve(Response.json(answer(q) ?? { ok: false }));
+  }) as typeof fetch;
+  return { calls, restore: () => (globalThis.fetch = real) };
+}
+
+const INFO = (channel: string) => `conversations.info?channel=${channel}&include_num_members=true`;
+
 Deno.test("slack: the directory names a room by conversations.info, a DM by its counterpart", async () => {
-  const answers: Record<string, unknown> = {
-    "conversations.info?channel=C1": { ok: true, channel: { id: "C1", name: "general" } },
-    "conversations.info?channel=D1": { ok: true, channel: { id: "D1", is_im: true, user: "U1" } },
+  const api = stubApi({
+    [INFO("C1")]: { ok: true, channel: { id: "C1", name: "general" } },
+    [INFO("D1")]: { ok: true, channel: { id: "D1", is_im: true, user: "U1" } },
     "users.info?user=U1": {
       ok: true,
       user: { profile: { display_name: "Ana", email: "ana@acme.co" } },
     },
-  };
-  const calls: string[] = [];
-  const real = globalThis.fetch;
-  globalThis.fetch = ((i: RequestInfo | URL) => {
-    const q = String(i).replace("https://slack.com/api/", "");
-    calls.push(q);
-    return Promise.resolve(Response.json(answers[q] ?? { ok: false }));
-  }) as typeof fetch;
+  });
   try {
     const names = slackNames(() => Promise.resolve("xoxb-t"));
     assertEquals(await names.roomOf("T1", "C1"), "general");
@@ -1152,15 +1315,85 @@ Deno.test("slack: the directory names a room by conversations.info, a DM by its 
     assertEquals(await names.roomOf("T1", "C9"), null); // unresolvable stays uncached
     assertEquals(await names.roomOf("T1", "C9"), null);
   } finally {
-    globalThis.fetch = real;
+    api.restore();
   }
-  assertEquals(calls, [
-    "conversations.info?channel=C1",
-    "conversations.info?channel=D1",
+  assertEquals(api.calls, [
+    INFO("C1"),
+    INFO("D1"),
     "users.info?user=U1",
-    "conversations.info?channel=C9",
-    "conversations.info?channel=C9",
+    INFO("C9"),
+    INFO("C9"),
   ]);
+});
+
+Deno.test("slack: a channel's size and creator ride the name's own conversations.info, held a spell; a DM and an mpim have none", async () => {
+  let members = 120;
+  const api = stubApi((q) =>
+    ({
+      [INFO("C1")]: {
+        ok: true,
+        channel: { id: "C1", name: "general", num_members: members, creator: "U0BOT" },
+      },
+      [INFO("D1")]: { ok: true, channel: { id: "D1", is_im: true, user: "U1" } },
+      [INFO("G1")]: { ok: true, channel: { id: "G1", name: "mpdm-ana--bo-1", is_mpim: true } },
+      "users.info?user=U1": { ok: true, user: { profile: { display_name: "Ana" } } },
+    })[q]
+  );
+  let at = 0;
+  try {
+    const names = slackNames(() => Promise.resolve("xoxb-t"), () => at);
+    // the name's call answers the facts too: one call for both
+    assertEquals(await names.roomOf("T1", "C1"), "general");
+    assertEquals(await names.factsOf("T1", "C1"), { members: 120, creator: "U0BOT" });
+    assertEquals(api.calls, [INFO("C1")]);
+    // held until the spell is out, then asked again
+    members = 121;
+    at += ROOM_FACTS_MS - 1;
+    assertEquals((await names.factsOf("T1", "C1"))?.members, 120);
+    at += 1;
+    assertEquals((await names.factsOf("T1", "C1"))?.members, 121);
+    assertEquals(api.calls.filter((c) => c === INFO("C1")).length, 2);
+    // a DM and an mpim: no facts, and never asked again for them
+    assertEquals(await names.factsOf("T1", "D1"), null);
+    assertEquals(await names.factsOf("T1", "G1"), null);
+    at += ROOM_FACTS_MS;
+    assertEquals(await names.factsOf("T1", "D1"), null);
+    assertEquals(api.calls.filter((c) => c === INFO("D1")).length, 1);
+    // a room unresolvable now has none
+    assertEquals(await names.factsOf("T1", "C9"), null);
+  } finally {
+    api.restore();
+  }
+});
+
+Deno.test("slack: the account's user ids are its bot's and its user grants' on the workspace, read off the map once a minute", async () => {
+  let rows = [
+    { service: "slack", address: "T1" },
+    { service: "slack", address: "T1:U0BOT" },
+    { service: "slack", address: "T1:U1" },
+    { service: "slack", address: "T2:U9" },
+    { service: "telegram", address: "T1:U5" },
+  ];
+  let reads = 0;
+  let at = 0;
+  const accounts = slackAccounts(() => {
+    reads++;
+    return Promise.resolve(rows);
+  }, () => at);
+  assertEquals(accounts.of("T1"), []); // nothing read yet
+  await accounts.read();
+  // by the workspace, or by any of its connection addresses
+  assertEquals(accounts.of("T1"), ["U0BOT", "U1"]);
+  assertEquals(accounts.of("T1:U0BOT"), ["U0BOT", "U1"]);
+  assertEquals(accounts.of("T2"), ["U9"]);
+  rows = [...rows, { service: "slack", address: "T1:U2" }];
+  at += 59_999;
+  await accounts.read();
+  assertEquals(reads, 1);
+  at += 1;
+  await accounts.read();
+  assertEquals(reads, 2);
+  assertEquals(accounts.of("T1"), ["U0BOT", "U1", "U2"]);
 });
 
 Deno.test("slack: an event POST is acked 200 before its processing settles", async () => {

@@ -56,6 +56,7 @@ import {
 } from "../../store/connections.ts";
 import { SignedOut } from "../errors.ts";
 import { setState } from "../health.ts";
+import { createMarks, marked } from "../marks.ts";
 import { SIGNED_OUT_NAMES } from "./dispatch.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
@@ -128,14 +129,32 @@ export interface SlackNames {
   /** The push leg: a room's rename line (`channel_name`, `group_name`) and a new
    *  channel's `channel_created` carry the subject. */
   learnRoom(team: string, channel: string, name: string): void;
+  /** What the crowd rule reads of a channel (`connect/marks.ts`), from the same
+   *  `conversations.info` answer the name comes from: how many members it has and who
+   *  created it. Null for a DM or an mpim, which need neither, and for a room
+   *  unresolvable right now. */
+  factsOf(team: string, channel: string, via?: string[]): Promise<RoomFacts | null>;
 }
+
+/** A channel as `conversations.info` counts it (`include_num_members`). */
+export interface RoomFacts {
+  members?: number;
+  /** The user id that created the channel. */
+  creator?: string;
+}
+
+/** How long a channel's facts stand before `conversations.info` is asked again: the
+ *  method is Tier 3, some fifty calls a minute per workspace, so even hundreds of busy
+ *  channels refresh well inside it. A count drifts by the few who came and went. */
+export const ROOM_FACTS_MS = 15 * 60_000;
 
 /** Build the directory over a token source (same shape the media seam resolves with):
  *  `users.info` per first sight, one in-flight call per user, successes cached for the
  *  process lifetime (fill-merge in the store means one resolution per user is all a
- *  name ever needs). */
+ *  name ever needs). A room's name is held as long; its facts for `ROOM_FACTS_MS`. */
 export function slackNames(
   tokenFor: (team: string, users: string[]) => Promise<string | null>,
+  now: () => number = Date.now,
 ): SlackNames {
   interface Profile {
     name: string | null;
@@ -182,42 +201,82 @@ export function slackNames(
     inflight.set(key, p);
     return p;
   };
-  const rooms = new Map<string, string>();
-  const roomsInflight = new Map<string, Promise<string | null>>();
-  // one conversations.info per first sight; a DM's answer is the counterpart's user id,
-  // which the profile leg names — so a DM costs one call more, once
-  const roomOf = (team: string, channel: string, via: string[] = []): Promise<string | null> => {
+  /** A room as its last `conversations.info` answered: `at` is when, and a name the push
+   *  leg taught before any answer stands with `at` still unset. */
+  interface Room extends RoomFacts {
+    name: string | null;
+    direct: boolean;
+    at: number;
+  }
+  const rooms = new Map<string, Room>();
+  const roomsInflight = new Map<string, Promise<Room | null>>();
+  // one conversations.info per first sight, and per room again once its facts are stale;
+  // a DM's answer is the counterpart's user id, which the profile leg names, so a DM
+  // costs one call more, once. A refusal leaves what was held, asked again a spell later
+  const infoOf = (team: string, channel: string, via: string[]): Promise<Room | null> => {
     const key = `${team}:${channel}`;
-    const hit = rooms.get(key);
-    if (hit !== undefined) return Promise.resolve(hit);
     const going = roomsInflight.get(key);
     if (going) return going;
-    const p = (async (): Promise<string | null> => {
+    const p = (async (): Promise<Room | null> => {
+      const held = rooms.get(key);
       try {
         const token = await tokenFor(team, via);
-        if (!token) return null;
+        if (!token) return held ?? null;
         const res = await timedFetch(
-          `https://slack.com/api/conversations.info?channel=${channel}`,
+          `https://slack.com/api/conversations.info?channel=${channel}&include_num_members=true`,
           { headers: { authorization: `Bearer ${token}` } },
         );
         const body = await res.json() as {
           ok: boolean;
-          channel?: { name?: string; is_im?: boolean; user?: string };
+          channel?: {
+            name?: string;
+            is_im?: boolean;
+            is_mpim?: boolean;
+            user?: string;
+            num_members?: number;
+            creator?: string;
+          };
         };
         const c = body.ok ? body.channel : undefined;
-        const found = c?.is_im
+        if (!c) {
+          if (held) held.at = now();
+          return held ?? null;
+        }
+        const name = c.is_im
           ? (c.user ? (await profileOf(team, c.user, via)).name : null)
-          : c?.name || null;
-        if (found) rooms.set(key, found);
-        return found;
+          : c.name || null;
+        const room: Room = {
+          name: name ?? held?.name ?? null,
+          direct: c.is_im === true || c.is_mpim === true,
+          at: now(),
+          ...(typeof c.num_members === "number" ? { members: c.num_members } : {}),
+          ...(c.creator ? { creator: c.creator } : {}),
+        };
+        rooms.set(key, room);
+        return room;
       } catch {
-        return null;
+        return held ?? null;
       } finally {
         roomsInflight.delete(key);
       }
     })();
     roomsInflight.set(key, p);
     return p;
+  };
+  const roomOf = async (team: string, channel: string, via: string[] = []) => {
+    const hit = rooms.get(`${team}:${channel}`);
+    if (hit?.name) return hit.name;
+    return (await infoOf(team, channel, via))?.name ?? null;
+  };
+  const factsOf = async (team: string, channel: string, via: string[] = []) => {
+    const hit = rooms.get(`${team}:${channel}`);
+    const fresh = hit && (hit.direct || now() - hit.at < ROOM_FACTS_MS);
+    const room = fresh ? hit : await infoOf(team, channel, via);
+    if (!room || room.direct || room.at === -Infinity) return null;
+    return {
+      ...(room.members !== undefined ? { members: room.members } : {}),
+      ...(room.creator ? { creator: room.creator } : {}),
+    };
   };
   return {
     nameOf: async (team, user, via) => (await profileOf(team, user, via)).name,
@@ -227,7 +286,50 @@ export function slackNames(
       cache.set(key, { name, email: cache.get(key)?.email ?? null });
     },
     roomOf,
-    learnRoom: (team, channel, name) => rooms.set(`${team}:${channel}`, name),
+    learnRoom: (team, channel, name) => {
+      const key = `${team}:${channel}`;
+      const held = rooms.get(key);
+      rooms.set(key, held ? { ...held, name } : { name, direct: false, at: -Infinity });
+    },
+    factsOf,
+  };
+}
+
+/** How long the account's user ids stand before the connections map is read again. */
+export const ACCOUNTS_MS = 60_000;
+
+/** The user ids the account goes by on a workspace: the bot's (`<team>:<bot user>`) and
+ *  each user grant's (`<team>:<user>`), off the connections map. A mention, a sender and
+ *  a channel's creator carry user ids, never a connection's address. `read` takes the
+ *  map again once `ACCOUNTS_MS` has passed; `of` answers from the last read, by the
+ *  workspace or any of its connection addresses. */
+export interface SlackAccounts {
+  read(): Promise<void>;
+  of(connection: string): string[];
+}
+
+export function slackAccounts(
+  rows: () => Promise<{ service: string; address: string }[]>,
+  now: () => number = Date.now,
+): SlackAccounts {
+  let held: { service: string; address: string }[] = [];
+  let at = -Infinity;
+  let going: Promise<void> | undefined;
+  return {
+    read() {
+      if (now() - at < ACCOUNTS_MS) return Promise.resolve();
+      going ??= rows().then((r) => {
+        held = r;
+        at = now();
+      }).finally(() => (going = undefined));
+      return going;
+    },
+    of(connection) {
+      const team = connection.split(":")[0];
+      return held
+        .filter((r) => r.service === "slack" && r.address.startsWith(`${team}:`))
+        .map((r) => r.address.slice(team.length + 1));
+    },
   };
 }
 
@@ -246,8 +348,11 @@ export interface SlackWebhookDeps {
   /** File attachments → the media store (absent ⇒ files are dropped, text still flows). */
   media?: SlackMedia;
   /** The name directory (absent ⇒ senders and rooms ship bare ids, mentions decode to
-   *  `@<id>`). */
+   *  `@<id>`, and a channel says neither its size nor who runs it). */
   names?: SlackNames;
+  /** The account's user ids, which a channel's creator is told against (absent ⇒ no
+   *  channel says whether the account runs it). */
+  accounts?: SlackAccounts;
   /** The apps' signing secrets. Set ⇒ `X-Slack-Signature` is REQUIRED and must verify
    *  under one of them (one server, every app the vault holds); absent ⇒ unsigned
    *  accepted — the Socket Mode carrier, already authed by `xapp`. */
@@ -402,6 +507,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
           payload.authorizations,
           deps.store,
           deps.names,
+          deps.accounts,
         ),
       );
       return;
@@ -415,7 +521,15 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       }
       const anchor = anchorOf(team, payload.authorizations);
       await deps.publish(
-        await roomLine(said, team, anchor, payload.authorizations, deps.store, deps.names),
+        await roomLine(
+          said,
+          team,
+          anchor,
+          payload.authorizations,
+          deps.store,
+          deps.names,
+          deps.accounts,
+        ),
       );
       return;
     }
@@ -425,20 +539,20 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
     if (e.type === "reaction_added" || e.type === "reaction_removed") {
       const item = e.item;
       if (item?.type !== "message" || !item.channel || !item.ts) return;
-      const anchor = anchorOf(team, payload.authorizations, isIm(item.channel));
-      const who = e.user
-        ? await deps.names?.nameOf(team, e.user, boundUsers(payload.authorizations))
-        : undefined;
-      const email = e.user
-        ? await deps.names?.emailOf(team, e.user, boundUsers(payload.authorizations))
-        : undefined;
+      const im = isIm(item.channel);
+      const anchor = anchorOf(team, payload.authorizations, im);
+      const via = boundUsers(payload.authorizations);
+      const who = e.user ? await deps.names?.nameOf(team, e.user, via) : undefined;
+      const email = e.user ? await deps.names?.emailOf(team, e.user, via) : undefined;
       // same classifier stamp as messages (§3): the reactor's grant row or email names them
-      const owner = await memberOf(
-        deps.store,
-        deps.names,
+      const owner = await memberOf(deps.store, deps.names, team, e.user, via);
+      const facts = await roomFacts(
         team,
-        e.user,
-        boundUsers(payload.authorizations),
+        item.channel,
+        im ? "direct" : undefined,
+        via,
+        deps.names,
+        deps.accounts,
       );
       await deps.publish({
         ts: now(),
@@ -451,7 +565,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
         envelope: {
           service: "slack",
           connection_address: anchor,
-          conversation: { address: item.channel },
+          conversation: { address: item.channel, ...facts },
           ...(e.user ? { sender: { address: e.user, ...(who ? { name: who } : {}) } } : {}),
           external_id: `slack:${team}:${item.channel}:${e.event_ts}`,
         },
@@ -484,7 +598,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
       deps.store,
       deps.media,
       deps.names,
-      { now },
+      { now, accounts: deps.accounts },
     );
     if (msgs.length === 0) return;
     await deps.publish(msgs);
@@ -495,6 +609,7 @@ export function createSlackWebhook(deps: SlackWebhookDeps): WebhookHandler {
 
 export interface MapCtx {
   now: () => string;
+  accounts?: SlackAccounts;
 }
 
 export type Store = NonNullable<SlackWebhookDeps["store"]>;
@@ -527,6 +642,28 @@ function botOf(team: string, anchor: string): string | undefined {
 /** The delivery's token-resolution candidates: its bound (non-bot) authorized users. */
 function boundUsers(auths: Authorization[] | undefined): string[] {
   return (auths ?? []).filter((a) => !a.is_bot && a.user_id).map((a) => a.user_id);
+}
+
+/** What a line in a channel says of the room for the crowd rule (`connect/marks.ts`): how
+ *  many members it has, and whether the account runs it, which on Slack is the channel's
+ *  creator being one of the account's own users. A DM or an mpim carries neither. */
+async function roomFacts(
+  team: string,
+  channel: string,
+  kind: Conversation["kind"],
+  via: string[],
+  names: SlackNames | undefined,
+  accounts: SlackAccounts | undefined,
+): Promise<Pick<Conversation, "members" | "admin">> {
+  if (kind === "direct" || !names) return {};
+  const facts = await names.factsOf(team, channel, via);
+  if (!facts) return {};
+  await accounts?.read();
+  const creator = facts.creator;
+  return {
+    ...(facts.members !== undefined ? { members: facts.members } : {}),
+    ...(creator && accounts ? { admin: accounts.of(team).includes(creator) } : {}),
+  };
 }
 
 /** The classifier (§3): who a wire user IS — a point lookup of the sender's grant row
@@ -668,6 +805,14 @@ export async function mapMessage(
     if (!e.deleted_ts || !e.channel) return [];
     const originalId = `slack:${team}:${e.channel}:${e.deleted_ts}`;
     const ts = slackTime(e.event_ts, ctx.now);
+    const facts = await roomFacts(
+      team,
+      e.channel,
+      KIND[e.channel_type],
+      boundUsers(authorizations),
+      names,
+      ctx.accounts,
+    );
     return [{
       ts,
       type: "message",
@@ -675,7 +820,7 @@ export async function mapMessage(
       envelope: {
         service: "slack",
         connection_address: anchor,
-        conversation: { address: e.channel },
+        conversation: { address: e.channel, ...facts },
         external_id: `slack:${team}:${e.channel}:${e.event_ts ?? `del.${e.deleted_ts}`}`,
       },
       parts: [],
@@ -785,6 +930,7 @@ export async function mapMessage(
   const who = m.user ? await names?.nameOf(team, m.user, via) : undefined;
   const email = m.user ? await names?.emailOf(team, m.user, via) : undefined;
   const room = await names?.roomOf(team, conversation, via);
+  const facts = await roomFacts(team, conversation, kind, via, names, ctx.accounts);
   // the classifier's authorship stamp (§3): a sender whose grant row or declared email
   // names a member is that member — `agent.id` alone (a Slack client is not the harness,
   // so no session_id); turn_id, never this stamp, marks the model's voice
@@ -807,6 +953,7 @@ export async function mapMessage(
         address: conversation,
         ...(kind ? { kind } : {}),
         ...(room ? { name: room } : {}),
+        ...facts,
       },
       sender: m.user ? { address: m.user, ...(who ? { name: who } : {}) } : undefined,
       // the upsert/merge key: Slack's ts is the per-channel message id (§3, §4) — for an
@@ -993,6 +1140,7 @@ async function mapRoomLine(
       authorizations,
       store,
       names,
+      ctx.accounts,
     ),
   ];
 }
@@ -1023,6 +1171,7 @@ async function roomLine(
   authorizations: Authorization[] | undefined,
   store: Store | undefined,
   names: SlackNames | undefined,
+  accounts: SlackAccounts | undefined,
 ): Promise<Draft<MessageEvent>> {
   const via = boundUsers(authorizations);
   const person = async ({ address }: RoomMember): Promise<RoomMember> => {
@@ -1042,6 +1191,14 @@ async function roomLine(
   const owner = await memberOf(store, names, team, line.by, via);
   const kind = line.type ? KIND[line.type] : undefined;
   const room = await names?.roomOf(team, line.channel, via);
+  const facts = await roomFacts(
+    team,
+    line.channel,
+    kind ?? (isIm(line.channel) ? "direct" : undefined),
+    via,
+    names,
+    accounts,
+  );
   return {
     ts: line.ts,
     type: "message",
@@ -1056,6 +1213,7 @@ async function roomLine(
         address: line.channel,
         ...(kind ? { kind } : {}),
         ...(room ? { name: room } : {}),
+        ...facts,
       },
       ...(sender ? { sender } : {}),
       external_id: `slack:${team}:${line.channel}:${line.id}`,
@@ -1610,6 +1768,7 @@ export function httpSigningSecrets(apps: { value: Record<string, string> }[]): s
 export async function runIngest(): Promise<() => Promise<void>> {
   const { openStore } = await import("../../store/mod.ts");
   const { SOCKET_PREFIX } = await import("./connect.ts");
+  const { slackConfig } = await import("./config.ts");
   const { kindOf, saveMedia } = await import("../../store/media.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
@@ -1667,12 +1826,26 @@ export async function runIngest(): Promise<() => Promise<void>> {
   // the name directory reads with the same resolution the media seam uses (shared bot →
   // any authorized grant → env) — a display name is a workspace fact any grant can read
   const names = slackNames(tokenFor);
+  // every row is marked before it lands (connect/marks.ts): a crowded channel's lines
+  // silenced, a line for the account among them news. The account is its bot and its
+  // user grants
+  const accounts = slackAccounts(() => log.connections());
+  const marks = createMarks({
+    read: (q) => log.read(q),
+    knobs: await slackConfig(root),
+    self: accounts.of,
+  });
 
   const base: SlackWebhookDeps = {
-    publish: log.publish, // no wrapper: keep the overloads (it closes over the db, not `this`)
+    // the log's publish closes over the db, not `this`; `marked` keeps its overloads
+    publish: marked(log.publish, async (drafts) => {
+      await accounts.read();
+      return await marks(drafts);
+    }),
     store: log, // identities + memberships live on the Log (§4) — the wire fills the map
     media,
     names,
+    accounts,
     // every installation a live event reached, asked with the delivering app's own token
     installations: slackInstallations(async (app) =>
       (await creds.get(`${SOCKET_PREFIX}${app}`))?.value.app_token

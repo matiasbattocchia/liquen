@@ -20,10 +20,12 @@ import {
   shareId,
   subsOf,
   TEAMS_SUB,
+  teamsAccounts,
   teamsNames,
   teamsWire,
   toTeamsHtml,
 } from "./teams.ts";
+import { createMarks, type MarkDeps, marked } from "../marks.ts";
 import { createGrantBroker } from "../../proxy/grants.ts";
 import { openCredentials } from "../../store/credentials.ts";
 import { membersAt } from "../../testing.ts";
@@ -589,7 +591,7 @@ Deno.test("teams webhook: every system event detail is the room's line in its ow
   });
 });
 
-Deno.test("teams webhook: a channel added or deleted is no rename of the channel it is told in; a deleted one is said deleted in itself too; a team renamed renames every channel of it", async () => {
+Deno.test("teams webhook: a channel added or deleted is no rename of the channel it is told in; a deleted one is said deleted in itself too; a team renamed is every channel's new community", async () => {
   await withVault(async (creds) => {
     const { publish, rows } = captor();
     const calls: Call[] = [];
@@ -635,13 +637,14 @@ Deno.test("teams webhook: a channel added or deleted is no rename of the channel
     const general = {
       address: `${TEAM}/${CHANNEL}`,
       kind: "channel" as const,
-      name: "Sales / General",
+      name: "General",
     };
     const launch = { address: `${TEAM}/${LAUNCH}`, name: "Launch" };
 
     await send("1");
     assertEquals(rows.length, 1);
     assertEquals(rows[0].envelope.conversation, general); // still General, not "Launch"
+    assertEquals(rows[0].extra, { community: "Sales" });
     assertEquals(rows[0].parts[0], {
       type: "data",
       kind: "room",
@@ -663,17 +666,20 @@ Deno.test("teams webhook: a channel added or deleted is no rename of the channel
       external_id: `teams:${TEAM}/${LAUNCH}:2`,
       sender: robin,
     });
+    // the deleted channel was of the same team
+    assertEquals(rows[2].extra, { community: "Sales" });
     assertEquals(rows[2].ts, "2026-09-23T11:00:00.000Z");
     assertEquals(rows[2].parts[0], { type: "data", kind: "room", data: { state: "deleted" } });
 
-    // another channel of the team, named before the rename: asked again after it
+    // another channel of the team, known before the rename: asked again after it
     const tokened = graph({
       [`/teams/${TEAM}`]: () => Response.json({ displayName: team }),
       [`/teams/${TEAM}/channels/${OTHER}`]: { displayName: "Other" },
     });
     const ask = (url: string, init?: RequestInit) => tokened(url, init);
     const other = { kind: "channel" as const, team: TEAM, channel: OTHER };
-    assertEquals((await names.of(ask, other)).name, "Sales / Other");
+    const before = await names.of(ask, other);
+    assertEquals([before.name, before.community], ["Other", "Sales"]);
     team = "Launch 2026";
     await send("3");
     assertEquals(rows[3].parts[0], {
@@ -681,8 +687,10 @@ Deno.test("teams webhook: a channel added or deleted is no rename of the channel
       kind: "room",
       data: { team: { name: "Launch 2026" } },
     });
-    assertEquals(rows[3].envelope.conversation.name, "Launch 2026 / General");
-    assertEquals((await names.of(ask, other)).name, "Launch 2026 / Other");
+    assertEquals(rows[3].envelope.conversation.name, "General");
+    assertEquals(rows[3].extra, { community: "Launch 2026" });
+    const after = await names.of(ask, other);
+    assertEquals([after.name, after.community], ["Other", "Launch 2026"]);
   });
 });
 
@@ -739,7 +747,8 @@ Deno.test("teams webhook: the chats themselves — a chat made is its created li
         resource: `chats('${CHAT}')`,
       }));
     const at = { service: "microsoft" as const, connection_address: "ana@contoso.com" };
-    const ops = { address: CHAT, kind: "group" as const, name: "ops" };
+    // a group chat's lines say its roster's size, and that the account owns none of it
+    const ops = { address: CHAT, kind: "group" as const, name: "ops", members: 2, admin: false };
 
     await send("created");
     assertEquals(rows.length, 1);
@@ -808,7 +817,7 @@ Deno.test("teams webhook: the chats themselves — a chat made is its created li
   });
 });
 
-Deno.test("teams webhook: a channel reply is a reply to its root, addressed team/channel and named Team / Channel; a member's own message wears their stamp", async () => {
+Deno.test("teams webhook: a channel reply is a reply to its root, addressed team/channel, named by the channel and its team its community; a member's own message wears their stamp", async () => {
   await withVault(async (creds) => {
     const { publish, rows } = captor();
     const fetchApi = graph({
@@ -848,10 +857,180 @@ Deno.test("teams webhook: a channel reply is a reply to its root, addressed team
     assertEquals(rows[0].envelope.conversation, {
       address: `${TEAM}/${CHANNEL}`,
       kind: "channel",
-      name: "Sales / General",
+      name: "General",
     });
+    assertEquals(rows[0].extra, { community: "Sales" });
     assertEquals(rows[0].envelope.external_id, `teams:${TEAM}/${CHANNEL}:2`);
     assertEquals(rows[0].parts, [{ type: "text", kind: "text", text: "Test" }]);
+  });
+});
+
+const DM = "19:8ea0e38b_0d0d0d0d@unq.gbl.spaces";
+
+/** A Graph with a group chat Ana owns, a oneOnOne with Robin, and Sales' General, which
+ *  Robin owns; each message `served` answers at its path. */
+function placesGraph(served: Record<string, () => unknown>): typeof fetch {
+  const message = (id: string) => ({
+    id,
+    messageType: "message",
+    createdDateTime: "2026-09-23T11:00:00.000Z",
+    from: { user: ROBIN },
+    body: { contentType: "text", content: "hola" },
+  });
+  return graph({
+    [`/chats/${CHAT}/messages/1`]: message("1"),
+    [`/chats/${CHAT}`]: {
+      chatType: "group",
+      topic: "ops",
+      members: [
+        { userId: OID, displayName: "Ana", roles: ["owner"] },
+        { userId: "u-robin", displayName: "Robin Kline", roles: [] },
+        { userId: "u-bo", displayName: "Bo", roles: ["guest"] },
+      ],
+    },
+    [`/chats/${DM}/messages/2`]: message("2"),
+    [`/chats/${DM}`]: {
+      chatType: "oneOnOne",
+      members: [
+        { userId: OID, displayName: "Ana", roles: ["owner"] },
+        { userId: "u-robin", displayName: "Robin Kline", roles: ["owner"] },
+      ],
+    },
+    [`/teams/${TEAM}`]: { displayName: "Sales" },
+    [`/teams/${TEAM}/channels/${CHANNEL}`]: { displayName: "General" },
+    [`/teams/${TEAM}/channels/${CHANNEL}/members`]: {
+      value: [
+        { userId: OID, displayName: "Ana", roles: [] },
+        { userId: "u-robin", displayName: "Robin Kline", roles: ["owner"] },
+        { userId: "u-bo", displayName: "Bo", roles: [] },
+      ],
+    },
+    ...Object.fromEntries(
+      Object.entries(served).map(([id, body]) => [
+        `/teams/${TEAM}/channels/${CHANNEL}/messages/${id}`,
+        () => ({
+          ...message(id),
+          channelIdentity: { teamId: TEAM, channelId: CHANNEL },
+          ...body() as object,
+        }),
+      ]),
+    ),
+  });
+}
+
+const inChat = (chat: string, id: string) => ({
+  subscriptionId: "sub-a",
+  clientState: "s-sub-a",
+  changeType: "created",
+  resource: `chats('${chat}')/messages('${id}')`,
+});
+const inChannel = (id: string, changeType = "created") => ({
+  subscriptionId: "sub-c",
+  clientState: "s-sub-c",
+  changeType,
+  resource: `teams('${TEAM}')/channels('${CHANNEL}')/messages('${id}')`,
+});
+
+Deno.test("teams webhook: a group chat's and a channel's lines say how many members their roster lists and whether the account owns it; a oneOnOne says neither; a channel's every line carries its team", async () => {
+  await withVault(async (creds) => {
+    const { publish, rows } = captor();
+    let channel: Record<string, unknown> = {};
+    const handler = createTeamsWebhook({
+      publish,
+      creds,
+      broker: createGrantBroker({ creds }),
+      save,
+      fetchApi: placesGraph({ "3": () => channel }),
+      now: () => NOW,
+    });
+    await creds.put({
+      key: KEY,
+      value: {},
+      extra: { [TEAMS_SUB]: { ...sub(CHAT_RES, "sub-a"), ...sub(CHAN_RES, "sub-c") } },
+    });
+    await handler(notice(inChat(CHAT, "1")));
+    await handler(notice(inChat(DM, "2")));
+    await handler(notice(inChannel("3")));
+    const general = `${TEAM}/${CHANNEL}`;
+    assertEquals(rows.map((r) => r.envelope.conversation), [
+      { address: CHAT, kind: "group", name: "ops", members: 3, admin: true },
+      { address: DM, kind: "direct", name: "Robin Kline" },
+      { address: general, kind: "channel", name: "General", members: 3, admin: false },
+    ]);
+    assertEquals(rows.map((r) => r.extra), [undefined, undefined, { community: "Sales" }]);
+
+    // its reactions and its deletes are its lines too; the delete's stamp is no line
+    rows.length = 0;
+    channel = { reactions: [{ reactionType: "👍", user: { user: ROBIN } }] };
+    await handler(notice(inChannel("3", "updated")));
+    channel = { deletedDateTime: "2026-09-23T11:09:00Z" };
+    await handler(notice(inChannel("3", "deleted")));
+    const [reaction, deleted, stamp] = rows;
+    assertEquals(reaction.envelope.conversation, { address: general, members: 3, admin: false });
+    assertEquals(reaction.extra, { community: "Sales" });
+    assertEquals(deleted.envelope.conversation, { address: general, members: 3, admin: false });
+    assertEquals(deleted.extra, { community: "Sales" });
+    assertEquals(stamp.envelope.conversation, { address: general });
+    assertEquals(stamp.extra, undefined);
+  });
+});
+
+Deno.test("teams: published through the marks, a crowded channel's line is silenced and one naming the account's own user id is news", async () => {
+  await withVault(async (creds) => {
+    let at = 0;
+    const accounts = teamsAccounts(() => creds.list("microsoft:"), () => at);
+    await accounts.read();
+    // the account is its grant's oid, by the connection's address; the app row is none
+    assertEquals(accounts.of("ana@contoso.com"), [OID]);
+    assertEquals(accounts.of("bo@contoso.com"), []);
+    await creds.put({ key: "microsoft:bo@contoso.com", value: {}, extra: { oid: "u-bo" } });
+    await accounts.read();
+    assertEquals(accounts.of("bo@contoso.com"), []); // the vault is read once a minute
+    at += 60_000;
+    await accounts.read();
+    assertEquals(accounts.of("bo@contoso.com"), ["u-bo"]);
+
+    const { publish: capture, rows } = captor();
+    // the day's count: well past `busy` in every room
+    const read = (() => Promise.resolve(Array.from({ length: 41 }, () => ({})))) as MarkDeps[
+      "read"
+    ];
+    const marks = createMarks({
+      read,
+      knobs: { crowd: 2, busy: 40, follow: [] },
+      self: accounts.of,
+    });
+    const publish = marked(capture, async (drafts) => {
+      await accounts.read();
+      return await marks(drafts);
+    });
+    const handler = createTeamsWebhook({
+      publish,
+      creds,
+      broker: createGrantBroker({ creds }),
+      save,
+      fetchApi: placesGraph({
+        "4": () => ({}),
+        "5": () => ({
+          body: { contentType: "html", content: `<p><at id="0">Ana</at> mirá</p>` },
+          mentions: [{ id: 0, mentionText: "Ana", mentioned: { user: { id: OID } } }],
+        }),
+      }),
+      now: () => NOW,
+    });
+    await creds.put({ key: KEY, value: {}, extra: { [TEAMS_SUB]: sub(CHAN_RES, "sub-c") } });
+    await handler(notice(inChannel("4")));
+    await handler(notice(inChannel("5")));
+    assertEquals(rows.map((r) => r.extra), [
+      { community: "Sales", crowded: true },
+      { community: "Sales", crowded: true, addressed: true },
+    ]);
+    // the facts are read and dropped: no part of the row
+    assertEquals(rows[0].envelope.conversation, {
+      address: `${TEAM}/${CHANNEL}`,
+      kind: "channel",
+      name: "General",
+    });
   });
 });
 

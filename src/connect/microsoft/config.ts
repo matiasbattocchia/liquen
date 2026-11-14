@@ -7,7 +7,7 @@
  * is a fact about the app and rides on the app's vault row (`liquen connect microsoft app`).
  */
 
-import { checkAmong, checkStrings, type ConnectorSpec } from "../../config.ts";
+import { checkAmong, checkStrings, type ConnectorSpec, type RoomKnobs } from "../../config.ts";
 import { connectorConfig } from "../../org.ts";
 
 /** What the connection can read into the log, each by its own ingest in `run.ts`. */
@@ -95,7 +95,7 @@ export const SPEC: ConnectorSpec = {
   ],
 };
 
-/** Read `connections.microsoft` as the org's store holds it. */
-export function microsoftConfig(root: string): Promise<MicrosoftConfig> {
+/** Read `connections.microsoft` as the org's store holds it, the room knobs beside. */
+export function microsoftConfig(root: string): Promise<MicrosoftConfig & RoomKnobs> {
   return connectorConfig<MicrosoftConfig>(root, SPEC);
 }

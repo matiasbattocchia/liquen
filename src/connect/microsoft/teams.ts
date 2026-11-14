@@ -69,6 +69,7 @@ import { htmlToText, mediaShelf, type SaveFile } from "../mail.ts";
 import { createPoller, FETCH_TIMEOUT_MS, granted, type PollIngestDeps } from "../poll.ts";
 import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import { DispatchError } from "../errors.ts";
+import { createMarks, marked } from "../marks.ts";
 import { claimMentions, type Directory, logDirectory, type NameEntry } from "../mentions.ts";
 import { bytesOf, isExternal, tailOf } from "../../store/media.ts";
 import type { Storage } from "../../store/storage.ts";
@@ -79,6 +80,7 @@ import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
 import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import type {
+  Conversation,
   Draft,
   Event,
   EventId,
@@ -347,37 +349,71 @@ export function bodyOf(msg: ChatMessage): Body {
 
 /* ── the names: a chat's or a channel's, asked once ────────────────────────────────── */
 
+/** A `conversationMember` as Graph lists a chat's or a channel's. */
+interface Listed {
+  userId?: string;
+  displayName?: string | null;
+  email?: string | null;
+  roles?: string[] | null;
+}
+
 interface ChatInfo {
   chatType?: string;
   topic?: string | null;
-  members?: { userId?: string; displayName?: string | null; email?: string | null }[];
+  members?: Listed[];
 }
 
 type Kind = "direct" | "group" | "channel";
 
-/** A place as the directory knows it. `name` is what a row shows; a chat also carries
- *  its `title`, the topic people gave it; chats and channels alike carry their `members`,
- *  each with the email the tenant lists for them and their display name. */
+/** A member of a place: the email the tenant lists for them, their display name, and
+ *  whether they own it (Graph's `owner` role). */
+export interface PlaceMember {
+  id: string;
+  email?: string;
+  name?: string;
+  owner?: true;
+}
+
+/** A place as the directory knows it. `name` is what a row shows: a channel's own, its
+ *  team's in `community`; a chat also carries its `title`, the topic people gave it;
+ *  chats and channels alike carry their `members`. */
 export interface PlaceInfo {
   kind: Kind;
   name?: string;
   title?: string;
-  members?: { id: string; email?: string; name?: string }[];
+  community?: string;
+  members?: PlaceMember[];
 }
 
 /** Graph's member listing, a chat's or a channel's, as the directory keeps it. */
-function membersOf(
-  list: { userId?: string; displayName?: string | null; email?: string | null }[] | undefined,
-): { id: string; email?: string; name?: string }[] {
+function membersOf(list: Listed[] | undefined): PlaceMember[] {
   return (list ?? []).flatMap((m) =>
     m.userId
       ? [{
         id: m.userId,
         ...(m.email ? { email: m.email } : {}),
         ...(m.displayName ? { name: m.displayName } : {}),
+        ...(m.roles?.includes("owner") ? { owner: true as const } : {}),
       }]
       : []
   );
+}
+
+/** What a group chat's or a channel's line says of it for the crowd rule
+ *  (`connect/marks.ts`): how many members its roster lists, and whether the account
+ *  (`oid`) is an owner among them. A oneOnOne chat, or a roster unread, carries neither. */
+function roomFacts(
+  info: PlaceInfo,
+  oid: string | undefined,
+): { members?: number; admin?: boolean } {
+  if (info.kind === "direct" || !info.members?.length) return {};
+  const own = oid ? info.members.find((m) => m.id === oid) : undefined;
+  return { members: info.members.length, admin: own?.owner === true };
+}
+
+/** A line's sidecar for its place: the team a channel sits in (`community`). */
+function communityOf(info: PlaceInfo): Record<string, string> {
+  return info.community ? { community: info.community } : {};
 }
 
 /** What a place's kind is settled from: Teams' own word for the chat or the channel. */
@@ -390,14 +426,15 @@ export interface TeamsNames {
   of(graph: Graph, place: Place, self?: string): Promise<PlaceInfo>;
   /** A place renamed, or its members moved: the next `of` asks Graph again. */
   forget(place: Place): void;
-  /** A team renamed: every channel of it wears the new `Team / Channel`. */
+  /** A team renamed: every channel of it is asked again, for the team's new name. */
   forgetTeam(team: string): void;
 }
 
 /** A place's kind and name (§3: the service's display facts), asked of Graph once per
  *  place per process and remembered. A oneOnOne chat is named for the other member, a
- *  group chat by its topic or its other members, a channel `Team / Channel`. `stamp` is
- *  told the kind the first time a place resolves, for the rows the place already has. */
+ *  group chat by its topic or its other members, a channel by its own name, with its
+ *  team's as its `community`. `stamp` is told the kind the first time a place resolves,
+ *  for the rows the place already has. */
 export function teamsNames(stamp?: (address: string, kind: Kind) => Promise<void>): TeamsNames {
   const cache = new Map<string, PlaceInfo>();
   return {
@@ -438,11 +475,11 @@ export function teamsNames(stamp?: (address: string, kind: Kind) => Promise<void
         if (!team.ok) await team.body?.cancel();
         if (!channel.ok) await channel.body?.cancel();
         if (!people.ok) await people.body?.cancel();
-        const name = [t.displayName, c.displayName].filter(Boolean).join(" / ");
         const members = membersOf(listed.value);
         found = {
           kind: kindOf(c),
-          ...(name ? { name } : {}),
+          ...(c.displayName ? { name: c.displayName } : {}),
+          ...(t.displayName ? { community: t.displayName } : {}),
           ...(members.length ? { members } : {}),
         };
         if (!team.ok || !channel.ok) return found;
@@ -603,6 +640,7 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
     changeType: string | undefined,
   ): Promise<Draft<MessageEvent>[]> {
     const upn = grant.key.slice(GRANT_PREFIX.length);
+    const oid = grant.extra?.oid as string | undefined;
     const place: Place = { kind: "chat", chat };
     const line = (
       external_id: string,
@@ -619,6 +657,7 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
           address: chat,
           ...(info?.kind ? { kind: info.kind } : {}),
           ...(info?.name ? { name: info.name } : {}),
+          ...(info ? roomFacts(info, oid) : {}),
         },
         external_id,
       },
@@ -637,7 +676,6 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
       createdDateTime?: string;
       viewpoint?: { isHidden?: boolean; lastMessageReadDateTime?: string | null } | null;
     };
-    const oid = grant.extra?.oid as string | undefined;
     if (changeType === "created") {
       names.forget(place);
       const info = await names.of(graph, place, oid);
@@ -728,29 +766,42 @@ export function teamsMapper(deps: MapperDeps): (
     const type = msg.messageType ?? "message";
     if (type !== "message" && type !== "systemEventMessage") return [];
     const upn = grant.key.slice(GRANT_PREFIX.length);
+    const oid = grant.extra?.oid as string | undefined;
     const address = addressOf(at.place);
     const ref = teamsRef(address, msg.id);
-    const envelope = (
-      external_id: string,
-      kind?: MessageEvent["envelope"]["conversation"]["kind"],
-      name?: string,
-    ) => ({
+    const envelope = (external_id: string, conversation: Omit<Conversation, "address"> = {}) => ({
       service: SERVICE,
       connection_address: upn,
-      conversation: { address, ...(kind ? { kind } : {}), ...(name ? { name } : {}) },
+      conversation: { address, ...conversation },
       external_id,
     });
+    /** The place as a row names it: its kind, its name, and the room facts. */
+    const placed = (info: PlaceInfo): Omit<Conversation, "address"> => ({
+      kind: info.kind,
+      ...(info.name ? { name: info.name } : {}),
+      ...roomFacts(info, oid),
+    });
+    /** The line's sidecar: the place's community, and the email the place lists for `id`
+     *  (§3 sender_email): a Teams address is a user id, and the email is the handle that
+     *  names the person anywhere else. */
+    const sidecar = (info: PlaceInfo, id?: string) => {
+      const email = id ? info.members?.find((m) => m.id === id)?.email : undefined;
+      const extra = { ...communityOf(info), ...(email ? { [SENDER_EMAIL]: email } : {}) };
+      return Object.keys(extra).length ? { extra } : {};
+    };
     const ts = now();
 
     // a delete marks, never removes: the delete EVENT and the stamp on the original
     if (changeType === "deleted" || msg.deletedDateTime) {
       const when = msg.deletedDateTime ?? ts;
+      const info = await names.of(graph, at.place, oid);
       return [{
         ts,
         type: "message",
         payload: { action: "delete", ref_external_id: ref },
-        envelope: envelope(`${ref}:del`),
+        envelope: envelope(`${ref}:del`, roomFacts(info, oid)),
         parts: [],
+        ...sidecar(info),
       }, {
         ts,
         type: "message",
@@ -759,7 +810,6 @@ export function teamsMapper(deps: MapperDeps): (
       } as unknown as Draft<MessageEvent>];
     }
 
-    const oid = grant.extra?.oid as string | undefined;
     const surfaces = surfaceStore(deps.store);
 
     // a room's change is the room's own line (§3): who made it, and what moved
@@ -775,23 +825,29 @@ export function teamsMapper(deps: MapperDeps): (
         await chatSurfaces(surfaces, address, info, undefined, grants);
       }
       const id = msg.id;
-      const line = (where: string, data: RoomChange, kind?: Kind, name?: string) => ({
+      const line = (
+        where: string,
+        data: RoomChange,
+        conversation: Omit<Conversation, "address"> = {},
+      ) => ({
         ts: msg.createdDateTime ?? ts,
         type: "message" as const,
         ...(owner ? { agent: { id: owner } } : {}),
         envelope: {
           service: SERVICE,
           connection_address: upn,
-          conversation: { address: where, ...(kind ? { kind } : {}), ...(name ? { name } : {}) },
+          conversation: { address: where, ...conversation },
           external_id: teamsRef(where, id),
           ...(sender ? { sender } : {}),
         },
         parts: [roomPart(data)],
+        ...sidecar(info),
       });
-      // a channel deleted is said in the primary channel, and in the channel itself
+      // a channel deleted is said in the primary channel, and in the channel itself, both
+      // of the one team
       const deleted = (moved.channels?.removed ?? []).filter((c) => c.address !== address);
       return [
-        line(address, moved, info.kind, info.name),
+        line(address, moved, placed(info)),
         ...deleted.map((c) => line(c.address, { state: "deleted" })),
       ];
     }
@@ -802,13 +858,6 @@ export function teamsMapper(deps: MapperDeps): (
     const sender = from?.id
       ? { address: from.id, ...(from.displayName ? { name: from.displayName } : {}) }
       : undefined;
-    // the email the place lists for them (§3 sender_email): a Teams address is a user id,
-    // and the email is the handle that names the person anywhere else
-    const emailOf = (id: string) => info.members?.find((m) => m.id === id)?.email;
-    const facts = (id?: string) => {
-      const email = id ? emailOf(id) : undefined;
-      return email ? { extra: { [SENDER_EMAIL]: email } } : {};
-    };
     const stamp = who ? { agent: { id: who } } : {};
 
     // an update that edited nothing is a reaction: one `add` per reaction, keyed by who
@@ -830,18 +879,17 @@ export function teamsMapper(deps: MapperDeps): (
           ...(reactor ? { agent: { id: reactor } } : {}),
           payload: { action: "add", ref_external_id: ref },
           envelope: {
-            ...envelope(`${ref}:react:${u.id}:${r.reactionType}`),
+            ...envelope(`${ref}:react:${u.id}:${r.reactionType}`, roomFacts(info, oid)),
             sender: { address: u.id, ...(u.displayName ? { name: u.displayName } : {}) },
           },
           parts: [part],
-          ...facts(u.id),
+          ...sidecar(info, u.id),
         });
       }
       return rows;
     }
 
     const body = bodyOf(msg);
-    const { kind, name } = info;
     const parts: Part[] = [];
     if (body.text) parts.push({ type: "text", kind: "text", text: body.text });
     for (const url of body.hosted) {
@@ -903,11 +951,14 @@ export function teamsMapper(deps: MapperDeps): (
       ...stamp,
       ...(Object.keys(payload).length ? { payload } : {}),
       envelope: {
-        ...envelope(edit ? `${ref}:edit:${Date.parse(msg.lastEditedDateTime!)}` : ref, kind, name),
+        ...envelope(
+          edit ? `${ref}:edit:${Date.parse(msg.lastEditedDateTime!)}` : ref,
+          placed(info),
+        ),
         ...(sender ? { sender } : {}),
       },
       parts,
-      ...facts(from?.id),
+      ...sidecar(info, from?.id),
     }];
   };
 }
@@ -1942,6 +1993,45 @@ export function teamsWire(deps: TeamsWireDeps): TeamsWire {
   }
 }
 
+/* ── the account, as a line names it ───────────────────────────────────────────────── */
+
+/** How long the accounts' user ids stand before the vault is read again. */
+export const ACCOUNTS_MS = 60_000;
+
+/** The user id the account goes by on Teams, by connection: its grant's `oid`. A mention
+ *  and a sender carry user ids, never the connection's address. `read` takes the vault
+ *  again once `ACCOUNTS_MS` has passed; `of` answers from the last read. */
+export interface TeamsAccounts {
+  read(): Promise<void>;
+  of(connection: string): string[];
+}
+
+export function teamsAccounts(
+  grants: () => Promise<CredentialRow[]>,
+  now: () => number = Date.now,
+): TeamsAccounts {
+  let oids = new Map<string, string>();
+  let at = -Infinity;
+  let going: Promise<void> | undefined;
+  return {
+    read() {
+      if (now() - at < ACCOUNTS_MS) return Promise.resolve();
+      going ??= grants().then((rows) => {
+        oids = new Map(rows.flatMap((g) => {
+          const oid = g.extra?.oid;
+          return typeof oid === "string" && oid ? [[g.key.slice(GRANT_PREFIX.length), oid]] : [];
+        }));
+        at = now();
+      }).finally(() => (going = undefined));
+      return going;
+    },
+    of(connection) {
+      const oid = oids.get(connection);
+      return oid ? [oid] : [];
+    },
+  };
+}
+
 /* ── local entries: the ingest (the webhook and the keeper) and the dispatch ────────── */
 
 /** Wire the inbound half over the org's log: read the gap back, serve the webhook behind
@@ -1954,6 +2044,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const { runPollIngest } = await import("../poll.ts");
   const { readConfig } = await import("../../org.ts");
   const { ingestAddress } = await import("../../edge.ts");
+  const { microsoftConfig } = await import("./config.ts");
   const root = findRoot(orgFlag());
   const store = await openStore(root);
   const { publicUrl } = (await readConfig(root)).edge;
@@ -1963,9 +2054,21 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const storage = store.storage();
   const save = mediaShelf(storage);
   const names = teamsNames((address, kind) => log.stampKind(SERVICE, address, kind));
+  // every row is marked before it lands (connect/marks.ts): a crowded chat's or channel's
+  // lines silenced, a line for the account among them news
+  const accounts = teamsAccounts(() => creds.list(GRANT_PREFIX));
+  const marks = createMarks({
+    read: (q) => log.read(q),
+    knobs: await microsoftConfig(root),
+    self: accounts.of,
+  });
+  const publish = marked(log.publish, async (drafts) => {
+    await accounts.read();
+    return await marks(drafts);
+  });
   // the gap first: what Graph stopped telling while nobody listened, before any notice
   const catchUp = createTeamsCatchUp({
-    publish: log.publish,
+    publish,
     read: (q) => log.read(q),
     creds,
     broker,
@@ -1995,7 +2098,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const notificationUrl = ingestAddress(publicUrl, SERVICE);
   const inflight = new Set<Promise<void>>();
   const handler = createTeamsWebhook({
-    publish: log.publish,
+    publish,
     read: (q) => log.read(q),
     creds,
     broker,
