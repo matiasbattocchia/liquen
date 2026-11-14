@@ -8,7 +8,7 @@
  * list (`user_scope`) — so the app you create and the consent you request cannot drift.
  */
 
-import { checkStrings, type ConnectorSpec } from "../../config.ts";
+import { checkStrings, type ConnectorSpec, type RoomKnobs } from "../../config.ts";
 import { connectorConfig } from "../../org.ts";
 
 /** What either leg reads. A token sees a room only once in it, so reading the roster,
@@ -99,7 +99,7 @@ export function missingScopes(asked: string[], granted?: string[] | string): str
   return asked.filter((s) => !has.has(s));
 }
 
-/** Read `connections.slack` as the org's store holds it. */
-export function slackConfig(root: string): Promise<SlackConfig> {
+/** Read `connections.slack` as the org's store holds it, the room knobs beside. */
+export function slackConfig(root: string): Promise<SlackConfig & RoomKnobs> {
   return connectorConfig<SlackConfig>(root, SPEC);
 }

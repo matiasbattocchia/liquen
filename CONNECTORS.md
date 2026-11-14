@@ -590,6 +590,21 @@ enrolled. The app-level token needs `authorizations:read` beside `connections:wr
 door lists both. No token, a refusal or a failed call leaves the one Slack named, said once
 per app and reason.
 
+**A channel's size and who runs it.** Every line in a public or private channel (its
+messages, reactions, deletes and room lines) carries how many members the channel has and
+whether the account runs it (`conversation.members`, `conversation.admin`), the two facts
+the crowd rule reads (`src/connect/marks.ts`). Both come from the `conversations.info` the
+name directory already asks, with `include_num_members`: `num_members`, and `creator`. The
+answer names a channel's creator and no managers, so the account runs a channel it
+created: the creator is the bot or one of the workspace's user grants. The answer is held
+fifteen minutes per channel, which keeps a workspace of hundreds of busy channels well
+inside the method's Tier 3, some fifty calls a minute. A DM or an mpim carries neither
+fact. The ingest and the catch-up publish through `marked`, which reads both against
+`connections.slack.crowd`, `busy` and `follow` and drops them from the row. A line for
+the account mentions, or replies to, one of the account's user ids, the bot's or a user
+grant's, read off the connections map once a minute: a mention and a sender carry user
+ids, never the connection's address.
+
 Remaining:
 
 - **The mind-alias at ingest** — aliasing the principal's Slack self-DM onto `mind:<agent>`
@@ -780,7 +795,8 @@ certificate and shortens the lifetime), so each is one `GET` of the message. A c
 conversation addressed by its id — `direct` when Teams calls it oneOnOne, `group` when it
 is a group chat (a roster under a topic) or a meeting's — named for the other member, the
 topic, or the other members; a channel is `<team id>/<channel id>` — `channel` when
-standard or shared, `group` when private — named `Team / Channel`. The kind is asked of
+standard or shared, `group` when private — named by its own name ("General"), its team's
+name on every line of it as `extra.community`. The kind is asked of
 Graph once per place per process and stamped onto the rows the place already has
 (`stampKind`), so a room labelled before reads as Teams describes it now. A channel reply is
 a `reply` to its root; a chat is flat, and a quoted reply there (`messageReference`) names
@@ -795,6 +811,18 @@ of it. The body is HTML: `<at>` becomes `@Name` and `payload.mentions`, `<emoji>
 its glyph, a hosted image (a pasted screenshot) its bytes in the object store, a `reference`
 attachment its bytes through `/shares/<encoded url>/driveItem/content` (`Files.ReadWrite`),
 or a link in the words when the grant cannot read it.
+
+**A room's size and who runs it.** A group chat's and a channel's lines carry how many
+members the roster lists and whether the account owns the place (`conversation.members`,
+`conversation.admin`), the two facts the crowd rule reads (`src/connect/marks.ts`). Both
+come off the members the directory already asks for with the name: a chat's
+`$expand=members`, a channel's `/members`, where `owner` among a member's `roles` makes
+them an owner. A group chat made through Graph lists its members as owners, so such a
+chat reads as one the account runs. A oneOnOne carries neither fact. The
+ingest and the catch-up publish through `marked`, which reads both against
+`connections.microsoft.crowd`, `busy` and `follow` and drops them from the row. A line
+for the account mentions, or replies to, the account's own user id: its grant's `oid`,
+read off the vault once a minute.
 
 **The dispatch.** Common markdown becomes Teams' HTML (`<b>`, `<i>`, `<s>`, `<code>`,
 `<pre>`, `<a>`, `<br>`), a claimed `@Name` an `<at id>` with its `mentions` entry. A channel
@@ -825,10 +853,10 @@ is opened by the grant that speaks in it. `open` with one person and no name is 
 oneOnOne chat of the two, found or made (`POST /chats`); a longer unnamed list is refused,
 since a group chat is made anew on every call and is named by its topic — so a named
 `group` is a group chat under that topic (no `:`, 250 at most), the member first among
-its people. A `channel` lives in a team, so its name is `#Team / Channel`: the team found
-by name among `/me/joinedTeams`, the channel made standard in it (fifty characters, the
-ones Teams keeps out folded away); its people are the team's, and the list reaches those
-of them in the team. `members` pages the chat's or the channel's roster and answers user
+its people. A `channel` lives in a team, so it is asked for as `#Team / Channel`: the team
+found by name among `/me/joinedTeams`, the channel made standard in it (fifty characters,
+the ones Teams keeps out folded away) and answered by its own name, as its lines are
+named; its people are the team's, and the list reaches those of them in the team. `members` pages the chat's or the channel's roster and answers user
 ids with the names Teams shows; `add` is one `POST …/members` a person (a chat member
 sees the whole history), `remove` and `leave` find the membership id on the roster and
 `DELETE` it; `rename` is the chat's topic or the channel's display name. What the room

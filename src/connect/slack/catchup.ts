@@ -50,7 +50,7 @@ export interface SlackLeg {
 }
 
 export interface SlackCatchUpDeps
-  extends Pick<SlackWebhookDeps, "publish" | "media" | "names" | "now"> {
+  extends Pick<SlackWebhookDeps, "publish" | "media" | "names" | "accounts" | "now"> {
   publish: Appender["publish"];
   /** The log, read: where the listening stopped. */
   read: Reader["read"];
@@ -238,7 +238,7 @@ export function createSlackCatchUp(
           deps.store,
           deps.media,
           deps.names,
-          { now },
+          { now, accounts: deps.accounts },
         );
       // the room's tokens in listing order, bot first: one may read what another cannot
       let token: string | undefined;

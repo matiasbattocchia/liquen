@@ -120,10 +120,11 @@ Deno.test("teams rooms: open — a named group is a group chat under its topic, 
     name: "ops / Incidents",
     kind: "channel",
   });
+  // the channel answers by its own name, as its lines are named; the team is their community
   assertEquals(channel, {
     address: `${TEAM}/${CHANNEL}`,
     kind: "channel",
-    name: "Ops / Incidents",
+    name: "Incidents",
   });
   assertEquals(calls.at(-1)!.body, { displayName: "Incidents", membershipType: "standard" });
 

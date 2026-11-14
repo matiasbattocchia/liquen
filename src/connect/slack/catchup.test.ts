@@ -86,6 +86,7 @@ const names: NonNullable<SlackWebhookDeps["names"]> = {
   learn: () => {},
   roomOf: (_t, c) => Promise.resolve(c === "C1" ? "general" : null),
   learnRoom: () => {},
+  factsOf: () => Promise.resolve(null),
 };
 
 const legs = () =>

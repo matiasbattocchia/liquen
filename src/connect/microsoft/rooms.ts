@@ -12,10 +12,10 @@
  * A chat is a roster Teams keeps: a oneOnOne is the one chat of two people, found or made
  * (`POST /chats`), so an unnamed list is one person, and a longer list is refused — a
  * group chat is made anew on every call and is named by its topic, so it is what a
- * named `group` opens, its topic the name. A `channel` lives in a team, so its name is
- * `Team / Channel`: the team one the member is in, found by its name, the channel made
- * standard in it — its people are the team's, so the list opens it and reaches those of
- * them in the team. `members` answers user ids with the names Teams shows; `leave`,
+ * named `group` opens, its topic the name. A `channel` lives in a team, so it is asked
+ * for as `Team / Channel`: the team one the member is in, found by its name, the channel
+ * made standard in it and answered by its own name — its people are the team's, so the
+ * list opens it and reaches those of them in the team. `members` answers user ids with the names Teams shows; `leave`,
  * `add` and `remove` are the membership legs of a chat or of a private channel (a
  * standard channel's roster is its team's, and Graph refuses there); `rename` is the
  * chat's topic or the channel's display name. Nobody joins a chat or a channel by
@@ -202,20 +202,19 @@ export function teamsRooms(deps: TeamsRoomsDeps): RoomsPort {
       if (!team) {
         throw new DispatchError(`no team named "${teamName}" among the ones you are in`, 404);
       }
+      const displayName = teamsChannelName((name ?? "").slice(slash + 1));
       const res = await g.call(
         "channel",
         "Channel.Create",
         `${GRAPH}/teams/${enc(team.id)}/channels`,
-        g.json("POST", {
-          displayName: teamsChannelName((name ?? "").slice(slash + 1)),
-          membershipType: "standard",
-        }),
+        g.json("POST", { displayName, membershipType: "standard" }),
       );
       const channel = await res.json() as { id: string; displayName?: string };
+      // the channel's own name, as the ingest names its lines; the team is its community
       return {
         address: `${team.id}/${channel.id}`,
         kind,
-        name: [team.displayName, channel.displayName].filter(Boolean).join(" / "),
+        name: channel.displayName || displayName,
       };
     },
     members: async ({ connection, conversation }) => {
