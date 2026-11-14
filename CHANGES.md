@@ -7,7 +7,8 @@ connection it rides. All seven below are settled.
    it that person's augmented self; many make it a team's.
 2. A connection is owned or shared. Owned is one agent's world, read by it alone; shared
    is the org's, read by every agent. A Slack bot is shared only, a Slack user grant owned
-   only; a WhatsApp number, a Google account and a Microsoft account either.
+   only; a WhatsApp number, a Telegram account, a Google account and a Microsoft account
+   either.
 3. Self-talk steers on an owned connection only.
 4. A DM with an owned connection steers its agent when the sender is one of its
    principals.
@@ -20,28 +21,27 @@ connection it rides. All seven below are settled.
    shared Microsoft account's Teams chats go unread, so Teams is owned only.
 
 Slack and Teams are workspaces: everyone in one is a colleague, so a shared connection's
-DMs and rooms can steer. WhatsApp and Google reach anyone, and a shared account there stays
-the shared inbox it is. With Teams owned only, the shared connection that steers is the
-Slack bot.
+DMs and rooms can steer. WhatsApp, Telegram and Google reach anyone, and a shared account
+there stays the shared inbox it is. With Teams owned only, the shared connection that
+steers is the Slack bot.
 
 The term is shared: docs, CLI output and comments say it where they said org account.
 
 ## 1. Owned and shared, per service
 
 `liquen connect slack app --bot` lands the bot shared and takes no agent; a bot row with an
-owner is refused at connect. `liquen connect google account` and `liquen connect
-microsoft account` take `--shared` where they took `--org`. A shared Microsoft account
-holds no Teams subscription, and its mail and calendar are read as they are now. With no
-shared Teams account, Teams holds no steering room: the `rooms` branch of `chatSurfaces`,
-`adoptable`, `leftRooms`, `letGo` and the channel listing's `steer` go.
+owner is refused at connect. Every door that took `--org` takes `--shared`. A shared
+Microsoft account holds no Teams subscription, and its mail and calendar are read as they
+are now. With no shared Teams account, Teams holds no steering room: the `rooms` branch of
+`chatSurfaces`, `adoptable`, `leftRooms`, `letGo` and the channel listing's `steer` go.
 
 A Teams account that someone needs shared is reviewed when that need is real.
 
 ## 2. Self-talk and DMs on an owned connection
 
 As the code stands, with owned bots gone: the `self` branch of the `aliases` view, the
-WhatsApp DM by the principal's number, and `mirrors.dms` on an owned Teams account. A
-Slack user grant records its self-DM alone.
+WhatsApp DM by the principal's number, and `mirrors.dms` on an owned Teams or Telegram
+account. A Slack user grant records its self-DM alone.
 
 ## 3. A DM with the shared bot steers the sender's own agent
 
