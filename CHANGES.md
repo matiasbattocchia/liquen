@@ -4,7 +4,7 @@ Decided 14 Nov 2026. All eight are settled.
 
 1. A forum's topics are conversations of their own, as a WhatsApp community's groups are.
 2. Removing a Telegram account ends its session on Telegram.
-3. A Telegram sign-in imports recent history, silenced, as a WhatsApp pairing does.
+3. A sign-in or a pairing imports the last 60 days, silenced, on Telegram and WhatsApp.
 4. A muted chat wakes only for the account; an archived chat wakes nothing.
 5. A crowded room is silenced: many members, many lines, and the account no admin there.
 6. A conversation names the community it belongs to.
@@ -60,16 +60,31 @@ be used again, so ending it loses nothing.
   which a read that comes back short can invent. Any other row it cannot find is closed as
   it is today, the session kept.
 
-## 3. A sign-in imports recent history
+## 3. A sign-in imports the last 60 days
 
-A WhatsApp pairing brings the history the phone sends, stamped `backfill`. The bridge sets
-no limit (`RequireFullSync` false, no `RecentSyncDaysLimit`), so the phone decides how far
-back; there is no fixed number of days. Telegram imports nothing today.
+History is text: neither wire's import fetches a file's bytes, only its name and kind, as
+the WhatsApp bridge already does (old media is often gone from the CDN). So the window
+can be wide.
+
+### WhatsApp
+
+A pairing brings the history the phone sends, stamped `backfill`. The bridge sets no limit
+today (`RequireFullSync` false, no `FullSyncDaysLimit`), so the phone decides how far back.
+
+- The bridge asks for a full sync of 60 days: `RequireFullSync` true and
+  `FullSyncDaysLimit` 60 in the device props, set at start as the device name is.
+  `HISTORY_DAYS` in the bridge's environment overrides the 60.
+- The device props ride the pairing, so a number already paired keeps what it got; the
+  window reaches the numbers paired from then on.
+
+### Telegram
+
+Telegram imports nothing today.
 
 - **What.** At every sign-in, the first and every new one, the process reads each dialog's
-  messages of the last `connections.telegram.historyDays` (default 7) and publishes them
+  messages of the last `connections.telegram.historyDays` (default 60) and publishes them
   stamped `backfill`, the chat's `muted` and `archived` marks beside it. A followed channel
-  is skipped, as everywhere.
+  is skipped, as everywhere. A file is named on its line and left on Telegram.
 - **What counts as history.** After a sign-in, any line dated before the sign-in is
   `backfill`, whichever way it came: the import, or the replay of a cache the session kept.
   A restart is no sign-in: what its replay brings is news, as now.
