@@ -15,7 +15,7 @@ Decided 14 Nov 2026. All six are settled.
 `connect({service, account?, for?})` answers with what the person signing in must do, and
 until when: a link to open, or a code and where to type it. The agent passes it on in its
 own words, in its principal's room for itself and through `send` for anyone else. Whether
-the sign-in lands or fails, the caller hears it where the call was made (2).
+the sign-in lands or fails comes later, as the call's last word (2).
 
 - **Services.** The ones whose sign-in travels in a message:
   - a link: Google, Microsoft, Slack's user leg;
@@ -41,10 +41,20 @@ the sign-in lands or fails, the caller hears it where the call was made (2).
 ## 2. Main holds the sign-ins
 
 Every sign-in in flight, from the tool or the CLI, is one entry in main, keyed by service
-and who: the account for a reconnect, the agent the grant is for when it is new.
+and who: the account whenever it is known before the sign-in, and otherwise whom the grant
+is for.
 
+- **The key.** A reconnect knows its account, and so does a WhatsApp pairing code: its
+  phone. A new account by link, or a WhatsApp QR, knows only its owner: the agent, or the
+  org for a shared account. So a reconnect and a new pairing of one number share a key,
+  two shared numbers paired by code run at once, and a new shared account by link or by
+  QR is one at a time per service.
 - **The same key** while one is open gets that one back: the same link or code, the same
   deadline. Nothing new starts, and a phone is never linked twice.
+- **The app.** A reconnect signs in through the app that made the grant: the `client_id`
+  a Google or Microsoft grant records, the `app_id` a GitHub one does. A new account takes
+  the vault's one app for its service; with several, the tool's call is refused and names
+  the CLI's `--app`, which picks one as today.
 - **One door per service.** Main serves a link service's handler on
   `data/run/<service>-oauth.sock` while any of its sign-ins is open, and stops when the
   last one lands or lapses. Several sign-ins share the door, so five members signing in at
@@ -77,15 +87,18 @@ and who: the account for a reconnect, the agent the grant is for when it is new.
   throttle.
 - **The outcome.** A sign-in that lands writes what its door writes today, and declares
   the connection when it is new, with a reload. WhatsApp's pairing waits for its ingest
-  first, as its door does. The caller hears the outcome once, where the call was made:
-  landed, lapsed, or came back as the wrong account (3, 4). The person signing in reads
-  the same on the page.
+  first, as its door does. For the tool, the link or the code is the call's `async`
+  answer, and the outcome is its `update`, `final` (`40-async.md`): landed, lapsed, or
+  came back as the wrong account (3, 4). The person signing in reads the same on the page.
 - **The CLI runs main's door.** `liquen connect google account`, `microsoft account`,
   `slack user`, `whatsapp` and `github user`'s device flow ask main for the sign-in over
   `data/run/main.sock`, flags and all (`--shared`, `--app`, `--scopes`, `--phone`). They
   open the link here or print it to send, as today, and wait for main's word. Main answers
   with a stream: the link or the code, each new QR, then the outcome. So the CLI and the
-  tool share one table, and each handler has one server. A shared grant is asked over this
+  tool share one table, and each handler has one server. Leaving the CLI leaves the
+  sign-in open until its deadline, so a member sent the link can still use it, and the
+  same command again finds it by its key and streams the same link or QR, then the
+  outcome. A shared grant is asked over this
   socket alone, never by the tool. The doors already wait for the edge, and `liquen start`
   runs main first.
 
