@@ -127,6 +127,8 @@ const TOOL_DOCS = [
   "cancel",
   "conversation",
   "contact",
+  "connect",
+  "agent",
   "bash",
   "read",
   "write",

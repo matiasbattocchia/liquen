@@ -239,7 +239,9 @@ Deno.test("device flow: the code reaches a human, and the poll waits it out", as
   const polled: URLSearchParams[] = [];
   const tok = await githubDeviceFlow({
     clientId: "Iv1.abc",
-    show: (c) => shown.push(c),
+    show: (c) => {
+      shown.push(c);
+    },
     sleep: (ms) => {
       slept.push(ms);
       return Promise.resolve();

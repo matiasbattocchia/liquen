@@ -5,11 +5,11 @@
  *            `google:app:<client_id>`. Not a grant — no connection, no membership, no
  *            event; nobody got connected. Several apps may coexist (`list("google:app:")`);
  *            the id in the key is what a sign-in picks by.
- *   account  a grant through the OAuth handler (connect/google/oauth.ts), served for
- *            exactly one sign-in: hand out /start, and the callback does what every grant
- *            does — writes the map. Ownership (the connection's agent_id) is decided HERE,
- *            at mint time: the agent arg rides `?agent=`; `--shared` mints an ownerless
- *            link, a shared account (§6). The handler only executes what the mint said.
+ *   account  a grant through the OAuth handler (connect/google/oauth.ts): the door asks
+ *            main for the sign-in (signin.ts), main serves the handler while it is open,
+ *            and the callback does what every grant does — writes the map. Ownership (the
+ *            connection's agent_id) is decided by the ask: the agent arg, or `--shared`
+ *            for an ownerless account (§6). The ticket carries it, never the link.
  *
  * The redirect URI is the org's, not the app row's: `callbackAddress` (edge.ts) — the
  * public door `<edge.publicUrl>/google/oauth/callback` when the org has a public address,
@@ -19,8 +19,8 @@
  * reach that sign-in: the loopback one is the dev's own browser, and the public one is
  * reached by a member anywhere. The command opens the link here when it is for the person
  * at this terminal — a loopback callback, or a grant bound to the terminal's own user —
- * and prints it to send otherwise (`handOut`, door.ts). Either way the edge forwards the callback to the door's socket
- * (`serveDoor`), so the org must be running for a sign-in to land.
+ * and prints it to send otherwise (`handOut`, door.ts). Either way the edge forwards the
+ * callback to main, so the org must be running for a sign-in to land.
  *
  * The app door prints the callback before it asks for anything, so the console's
  * "Authorized redirect URIs" field can be filled while the client is still being created.
@@ -29,19 +29,12 @@
  */
 
 import { helpFlag } from "../help.ts";
-import type { CredentialRow, Credentials } from "../../store/credentials.ts";
+import type { Credentials } from "../../store/credentials.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { readConfig } from "../../org.ts";
 import { callbackAddress } from "../../edge.ts";
 import { declared, printNext, requireEdge } from "../declare.ts";
-import {
-  type DoorAddress,
-  doorAddress,
-  handOut,
-  oneShot,
-  serveDoor,
-  terminalUser,
-} from "../door.ts";
+import { signInHere, terminalUser } from "../door.ts";
 import { SPEC } from "./config.ts";
 import { entry } from "../../entry.ts";
 
@@ -63,27 +56,6 @@ export async function connectGoogleApp(
   const key = `${APP_PREFIX}${app.clientId}`;
   await creds.put({ key, value: { client_id: app.clientId, client_secret: app.clientSecret } });
   return key;
-}
-
-/** The account door's app choice: the only one, or the one `clientId` names. */
-export async function pickGoogleApp(
-  creds: Pick<Credentials, "get" | "list">,
-  clientId?: string,
-): Promise<CredentialRow> {
-  if (clientId) {
-    const row = await creds.get(`${APP_PREFIX}${clientId}`);
-    if (!row) throw new Error(`no app ${clientId} — \`liquen connect google app\` first`);
-    return row;
-  }
-  const apps = await creds.list(APP_PREFIX);
-  if (apps.length === 0) {
-    throw new Error("no google app in the vault — `liquen connect google app` first");
-  }
-  if (apps.length > 1) {
-    const ids = apps.map((a) => a.value.client_id).join("\n  ");
-    throw new Error(`several apps — pick one with --app <client_id>:\n  ${ids}`);
-  }
-  return apps[0];
 }
 
 /* ── local entry ────────────────────────────────────────────────────────────────────────
@@ -192,69 +164,21 @@ if (import.meta.main) {
           "browser (`--shared` for a shared one)",
         ]);
       } else if (verb === "account") {
-        const { createGoogleOAuth } = await import("./oauth.ts");
         const agent = flags.has("shared") ? undefined : positional[0] ?? terminalUser();
-        const app = await pickGoogleApp(creds, flags.get("app")).catch((e: Error) => {
-          console.error(e.message);
-          Deno.exit(2);
-        });
-        const { googleConfig } = await import("./config.ts");
-        const { scopes } = await googleConfig(root);
-        const asked = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean) ?? scopes;
-        const registered = callbackAddress((await readConfig(root)).edge, SERVICE);
-        let door: DoorAddress;
-        try {
-          door = doorAddress(registered);
-        } catch (e) {
-          console.error(e instanceof Error ? e.message : String(e));
-          Deno.exit(2);
-        }
+        const scopes = flags.get("scopes")?.split(/[ ,]+/).filter(Boolean);
         await requireEdge(root);
-        const log = await store.log();
-        let shortfall: string[] = [];
-        const { handler, outcome } = oneShot(createGoogleOAuth({
-          config: {
-            clientId: app.value.client_id,
-            clientSecret: app.value.client_secret,
-            redirectUri: door.callback,
-            scopes: asked,
-          },
-          creds,
-          publish: log.publish,
-          store: log,
-          onGrant: (g) => (shortfall = g.missing),
-        }));
-        let server: Deno.HttpServer;
-        try {
-          server = await serveDoor(root, SERVICE, handler);
-        } catch (e) {
-          console.error(e instanceof Error ? e.message : String(e));
-          await log.close();
-          Deno.exit(2);
-        }
-        const start = new URL(door.start);
-        if (agent) start.searchParams.set("agent", agent);
         console.error(
-          `Connecting a Google account${agent ? ` for "${agent}"` : " (org — ownerless)"} ` +
-            `via app ${app.value.client_id}.\nAsking for:\n  ${asked.join("\n  ")}\n`,
+          `Connecting a Google account${agent ? ` for "${agent}"` : " (org — ownerless)"}.\n`,
         );
-        handOut(door, start, agent);
-        const res = await outcome;
-        await server.shutdown();
-        await log.close();
-        if (res.status !== 200) {
-          console.error(`✗ not connected: ${(await res.text()).trim()}`);
-          Deno.exit(1);
-        }
-        console.error(
-          shortfall.length
-            ? `\n⚠ connected, WITHOUT:\n  ${shortfall.join("\n  ")}\n` +
-              `The grant cannot do what those scopes carry — the API answers 403. Tick them ` +
-              `on the consent screen (or add them under Data access) and run this again; ` +
-              `consent is incremental, so it merges into this grant.`
-            : "\n✓ connected (deno task status shows the map)",
+        await creds.close();
+        Deno.exit(
+          await signInHere(root, {
+            service: SERVICE,
+            ...(agent ? { agent } : {}),
+            ...(flags.get("app") ? { app: flags.get("app") } : {}),
+            ...(scopes?.length ? { scopes } : {}),
+          }),
         );
-        await declared(root, SPEC);
       } else {
         console.error(USAGE);
         Deno.exit(2);

@@ -90,13 +90,23 @@ export async function requireIngest(
 ): Promise<void> {
   const listed = spec.name in (await readConfig(root)).connections;
   if (!listed || !(await ingestUp(root, spec.name))) await declared(root, spec, decided);
-  const sock = socketOf(root, spec.name, "ingest");
+  await waitIngest(root, spec.name, waitMs);
+}
+
+/** Wait for a declared service's ingest to answer, and refuse in a sentence when it does
+ *  not in time. */
+export async function waitIngest(
+  root: string,
+  service: string,
+  waitMs: number = INGEST_WAIT_MS,
+): Promise<void> {
+  const sock = socketOf(root, service, "ingest");
   await awaited(
-    () => ingestUp(root, spec.name),
-    `nothing is listening at ${sock} — ${spec.name}'s ingest is the door the service ` +
+    () => ingestUp(root, service),
+    `nothing is listening at ${sock} — ${service}'s ingest is the door the service ` +
       `delivers to, and what arrives before it opens is lost. \`liquen start\` runs it; on ` +
-      `a running org, the run's lines say why ${spec.name} is down.`,
-    spec.name,
+      `a running org, the run's lines say why ${service} is down.`,
+    service,
     waitMs,
   );
 }

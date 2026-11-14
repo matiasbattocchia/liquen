@@ -19,6 +19,12 @@
  *     consumed exactly once at the callback, expired after a TTL (`born`, epoch ms —
  *     the lease-arithmetic exception, like `locks.born`). Rows past the TTL are swept
  *     at open and at every mint: the table holds only states a door could still answer.
+ *   • sign_ins — the sign-ins in flight (connect/signin.ts): the ticket a link carries,
+ *     whom it binds, what its poll needs, its own deadline (epoch ms, as `born`). At most
+ *     one is open per service and key, which the partial unique index holds across
+ *     processes. A ticket settles once, in one UPDATE; settled rows past their deadline
+ *     are swept at every open. The link carries the id alone, so nobody holding it can
+ *     change whom it binds.
  *
  * Broker-side by construction: connectors read rows; agents never can (the exec plane
  * has no port here). On Postgres the same table wears RLS deny-all (§9).
@@ -47,10 +53,46 @@ export interface Credentials {
   mintState(service: string, extra?: Record<string, unknown>): Promise<string>;
   /** Consume a state exactly once: returns its extra, or null (unknown/used/expired). */
   consumeState(service: string, state: string): Promise<Record<string, unknown> | null>;
+  /** Open a sign-in, or find the one already open under the same service and key:
+   *  `opened` says which. */
+  openTicket(row: Omit<TicketRow, "ticket">): Promise<{ row: TicketRow; opened: boolean }>;
+  /** The open sign-in a ticket names; null once it settled. */
+  ticket(id: string): Promise<TicketRow | null>;
+  /** Every open sign-in, soonest deadline first. */
+  tickets(): Promise<TicketRow[]>;
+  /** Merge fields into an open ticket's `extra`: what its poll learned. */
+  noteTicket(id: string, extra: Record<string, unknown>): Promise<void>;
+  /** Settle a ticket: true for the one call that settled it. */
+  settleTicket(id: string): Promise<boolean>;
   close(): Promise<void>;
 }
 
+/** One sign-in in flight (connect/signin.ts). */
+export interface TicketRow {
+  ticket: string; // the opaque id a link carries
+  service: string;
+  /** Who signs in: the account when it is known before the sign-in, else whom the grant
+   *  is for. One open per service and key. */
+  key: string;
+  /** The agent the grant is for: its removal takes the ticket with it. */
+  agentId?: string;
+  /** What it binds and what its poll needs (signin.ts reads it). */
+  extra: Record<string, unknown>;
+  deadline: number; // epoch ms
+}
+
 const STATE_TTL_MS = 10 * 60 * 1000; // OAuth codes live ~10min; states match
+
+export const SIGN_INS_DDL = `CREATE TABLE IF NOT EXISTS sign_ins (
+  ticket   TEXT PRIMARY KEY,
+  service  TEXT NOT NULL,
+  key      TEXT NOT NULL,
+  agent_id TEXT REFERENCES agents(agent_id) ON DELETE CASCADE,
+  extra    TEXT NOT NULL,
+  deadline INTEGER NOT NULL,
+  settled  INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sign_ins_open ON sign_ins (service, key) WHERE settled = 0;`;
 
 export const CREDENTIALS_DDL = `CREATE TABLE IF NOT EXISTS credentials (
   key        TEXT PRIMARY KEY,
@@ -83,7 +125,8 @@ export async function openCredentials(
        extra   TEXT,
        born    INTEGER NOT NULL,
        used    INTEGER NOT NULL DEFAULT 0
-     );`,
+     );
+     ${SIGN_INS_DDL}`,
   );
   // field-wise merge, in SQL: every top-level field of `b` lands WHOLE over `a`'s. The
   // inner patch first removes each field `b` names (json_patch alone would merge nested
@@ -117,6 +160,34 @@ export async function openCredentials(
   const sweepS = db.prepare("DELETE FROM oauth_states WHERE born <= ?");
   const prune = () => sweepS.run(now() - STATE_TTL_MS);
   prune();
+  const putT = db.prepare(
+    `INSERT OR IGNORE INTO sign_ins (ticket, service, key, agent_id, extra, deadline)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+  const openT = db.prepare("SELECT * FROM sign_ins WHERE service = ? AND key = ? AND settled = 0");
+  const getT = db.prepare("SELECT * FROM sign_ins WHERE ticket = ? AND settled = 0");
+  const allT = db.prepare("SELECT * FROM sign_ins WHERE settled = 0 ORDER BY deadline, ticket");
+  const noteT = db.prepare(
+    `UPDATE sign_ins SET extra = json_patch(extra, ?) WHERE ticket = ? AND settled = 0`,
+  );
+  const settleT = db.prepare("UPDATE sign_ins SET settled = 1 WHERE ticket = ? AND settled = 0");
+  const sweepT = db.prepare("DELETE FROM sign_ins WHERE settled = 1 AND deadline <= ?");
+  type RawTicket = {
+    ticket: string;
+    service: string;
+    key: string;
+    agent_id: string | null;
+    extra: string;
+    deadline: number;
+  };
+  const ticketOf = (r: RawTicket): TicketRow => ({
+    ticket: r.ticket,
+    service: r.service,
+    key: r.key,
+    ...(r.agent_id ? { agentId: r.agent_id } : {}),
+    extra: JSON.parse(r.extra) as Record<string, unknown>,
+    deadline: Number(r.deadline),
+  });
 
   type RawRow = { key: string; value: string; agent_id: string | null; extra: string | null };
   const rowOf = (r: RawRow): CredentialRow => ({
@@ -170,6 +241,39 @@ export async function openCredentials(
         | undefined;
       if (r === undefined) return Promise.resolve(null);
       return Promise.resolve(r.extra ? JSON.parse(r.extra) as Record<string, unknown> : {});
+    },
+
+    openTicket(row): Promise<{ row: TicketRow; opened: boolean }> {
+      sweepT.run(now());
+      const ticket = crypto.randomUUID();
+      putT.run(
+        ticket,
+        row.service,
+        row.key,
+        row.agentId ?? null,
+        JSON.stringify(row.extra),
+        row.deadline,
+      );
+      const open = ticketOf(openT.get(row.service, row.key) as RawTicket);
+      return Promise.resolve({ row: open, opened: open.ticket === ticket });
+    },
+
+    ticket(id): Promise<TicketRow | null> {
+      const r = getT.get(id) as RawTicket | undefined;
+      return Promise.resolve(r ? ticketOf(r) : null);
+    },
+
+    tickets(): Promise<TicketRow[]> {
+      return Promise.resolve((allT.all() as RawTicket[]).map(ticketOf));
+    },
+
+    noteTicket(id, extra): Promise<void> {
+      noteT.run(JSON.stringify(extra), id);
+      return Promise.resolve();
+    },
+
+    settleTicket(id): Promise<boolean> {
+      return Promise.resolve(Number(settleT.run(id).changes) > 0);
     },
 
     close(): Promise<void> {

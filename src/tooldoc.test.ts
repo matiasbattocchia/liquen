@@ -12,6 +12,8 @@ import { bashShape } from "./exec/bash.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { bringSystemDocs, onFiles } from "./store/seed.ts";
+import { CONNECT_SPEC } from "./exec/connect.ts";
+import { AGENT_SPEC } from "./exec/agent.ts";
 
 const PIN: ToolShape = {
   spec: {
@@ -160,7 +162,13 @@ Deno.test("the seeded docs word every builtin tool, the numbers filled from code
     const docs = openFileDocs(root);
     const read = (name: string) =>
       docs.read({ agent: "a" }, { scope: "system", kind: "tool", name });
-    const shapes = [...OWN_TOOLS, bashShape(120_000), ...Object.values(DOC_TOOLS)];
+    const shapes = [
+      ...OWN_TOOLS,
+      bashShape(120_000),
+      ...Object.values(DOC_TOOLS),
+      { spec: CONNECT_SPEC },
+      { spec: AGENT_SPEC },
+    ];
     await checkToolDocs(shapes, read);
     const tools = await wordedAll(shapes, read);
     const bash = tools.find((t) => t.name === "bash")!;

@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { APP_PREFIX, appGuide, connectMicrosoftApp, pickMicrosoftApp } from "./connect.ts";
+import { APP_PREFIX, appGuide, connectMicrosoftApp } from "./connect.ts";
 import { DEFAULT_SCOPES } from "./config.ts";
 import { doorAddress } from "../door.ts";
 import { callbackAddress } from "../../edge.ts";
@@ -46,18 +46,6 @@ Deno.test("the callback: no public address is this machine's edge — the dev's 
   );
   assertEquals(remote.loopback, false);
   assertEquals(remote.callback, "https://acme.example.com/microsoft/oauth/callback");
-});
-
-Deno.test("pick: the only app is the choice; several demand a name; none is an error", async () => {
-  await withVault(async (creds) => {
-    await assertRejects(() => pickMicrosoftApp(creds), Error, "no microsoft app");
-    await connectMicrosoftApp({ clientId: "cid1", clientSecret: "s", tenant: "t" }, creds);
-    assertEquals((await pickMicrosoftApp(creds)).value.client_id, "cid1");
-    await connectMicrosoftApp({ clientId: "cid2", clientSecret: "s", tenant: "t" }, creds);
-    const err = await assertRejects(() => pickMicrosoftApp(creds), Error);
-    assertStringIncludes(err.message, "--app");
-    assertEquals((await pickMicrosoftApp(creds, "cid2")).value.client_id, "cid2");
-  });
 });
 
 Deno.test("app guide: the redirect URI to register, every scope a sign-in asks for, admin consent", () => {

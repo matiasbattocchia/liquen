@@ -364,6 +364,16 @@ CREATE TABLE IF NOT EXISTS oauth_states (
   born    bigint NOT NULL,
   used    integer NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS sign_ins (
+  ticket   ${T} PRIMARY KEY,
+  service  ${T} NOT NULL,
+  key      ${T} NOT NULL,
+  agent_id ${T} REFERENCES agents (agent_id) ON DELETE CASCADE,
+  extra    jsonb NOT NULL,
+  deadline bigint NOT NULL,
+  settled  integer NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sign_ins_open ON sign_ins (service, key) WHERE settled = 0;
 `;
 
 /** The role every agent's substrate calls run as (§8, §9): one for the cluster, NOLOGIN,

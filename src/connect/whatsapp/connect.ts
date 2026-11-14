@@ -4,10 +4,11 @@
  * The bridge (open-bsp-whatsmeow) owns the wire: `POST /sessions` starts a pairing and
  * `GET /sessions/pending/{id}` is polled while WhatsApp rotates QR codes (~20s each) —
  * or, given a phone number, answers a one-shot pairing code the person types into
- * WhatsApp (Linked devices → Link with phone number). This file is liquen's CLIENT of that
- * contract: drive the poll, and on `paired` WRITE THE MAP — the same three writes as
- * the Slack doors, minus the vault: liquen holds NO WhatsApp secret (the Signal session
- * keys live in the bridge's store; liquen's only credential is the shared BRIDGE_TOKEN).
+ * WhatsApp (Linked devices → Link with phone number). Main drives the poll for every
+ * pairing (signin.ts, whatsapp/signin.ts), and on `paired` WRITES THE MAP here
+ * (`landWhatsApp`) — the same three writes as the Slack doors, minus the vault: liquen
+ * holds NO WhatsApp secret (the Signal session keys live in the bridge's store; liquen's
+ * only credential is the shared BRIDGE_TOKEN).
  *
  *   paired → connections: ONE row — the session's own number is BOTH the anchor every
  *            event carries AND the principal's identity (unlike Slack's two-row
@@ -18,13 +19,14 @@
  *          → the log: the grant notification crosses the frontier as an event (§4)
  *
  * The bridge posts its own `connected` session event at the ingest too — same upsert,
- * either order (§4: the map converges by upsert); the door's write means pairing works
- * even when the ingest webhook isn't up yet. Which ingest is the door's to say: the bridge
- * is one sidecar for many orgs, and `webhook_url` on the create request is where THIS
- * session's traffic lands from then on (`ingestUrlOf`, `config.ts`).
+ * either order (§4: the map converges by upsert); main's write means pairing works even
+ * when the ingest webhook isn't up yet. Which ingest is the org's to say: the bridge is one
+ * sidecar for many orgs, and `webhook_url` on the create request is where THIS session's
+ * traffic lands from then on (`ingestUrlOf`, `config.ts`).
  *
- * Which is why the door REFUSES when the org's ingest is not up (`requireIngest`): pairing
- * makes the bridge start delivering at once, and the history it sends arrives once or never.
+ * Which is why the door DECLARES the connection and waits for its ingest before it asks
+ * main for the pairing (`requireIngest`): pairing makes the bridge start delivering at
+ * once, and the history it sends arrives once or never.
  */
 
 import { helpFlag } from "../help.ts";
@@ -33,12 +35,12 @@ import type { Connections } from "../../store/connections.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
 import { SERVICE } from "./ingest.ts";
 import { findRoot, orgFlag } from "../../config.ts";
-import { readConfig } from "../../org.ts";
 import { timedFetch } from "../http.ts";
 import { requireIngest } from "../declare.ts";
 import { SPEC } from "./config.ts";
 import { linked } from "../health.ts";
 import { entry } from "../../entry.ts";
+import { signInHere, terminalUser } from "../door.ts";
 
 /** The bridge's pairing poll response (sessions.go `PairingState`) — verbatim. */
 export interface WAPairingState {
@@ -63,67 +65,46 @@ export interface WABridgeSessions {
   pending(id: string): Promise<WAPairingState>;
 }
 
-export interface WhatsAppConnectDeps {
-  bridge: WABridgeSessions;
+/** The bridge's session routes over HTTP, on the shared token. */
+export function bridgeSessions(base: string, token: string): WABridgeSessions {
+  const call = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
+    const res = await timedFetch(`${base}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+    if (!res.ok) {
+      const reason = (await res.text()).slice(0, 256).trim();
+      throw new Error(`bridge ${path} HTTP ${res.status}: ${reason}`);
+    }
+    return await res.json() as T;
+  };
+  return {
+    create: (req) => call("POST", "/sessions", req),
+    pending: (id) => call("GET", `/sessions/pending/${id}`),
+  };
+}
+
+export interface WhatsAppLandDeps {
   /** The member whose phone this is — the connection's owner (§4). Absent ⇒ the org's
    *  number: an agent whose declared phone it is speaks through it, steered by the roster. */
   principal?: string;
   /** The bridge's tenant id — `connections.whatsapp.organizationId` (it stores and
    *  echoes it back on session events). */
   organizationId: string;
-  /** This org's ingest as the bridge reaches it (`ingestUrlOf`) — kept with the session:
-   *  the bridge is multi-tenant, and each tenant's traffic lands at its own door. */
-  webhookUrl: string;
-  /** Set ⇒ the pairing-code flow (typed into the phone); absent ⇒ the QR flow. */
-  phoneNumber?: string;
   /** The machinery's write side (§4) — the same seam the sessions/events route uses. */
   store: Pick<Connections, "upsertConnections" | "upsertMemberships">;
   /** → the EventLog: the grant notification crosses the frontier as an event (§4). */
   publish: Appender["publish"];
-  /** UI hook: fires on every visible change (first QR, each rotation, the code). */
-  onState?: (state: WAPairingState) => void;
-  /** The clock every stamp and the pairing deadline read (§9: the seam a test moves). */
   now?: () => string;
 }
 
-/** How often the bridge is asked whether the phone has answered. */
-const POLL_MS = 1_000;
-/** Mirrors the bridge's own pendingTTL — past it the poll only ever answers error. */
-const PAIRING_TTL_MS = 10 * 60_000;
-
-/** Drive one pairing to completion: create, poll, and on `paired` write the map and
- *  notify the log. Throws (writing nothing) on error or timeout. `pollMs` is `POLL_MS` —
- *  a waited constant, so the value is the seam (§9): a test drives the loop faster. */
-export async function connectWhatsApp(
-  deps: WhatsAppConnectDeps,
-  pollMs: number = POLL_MS,
-): Promise<{ address: string }> {
+/** A paired number, written: the anchor row, the owner's membership, the note. */
+export async function landWhatsApp(address: string, deps: WhatsAppLandDeps): Promise<void> {
   const now = deps.now ?? (() => new Date().toISOString());
-  const deadline = Date.parse(now()) + PAIRING_TTL_MS;
-
-  let state = await deps.bridge.create({
-    organization_id: deps.organizationId,
-    webhook_url: deps.webhookUrl,
-    ...(deps.phoneNumber ? { phone_number: deps.phoneNumber } : {}),
-    ...(deps.principal ? { agent_id: deps.principal } : {}),
-  });
-  deps.onState?.(state);
-
-  while (state.status === "pending") {
-    if (Date.parse(now()) >= deadline) throw new Error("pairing timed out — run the door again");
-    await new Promise((r) => setTimeout(r, pollMs));
-    const next = await deps.bridge.pending(state.session_id);
-    if (
-      next.status !== state.status || next.qr_code !== state.qr_code ||
-      next.pairing_code !== state.pairing_code
-    ) deps.onState?.(next);
-    state = next;
-  }
-  if (state.status !== "paired" || !state.address) {
-    throw new Error(`pairing failed: ${state.error ?? state.status}`);
-  }
-  const address = state.address;
-
   // the map: one anchor row (opens the publish gate the next webhook batch checks) —
   // OWNED by the principal who paired their own phone, or the org's (§4: no owner, and a
   // credential key naming the bridge session, which is the credential the org holds for
@@ -157,10 +138,9 @@ export async function connectWhatsApp(
     }],
   };
   await deps.publish(note);
-  return { address };
 }
 
-/* ── local entry: drive the pairing against the bridge, QR in the terminal ──────────
+/* ── local entry: the pairing asked of main, QR in the terminal ──────────────────────
  *
  * The positional is the principal (default: the OS username — a session choice, so an
  * argument); `--shared` pairs a number nobody owns, read by every agent;
@@ -172,7 +152,7 @@ export async function connectWhatsApp(
  * and the bridge fails the pending session then (events.go) rather than idling to its TTL.
  * Expired ⇒ run the door again for a fresh one.
  *
- * Env: WA_BRIDGE_TOKEN (the secret); the knobs are connections.whatsapp. */
+ * Env: WA_BRIDGE_TOKEN (the secret, main's); the knobs are connections.whatsapp. */
 const USAGE = `usage: liquen connect whatsapp [agent] [--phone <digits>]
        liquen connect whatsapp --shared [--phone <digits>]
 
@@ -186,15 +166,12 @@ const USAGE = `usage: liquen connect whatsapp [agent] [--phone <digits>]
 
 if (import.meta.main) {
   await entry(async () => {
-    const { openStore } = await import("../../store/mod.ts");
-    const { userInfo } = await import("node:os");
     const { basename } = await import("node:path");
     const qrcode = (await import("qrcode-terminal")).default;
 
     const org = orgFlag();
     helpFlag(org.args, USAGE);
     const root = findRoot(org);
-    const store = await openStore(root);
     const flags = new Map<string, string>();
     const positional: string[] = [];
     let shared = false;
@@ -207,14 +184,13 @@ if (import.meta.main) {
       console.error("--shared pairs a number nobody owns: no agent to name");
       Deno.exit(2);
     }
-    const principal = shared ? undefined : positional[0] ?? (() => {
-      try {
-        return userInfo().username;
-      } catch {
-        return "principal";
-      }
-    })();
-    const { ingestUrlOf, whatsappConfig } = await import("./config.ts");
+    const principal = shared ? undefined : positional[0] ?? terminalUser();
+    const phone = flags.get("phone") || undefined;
+    if (flags.has("phone") && !phone) {
+      console.error("--phone needs the number (international digits, no `+`)");
+      Deno.exit(2);
+    }
+    const { whatsappConfig } = await import("./config.ts");
     // the first door names the tenant after the folder and declares it; from then on the
     // file says, and a rename of the folder moves nothing on the bridge
     const tenant = (await whatsappConfig(root)).organizationId ?? basename(root);
@@ -222,69 +198,24 @@ if (import.meta.main) {
     // the phone's history first, within seconds — and a post that finds nobody there is
     // logged once and dropped. The door is the only moment anyone can check.
     await requireIngest(root, SPEC, { organizationId: tenant });
-    const cfg = await whatsappConfig(root);
-    const { bridgeUrl: base } = cfg;
-    const webhookUrl = ingestUrlOf(cfg, (await readConfig(root)).edge.port);
-    const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
-    const phoneNumber = flags.get("phone") || undefined;
-    if (flags.has("phone") && !phoneNumber) {
-      console.error("--phone needs the number (international digits, no `+`)");
-      Deno.exit(2);
-    }
-
-    const call = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
-      const res = await timedFetch(`${base}${path}`, {
-        method,
-        headers: {
-          authorization: `Bearer ${token}`,
-          ...(body !== undefined ? { "content-type": "application/json" } : {}),
-        },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      });
-      if (!res.ok) {
-        const reason = (await res.text()).slice(0, 256).trim();
-        throw new Error(`bridge ${path} HTTP ${res.status}: ${reason}`);
-      }
-      return await res.json() as T;
-    };
-    const bridge: WABridgeSessions = {
-      create: (req) => call("POST", "/sessions", req),
-      pending: (id) => call("GET", `/sessions/pending/${id}`),
-    };
 
     console.error(
-      `Connecting WhatsApp as ${
-        principal ? `agent "${principal}"` : "the org"
-      } (bridge ${base}, tenant "${tenant}", ingest ${webhookUrl}) — ` +
-        `${phoneNumber ? `pairing code for ${phoneNumber}` : "QR"}.\n`,
+      `Connecting WhatsApp as ${principal ? `agent "${principal}"` : "the org"} — ` +
+        `${phone ? `pairing code for ${phone}` : "QR"}.\n`,
     );
-    const log = await store.log();
-    try {
-      const { address } = await connectWhatsApp({
-        bridge,
-        principal,
-        organizationId: tenant,
-        webhookUrl,
-        phoneNumber,
-        store: log, // connections live on the Log (§4)
-        publish: log.publish,
-        onState: (s) => {
-          if (s.pairing_code) {
-            console.error(`Pairing code:  ${s.pairing_code}\n`);
-            console.error("On the phone: WhatsApp → Settings → Linked devices → Link a device");
-            console.error("→ Link with phone number instead — and type the code.\n");
-          } else if (s.qr_code) {
-            console.error(
-              "Scan with the phone: WhatsApp → Settings → Linked devices → Link a device\n",
-            );
-            qrcode.generate(s.qr_code, { small: true }, (q: string) => console.error(q));
-          }
+    Deno.exit(
+      await signInHere(
+        root,
+        {
+          service: "whatsapp",
+          ...(principal ? { agent: principal } : {}),
+          ...(phone ? { pair: phone } : {}),
         },
-      });
-      console.error(`\n✓ paired: ${address} → ${principal ?? "the org"}`);
-      console.error("  (deno task status shows the map)");
-    } finally {
-      await log.close();
-    }
+        {
+          where: "Scan with the phone: WhatsApp → Settings → Linked devices → Link a device\n",
+          qr: (code) => qrcode.generate(code, { small: true }, (q: string) => console.error(q)),
+        },
+      ),
+    );
   });
 }

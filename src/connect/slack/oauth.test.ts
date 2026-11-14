@@ -6,6 +6,7 @@ import type { Draft, Event, MessageEvent } from "../../types.ts";
 import { newId } from "../../store/id.ts";
 import type { Appender } from "../../store/log.ts";
 import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
+import { fakeGate, ticket } from "../testing.ts";
 
 const LINKED_AT = "2026-10-20T00:00:00.000Z";
 
@@ -13,8 +14,26 @@ const CONFIG = {
   clientId: "cid",
   clientSecret: "sec",
   redirectUri: "https://x.example/oauth/slack/callback",
-  userScopes: ["chat:write", "channels:history"],
 };
+
+const SCOPES = ["chat:write", "channels:history"];
+
+/** The open sign-ins the tests start: ana's, one naming nobody, a narrow ask, and one
+ *  for ana matched by her email. */
+const TICKETS = [
+  ticket("t-ana", { service: "slack", agentId: "ana", extra: { scopes: SCOPES } }),
+  ticket("t-none", { service: "slack", extra: { scopes: SCOPES } }),
+  ticket("t-narrow", {
+    service: "slack",
+    agentId: "ana",
+    extra: { scopes: ["im:read", "search:read"] },
+  }),
+  ticket("t-for", {
+    service: "slack",
+    agentId: "ana",
+    extra: { scopes: SCOPES, email: "ana@example.com" },
+  }),
+];
 
 // a member's sign-in on a workspace the app is already installed in: the user leg comes
 // back carrying what the door asked for — Slack states the granted scopes on the exchange,
@@ -37,7 +56,8 @@ async function withOAuth(
     connections: ConnectionRow[];
     memberships: MembershipRow[];
     creds: Awaited<ReturnType<typeof openCredentials>>;
-    start: (agent?: string) => Promise<Response>;
+    gate: ReturnType<typeof fakeGate>;
+    start: (ticket?: string) => Promise<Response>;
     callback: (code: string, state: string) => Promise<Response>;
   }) => Promise<void>,
   access: SlackAccess = ACCESS,
@@ -50,7 +70,10 @@ async function withOAuth(
   const exchanged: string[] = [];
   const connections: ConnectionRow[] = [];
   const memberships: MembershipRow[] = [];
+  const gate = fakeGate(TICKETS);
   const handler = createSlackOAuth({
+    gate,
+    emailOf: () => Promise.resolve("ana@example.com"),
     // the map's write side in miniature: the grant creates anchor + binding (§4)
     store: {
       upsertConnections: (rows) => {
@@ -62,7 +85,7 @@ async function withOAuth(
         return Promise.resolve();
       },
     },
-    config: CONFIG,
+    config: () => Promise.resolve(CONFIG),
     creds,
     // the store's `publish` in miniature: it mints the id (§3). Cast because the fake only
     // implements the single-draft overload — a connection never publishes a batch.
@@ -88,8 +111,9 @@ async function withOAuth(
       connections,
       memberships,
       creds,
-      start: (agent = "ana") =>
-        handler(new Request(`https://x.example/oauth/slack/start?agent=${agent}`)),
+      gate,
+      start: (id = "t-ana") =>
+        handler(new Request(`https://x.example/oauth/slack/start?ticket=${id}`)),
       callback: (code, state) =>
         handler(
           new Request(
@@ -126,27 +150,36 @@ Deno.test("start: mints a one-time state and 302s to Slack asking the user leg o
   });
 });
 
-Deno.test("start: a link naming nobody is refused — a user token is always someone's", async () => {
-  await withOAuth(async ({ handler }) => {
-    const res = await handler(new Request("https://x.example/oauth/slack/start"));
-    assertEquals(res.status, 400);
+Deno.test("start: a ticket naming nobody is refused — a user token is always someone's", async () => {
+  await withOAuth(async ({ handler, start }) => {
+    assertEquals((await start("t-none")).status, 400);
+    const bare = await handler(new Request("https://x.example/oauth/slack/start?agent=ana"));
+    assertEquals(bare.status, 410); // a name is no ticket
   });
 });
 
-Deno.test("start: ?scopes= overrides the catalog's ask for that one link", async () => {
-  await withOAuth(async ({ handler }) => {
-    const res = await handler(
-      new Request("https://x.example/oauth/slack/start?agent=ana&scopes=im:read,search:read"),
-    );
-    const loc = new URL(res.headers.get("location")!);
+Deno.test("start: the ticket's scopes are the ask", async () => {
+  await withOAuth(async ({ start }) => {
+    const loc = new URL((await start("t-narrow")).headers.get("location")!);
     assertEquals(loc.searchParams.get("user_scope"), "im:read,search:read");
   });
 });
 
-Deno.test("callback: exchanges the code and lands the leg as a paste would — bound to the link's agent, addressed by Slack's id", async () => {
+Deno.test("callback: a ticket matching a handle judges the member's profile email", async () => {
+  await withOAuth(async ({ start, callback, gate }) => {
+    assertEquals((await callback("c1", stateOf(await start("t-for")))).status, 200);
+    assertEquals(gate.seen.judged, [{
+      ticket: "t-for",
+      who: { address: "T1:U9", email: "ana@example.com" },
+    }]);
+    assertEquals(gate.seen.landed, [{ ticket: "t-for", account: "T1:U9" }]);
+  });
+});
+
+Deno.test("callback: exchanges the code and lands the leg as a paste would — bound to the ticket's agent, addressed by Slack's id", async () => {
   await withOAuth(
     async ({ start, callback, creds, published, exchanged, connections, memberships }) => {
-      const state = stateOf(await start("ana"));
+      const state = stateOf(await start("t-ana"));
       const res = await callback("code-1", state);
       assertEquals(res.status, 200);
       assertStringIncludes(await res.text(), "close this window");

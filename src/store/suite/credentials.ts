@@ -24,6 +24,64 @@ export function credentialsSuite(s: Substrate): void {
     }
   });
 
+  /** One sign-in is open per service and key: a second open finds the first, a settled one
+   *  makes room, and a ticket settles once. */
+  Deno.test("a sign-in opens once per service and key, and settles once", async () => {
+    const store = await s.fresh();
+    const log = await store.open();
+    await cast(log);
+    await log.close();
+    const creds = await store.vault();
+    try {
+      const deadline = Date.now() + 60_000;
+      const first = await creds.openTicket({
+        service: "google",
+        key: "agent:ana",
+        agentId: "ana",
+        extra: { scopes: ["email"] },
+        deadline,
+      });
+      assertEquals(first.opened, true);
+      assertEquals(first.row.agentId, "ana");
+      const again = await creds.openTicket({
+        service: "google",
+        key: "agent:ana",
+        agentId: "ana",
+        extra: { scopes: ["other"] },
+        deadline,
+      });
+      assertEquals(again, { row: first.row, opened: false });
+      const other = await creds.openTicket({
+        service: "microsoft",
+        key: "agent:ana",
+        extra: {},
+        deadline,
+      });
+      assertEquals(other.opened, true);
+
+      await creds.noteTicket(first.row.ticket, { pending: "s1" });
+      assertEquals((await creds.ticket(first.row.ticket))?.extra, {
+        scopes: ["email"],
+        pending: "s1",
+      });
+      assertEquals((await creds.tickets()).map((t) => t.service).sort(), ["google", "microsoft"]);
+
+      assertEquals(await creds.settleTicket(first.row.ticket), true);
+      assertEquals(await creds.settleTicket(first.row.ticket), false); // once
+      assertEquals(await creds.ticket(first.row.ticket), null);
+      const next = await creds.openTicket({
+        service: "google",
+        key: "agent:ana",
+        extra: {},
+        deadline,
+      });
+      assertEquals(next.opened, true);
+    } finally {
+      await creds.close();
+      await store.drop();
+    }
+  });
+
   /** A deleted secret is gone from every read, and a second delete finds nothing. */
   Deno.test("delete drops the row, and says whether there was one", async () => {
     const store = await s.fresh();

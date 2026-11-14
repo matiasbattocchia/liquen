@@ -56,6 +56,7 @@ import {
 import { SPEC } from "./config.ts";
 import { linked } from "../health.ts";
 import { entry } from "../../entry.ts";
+import { signInHere } from "../door.ts";
 
 export const APP_PREFIX = "github:app:";
 export const ORG_KEY = "github:org";
@@ -286,8 +287,12 @@ export interface UserTokens {
 export interface DeviceFlowDeps {
   /** The app's OAuth client id — `github:app:<app_id>`'s `client_id` (the app door's). */
   clientId: string;
-  /** Where the code reaches a human: a terminal here; a message from the agent later. */
-  show: (code: DeviceCode) => void;
+  /** Where the code reaches a human: the sign-in's word, kept on its ticket. */
+  show: (code: DeviceCode) => void | Promise<void>;
+  /** A code asked for before, taken up rather than asked again (a restart). */
+  started?: DeviceCode;
+  /** Ends the poll quietly: the sign-in is over. */
+  signal?: AbortSignal;
   requestCode?: (clientId: string) => Promise<DeviceCode>;
   poll?: (body: URLSearchParams) => Promise<UserTokens>;
   sleep?: (ms: number) => Promise<void>;
@@ -303,11 +308,11 @@ const DEVICE_TTL_S = 900; // how long a user code lives when the start doesn't s
 export async function githubDeviceFlow(deps: DeviceFlowDeps): Promise<UserTokens> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const poll = deps.poll ?? defaultPoll;
-  const start = await (deps.requestCode ?? defaultRequestCode)(deps.clientId);
+  const start = deps.started ?? await (deps.requestCode ?? defaultRequestCode)(deps.clientId);
   if (!start.device_code || !start.user_code) {
     throw new Error(`device code: ${start.error_description ?? start.error ?? "no code"}`);
   }
-  deps.show(start);
+  await deps.show(start);
 
   let wait = (start.interval ?? POLL_INTERVAL_S) * 1000;
   // the deadline is counted in the sleeps this loop takes, not off a clock: waiting is the
@@ -315,6 +320,7 @@ export async function githubDeviceFlow(deps: DeviceFlowDeps): Promise<UserTokens
   let left = (start.expires_in ?? DEVICE_TTL_S) * 1000;
   while (left > 0) {
     await sleep(wait);
+    if (deps.signal?.aborted) throw new Error("device flow: the sign-in is over");
     left -= wait;
     const tok = await poll(
       new URLSearchParams({
@@ -574,6 +580,11 @@ async function defaultPoll(body: URLSearchParams): Promise<UserTokens> {
   return await res.json() as UserTokens;
 }
 
+/** `GET /user` with a token: the login it belongs to. */
+export async function githubWhoami(token: string): Promise<{ login?: string; message?: string }> {
+  return await defaultWhoami(token);
+}
+
 async function defaultWhoami(token: string): Promise<{ login?: string; message?: string }> {
   const res = await fetch("https://api.github.com/user", {
     headers: { authorization: `token ${token}`, accept: "application/vnd.github+json" },
@@ -745,7 +756,8 @@ if (import.meta.main) {
     const creds = await store.vault();
 
     // the device flow is the route when there is an app to run it with and a human at the
-    // terminal to type the code; `--token` and piped stdin both mean the paste instead
+    // terminal to type the code; `--token` and piped stdin both mean the paste instead.
+    // Main runs it (signin.ts), as it runs every sign-in
     const vaulted = flags.has("--token") || lines
       ? undefined
       : await pickGithubApp(creds, pickedApp).catch((e: Error) => {
@@ -753,35 +765,42 @@ if (import.meta.main) {
         return undefined;
       });
     const app = vaulted?.app.value.client_id ? vaulted : undefined;
-
-    const grant: UserGrant | undefined = app
-      ? await githubDeviceFlow({
-        clientId: app.app.value.client_id,
-        show: (code) => {
-          console.error(`  Open ${code.verification_uri} and enter:  ${code.user_code}\n`);
-          console.error("  (waiting — this window finishes on its own)");
-        },
-      }).then((tok) => ({ ...tok, appId: app.appId })).catch((e: Error) => {
-        console.error(`\n${e.message}`);
-        return undefined;
-      })
-      : (() => {
-        if (!flags.has("--token") && !lines) {
-          console.error(
-            vaulted
-              ? `(app ${vaulted.appId} has no client id — pasting a token instead)\n`
-              : "(no app in the vault — pasting a token instead)\n",
-          );
+    if (app) {
+      await creds.close();
+      await log.close();
+      const code = await signInHere(root, {
+        service: "github",
+        ...(principal ? { agent: principal } : {}),
+        app: app.appId,
+      });
+      if (code === 0) {
+        const after = await store.vault();
+        try {
+          await owed(after);
+        } finally {
+          await after.close();
         }
+      }
+      Deno.exit(code);
+    }
+
+    const grant: UserGrant | undefined = await (() => {
+      if (!flags.has("--token") && !lines) {
         console.error(
-          principal
-            ? "Create a fine-grained token (repo: Issues + Pull requests, read & write):"
-            : "The org's token — a machine user's, or your own (repo: Issues + Pull " +
-              "requests, read & write):",
+          vaulted
+            ? `(app ${vaulted.appId} has no client id — pasting a token instead)\n`
+            : "(no app in the vault — pasting a token instead)\n",
         );
-        console.error("  https://github.com/settings/personal-access-tokens/new\n");
-        return ask("Paste the token (github_pat_… / ghp_…):");
-      })();
+      }
+      console.error(
+        principal
+          ? "Create a fine-grained token (repo: Issues + Pull requests, read & write):"
+          : "The org's token — a machine user's, or your own (repo: Issues + Pull " +
+            "requests, read & write):",
+      );
+      console.error("  https://github.com/settings/personal-access-tokens/new\n");
+      return ask("Paste the token (github_pat_… / ghp_…):");
+    })();
     if (!grant) {
       await creds.close();
       await log.close();
