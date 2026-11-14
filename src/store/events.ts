@@ -213,7 +213,20 @@ export function build(
   // in SQL, not in a `filter`: that field is the §6 scope's, and it runs in JS over every
   // materialized row — an import would be paged into memory only to be dropped
   if (q.silenced === false) {
-    where.push(["backfill", "muted", "archived"].map(dialect.unflagged).join(" AND "));
+    // the same rule as `silenced` (render.ts): history and an archived chat always; a muted
+    // or crowded room's line unless it is for the account
+    where.push(
+      `${dialect.unflagged("backfill")} AND ${dialect.unflagged("archived")} AND ` +
+        `((${dialect.unflagged("muted")} AND ${dialect.unflagged("crowded")}) OR ` +
+        `NOT (${dialect.unflagged("addressed")}))`,
+    );
+  }
+  if (q.hushed === true) {
+    where.push(
+      `${dialect.unflagged("backfill")} AND ${dialect.unflagged("archived")} AND ` +
+        `${dialect.unflagged("addressed")} AND ` +
+        `NOT (${dialect.unflagged("muted")} AND ${dialect.unflagged("crowded")})`,
+    );
   }
   if (q.broadcasts === false) {
     where.push("(conversation_kind IS NULL OR conversation_kind <> 'broadcast')");

@@ -406,6 +406,13 @@ export interface Conversation {
    *  carries them in production). Stamped by ingest from platform facts (Slack types,
    *  WA jid shape) — never derived from counting members (§3). */
   kind?: "direct" | "group" | "channel" | "broadcast";
+  /** How many members the room has, as the wire counts them when the line arrives: a fact
+   *  the crowd rule reads before the line is published (`connect/marks.ts`), never
+   *  stored. */
+  members?: number;
+  /** The account administers the room (an admin, an owner, a creator): read and dropped
+   *  the same way. */
+  admin?: boolean;
 }
 
 /** External identity on the wire: the address and the service's display name, what the log
@@ -512,9 +519,13 @@ export interface Payload {
 
 /** The event's SIDECAR (§3): auditable, droppable, `json_patch`-merged on echo-merge —
  *  the machine never branches on service keys. Known keys: `backfill` (imported history),
- *  `muted` · `archived` (the chat's platform-synced state when the message arrived) — any
- *  of the three SILENCES the row: wakes nothing, renders nowhere, `search` is the door
- *  (§2, §5) — `delta` (on the mirror's CC of a presence event, §9: a line that is only
+ *  `muted` · `archived` (the chat's platform-synced state when the message arrived),
+ *  `crowded` (a big, busy room the account does not run) — each SILENCES the row: wakes
+ *  nothing, renders nowhere, `search` is the door (§2, §5); `addressed` (a line for the
+ *  account: it mentions it, or replies to one of its lines) lifts `muted` and `crowded`,
+ *  never the other two — `community` (the name of the larger conversation the line's
+ *  belongs to: a forum's, a WhatsApp community's, a Teams team's; render's `<conv
+ *  community>`) — `delta` (on the mirror's CC of a presence event, §9: a line that is only
  *  true while the turn runs, so the sweeper never re-offers it) — `consumed` (on the agent's closing
  *  session messages: the last event id the step's window read — the coalescing horizon
  *  `unanswered` measures against, §2; and on a tool step's first event, beside `anchor`:

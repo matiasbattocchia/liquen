@@ -124,7 +124,13 @@ Deno.test("a connection the file declares stands in the store with its knobs; a 
         doc: "the host",
       }],
     };
-    assertEquals(await connectorConfig(root, spec, log), { port: 4321, host: "localhost" });
+    assertEquals(await connectorConfig<Record<string, unknown>>(root, spec, log), {
+      port: 4321,
+      host: "localhost",
+      crowd: 20,
+      busy: 40,
+      follow: [],
+    });
     await log.setConfig([{ scope: "connections.acme", key: "prot", value: 1 }]);
     await assertRejects(
       () => connectorConfig(root, spec, log),

@@ -876,6 +876,31 @@ function worldMsg(
   return e;
 }
 
+Deno.test("a conversation in a community names it on its <conv>", () => {
+  const topic = { address: "-1009000/45", kind: "group" as const, name: "Ventas" };
+  const line = worldMsg(
+    "e1",
+    "2026-08-07T14:01:00Z",
+    topic,
+    { address: "700200", name: "Sol" },
+    "hola",
+  );
+  line.extra = { community: 'Obra "Sur"' };
+  const { messages } = render({
+    events: [line],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: "2026-08-07T14:03:00Z",
+  });
+  const text = (messages[0].content as Anthropic.ContentBlockParam[])
+    .filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlockParam).text).join("\n");
+  assertStringIncludes(
+    text,
+    '<conv kind="group" name="Ventas" community="Obra &quot;Sur&quot;" address="-1009000/45">',
+  );
+});
+
 Deno.test("a conversation's messages cluster into ONE element — interleaved rooms partition", () => {
   const t = (m: string) => `2026-08-07T14:0${m}:00Z`;
   const group = { address: "wa:g1", kind: "group" as const, name: "Obra" };

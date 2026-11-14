@@ -199,9 +199,34 @@ Deno.test("a connector reads its subsection over its defaults; nothing is writte
       JSON.stringify({ connections: { acme: { port: 1234 } } }),
     );
     const cfg = await connectorConfig<{ port: number; things: string[] }>(root, SPEC);
-    assertEquals(cfg, { port: 1234, things: ["a"] });
+    assertEquals(cfg as Record<string, unknown>, {
+      port: 1234,
+      things: ["a"],
+      crowd: 20,
+      busy: 40,
+      follow: [],
+    });
     const raw = await Deno.readTextFile(`${root}/config.yaml`);
     assertEquals(raw, JSON.stringify({ connections: { acme: { port: 1234 } } }));
+  });
+});
+
+Deno.test("a connection inherits shared.connections, key by key, and may follow rooms", async () => {
+  await withDir(async (root) => {
+    await Deno.writeTextFile(
+      `${root}/config.yaml`,
+      JSON.stringify({
+        shared: { connections: { crowd: 50 } },
+        connections: { acme: { busy: 10, follow: ["-1009000"] } },
+      }),
+    );
+    const cfg = await connectorConfig<Record<string, unknown>>(root, SPEC);
+    assertEquals([cfg.crowd, cfg.busy, cfg.follow], [50, 10, ["-1009000"]]);
+    await Deno.writeTextFile(
+      `${root}/config.yaml`,
+      JSON.stringify({ connections: { acme: { crowd: -1 } } }),
+    );
+    await assertRejects(() => connectorConfig(root, SPEC), Error, "connections.acme.crowd");
   });
 });
 

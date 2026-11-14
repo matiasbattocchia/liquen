@@ -49,7 +49,7 @@ goes with its words. Each skill the system describes is one file under
 | Item | Described in system | Note |
 |---|---|---|
 | `<conn service name address>` | ✗ | |
-| `<conv kind name address>` | ✗ | `address`: `send.md`, `search.md` |
+| `<conv kind name community address>` | ✗ | `address`: `send.md`, `search.md`. `community`: the larger conversation it sits in (a forum, a WhatsApp community, a team) |
 | `<msg id at>` | ✗ | |
 | `address=`, `email=` on outsiders | ✗ | |
 | `about="…"` on an outsider's line | ✗ | What they wrote of themselves on the wire, once per conversation |
@@ -64,6 +64,7 @@ goes with its words. Each skill the system describes is one file under
 | `— N more messages in M other conversations not shown — search to read them —` | ✗ | |
 | `… N earlier, not shown` | ✗ | |
 | `unanswered — N conversations:` `· … — whatsapp group, 3 since 14:02 · mentioned`, `— N more` | ✗ | A reaction answers too: `send.md` |
+| `— N lines in M muted conversations not shown — search to read them —` | ✗ | In the anchor: muted and crowded rooms' lines that were not for the account, since the window's floor; `N+` past 200 |
 
 ## Principal
 

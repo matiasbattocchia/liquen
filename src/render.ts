@@ -967,15 +967,23 @@ function beforeOf(
  * elision count walking 4 → 812 → 8,512 — churning the prompt's tail exactly when there is
  * most of it.
  *
- * `muted` · `archived` — the chat's state ON ARRIVAL, as the platform synced it (the
- * phone's own mute/archive, whatsmeow app state). The principal silenced that conversation
- * and the agent honors it — a mention in a muted group stays silent (WhatsApp's own
- * semantics), and an unmute wakes only what arrives after it: the stamp is per message,
- * never retroactive, the same denormalization as names.
+ * `archived` — the chat's state ON ARRIVAL, as the platform synced it: out of the
+ * principal's sight, so nothing of it is news, a line for the account included.
+ *
+ * `muted` — the same, for a chat the principal muted: it still badges a line for the
+ * account, as the phone does, so a row also stamped `addressed` (it mentions the account,
+ * or replies to one of its lines: `marks.ts`) is news.
+ *
+ * `crowded` — the room is big, busy, and not the account's to run (`marks.ts`): read as a
+ * muted one, a line for the account lifting it the same way.
+ *
+ * Every mark is per message, stamped on arrival, never retroactive: an unmute wakes only
+ * what arrives after it, the same denormalization as names.
  */
 export function silenced(event: Event): boolean {
-  return event.extra?.backfill === true || event.extra?.muted === true ||
-    event.extra?.archived === true;
+  const x = event.extra;
+  if (x?.backfill === true || x?.archived === true) return true;
+  return (x?.muted === true || x?.crowded === true) && x?.addressed !== true;
 }
 
 /**
@@ -1348,7 +1356,12 @@ function renderMessages(
     // a run is one conversation: a thread's replies are its lines, tied to their root by `re`
     if (!run || run.conv.address !== e.envelope.conversation.address) {
       const name = e.envelope.conversation.name ?? names.get(e.id);
-      const conv = name ? { ...e.envelope.conversation, name } : e.envelope.conversation;
+      const within = e.extra?.community;
+      const conv: Room = {
+        ...e.envelope.conversation,
+        ...(name ? { name } : {}),
+        ...(typeof within === "string" && within ? { community: within } : {}),
+      };
       const opened: ConvRun = { conv, lines: [] };
       run = opened;
       cluster.convs.push(run);
@@ -1715,7 +1728,7 @@ interface ConnectionCluster {
 
 /** One `<conv>` element's worth of a run: its lines, and its `<before>`. */
 interface ConvRun {
-  conv: Conversation;
+  conv: Room;
   lines: string[];
   past?: PastLine[];
 }
@@ -1823,12 +1836,20 @@ export function roomNamesAt(events: Event[]): Map<EventId, string> {
   return out;
 }
 
-/** A conversation as the window names it: the row's own name, else the best one seen. */
+/** A conversation as the window draws it: its envelope, and the larger one it belongs
+ *  to. */
+export type Room = Conversation & { community?: string };
+
+/** A conversation as the window names it: the row's own name, else the best one seen,
+ *  and the community the row says it belongs to (`extra.community`). */
 export function namedRoom(
   e: MessageEvent,
   names: Map<string, string>,
-): Conversation {
-  const conv = e.envelope.conversation;
+): Room {
+  const within = e.extra?.community;
+  const conv: Room = typeof within === "string" && within
+    ? { ...e.envelope.conversation, community: within }
+    : e.envelope.conversation;
   if (conv.name) return conv;
   const name = names.get(`${e.envelope.service}\u0000${conv.address}`);
   return name ? { ...conv, name } : conv;
@@ -1836,12 +1857,14 @@ export function namedRoom(
 
 /** One conversation's run → its `<conv>` element. The attributes are the envelope facts
  *  the agent acts on: `kind` tells a public channel from a DM, `name` is the handle it
- *  reads, `address` the one `send` takes back (and the stable one — a name is the
+ *  reads, `community` the larger conversation it sits in (a forum, a WhatsApp community,
+ *  a team), `address` the one `send` takes back (and the stable one — a name is the
  *  service's word, and a contact can change theirs). */
 function conversationEl(c: ConvRun): string {
   const attrs = [
     ...(c.conv.kind ? [`kind="${c.conv.kind}"`] : []),
     ...(c.conv.name ? [`name="${escAttr(c.conv.name)}"`] : []),
+    ...(c.conv.community ? [`community="${escAttr(c.conv.community)}"`] : []),
     `address="${escAttr(c.conv.address)}"`,
   ];
   const lines = c.past?.length ? [beforeEl(c.past), ...c.lines] : c.lines;

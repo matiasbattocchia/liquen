@@ -1348,6 +1348,7 @@ async function think(
       new Set(surfaces.map(accountOf)),
       config.timezone,
     ),
+    ...(await hushedOn(events, config.since, ports.log)),
   ];
   // ONE turn per invocation, and `decide` said which: a think, or — nothing owed and the
   // window over budget — the checkpoint, whose summary's insert wakes the next look (§5). A
@@ -1774,6 +1775,36 @@ export function unansweredOn(
       }${named ? " · mentioned" : ""}`;
     }),
     ...(rest > 0 ? [`— ${rest} more`] : []),
+  ];
+}
+
+/** The most rows the count of muted and crowded lines reads: past it the line says `+`. */
+export const HUSHED_READ = 200;
+
+/** What the window left out of muted and crowded rooms (§5), in one line: how many lines,
+ *  in how many conversations, above the window's own floor. They are in no prompt, so the
+ *  count is what tells the agent a `search` there would find something. */
+export async function hushedOn(
+  events: Event[],
+  since: string | undefined,
+  log: Pick<Reader, "read">,
+): Promise<string[]> {
+  const floor = events[0]?.type === "summary" ? events[0] : undefined;
+  const rows = await log.read({
+    ...(floor ? { afterId: floor.payload.covers[1] } : {}),
+    ...(since ? { after: since } : {}),
+    types: ["message"],
+    hushed: true,
+    limit: HUSHED_READ + 1,
+  });
+  if (rows.length === 0) return [];
+  const rooms = new Set(
+    rows.map((e) => `${e.envelope.service}\u0000${e.envelope.conversation.address}`),
+  );
+  const lines = rows.length > HUSHED_READ ? `${HUSHED_READ}+` : `${rows.length}`;
+  return [
+    `— ${lines} line${rows.length === 1 ? "" : "s"} in ${rooms.size} muted ` +
+    `conversation${rooms.size === 1 ? "" : "s"} not shown — search to read them —`,
   ];
 }
 
