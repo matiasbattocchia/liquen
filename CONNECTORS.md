@@ -423,7 +423,8 @@ than a rewrite would reach in months:
   to write an entry, `GET /contacts/{address}?q=…` to look one up — on a fork of
   whatsmeow carrying `tulir/whatsmeow#1247`)
 - **QR *and* phone-code pairing** with rotation polling, logout, session-death notification
-- history sync import (chunked), group subjects → conversation names, **LID → phone
+- history sync import (chunked; a pairing asks the phone for a full sync of 60 days,
+  `HISTORY_DAYS` on the bridge), group subjects → conversation names, **LID → phone
   canonicalization**
 
 Its contract is already liquen-shaped:
@@ -461,14 +462,43 @@ Frictions, all small:
 - `organization_id` (theirs) ↔ the connection address (ours).
 - **One replica by design** — a WhatsApp session is a single WebSocket. Not horizontally
   scalable; fine for Docker-per-org, a constraint to remember on edge.
-- Unofficial protocol: ban risk, no templates, no business features. Status/stories and
-  newsletters are dropped (not conversations). History media imports as metadata only.
+- Unofficial protocol: ban risk, no templates, no business features. Status/stories are
+  dropped (not conversations), and so is a channel the account only follows. History media
+  imports as metadata only.
 
 Inherits one open item from Slack, in WA clothing: **principal's personal number →
 `mind:<agent>` alias AT INGEST**, before routing (§4) — the agent must never treat its own
 principal as a peer.
 
-`conversation.kind` from the jid shape (§4): individual → `direct`, group jid → `group`.
+`conversation.kind` from the jid shape (§4): individual → `direct`, group jid → `group`,
+a broadcast list (`…@broadcast`) and a channel (`…@newsletter`) → `broadcast`.
+
+**A broadcast list lands where the phone shows it.** whatsmeow reads a list's message as
+the list's chat (`<id>@broadcast`, flagged a group on the live wire) with its author as
+the participant; a received one is `IsIncomingBroadcast`, which whatsmeow documents as
+showing in the direct chat with the sender. The bridge posts it at the list's address,
+the author as `sender_address`, and the ingest places it: a message somebody sent through
+their list is a `direct` line at their address, named as they are; the account's own
+message to a list stays one `broadcast` conversation at the list's address. Its edits and
+deletes land where it did. The row keeps the bridge's id, so a receipt for it still merges.
+
+**A channel is a broadcast when the account runs it.** A channel (a newsletter) the
+account owns or administers, by the viewer role whatsmeow reads off the channel's
+metadata, is a `broadcast` conversation at its jid, its posts the account's own. One it
+only follows is dropped by the bridge, in live traffic, history and the rooms feed, as
+Telegram drops a channel it follows. Followers are anonymous and reactions are counts, so
+no line in a channel names a reactor.
+
+**A group's lines say what the group is.** Every message, edit and room line of a group
+carries how many are in it and whether the account is an admin or super-admin there
+(`conversation_members`, `conversation_admin`; `members`, `admin` on a room line), and the
+name of the community it sits in, from the group's linked parent. The bridge reads them
+with the group's info, keeps them, and reads them again when WhatsApp announces a change to
+the group; a history import reads every group at once. The ingest puts the first two on the
+draft's conversation, where the marked publish (`connect/marks.ts`) reads them against
+`connections.whatsapp`'s `crowd`, `busy` and `follow` and drops them, and the community on
+the row as `extra.community`. A mention of the account and the connection are the same
+address, the account's own digits, so a line for the account needs no `self`.
 
 **The rooms are the account's** (`src/connect/whatsapp/rooms.ts`, the rooms port of §1),
 over the bridge's `/groups/{session}` routes on the same bearer the dispatcher posts with:

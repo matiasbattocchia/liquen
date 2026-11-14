@@ -10,7 +10,8 @@ import {
 } from "./ingest.ts";
 import type { Draft, Event, MessageEvent, RoomPart } from "../../types.ts";
 import { newId } from "../../store/id.ts";
-import type { Appender } from "../../store/log.ts";
+import type { Appender, Reader } from "../../store/log.ts";
+import { createMarks, marked } from "../marks.ts";
 import type { ConnectionRow } from "../../store/connections.ts";
 import { fileStorage } from "../../store/storage.ts";
 import { saveMedia } from "../../store/media.ts";
@@ -75,6 +76,216 @@ Deno.test("kindOf reads the jid shape", () => {
   assertEquals(kindOf("5491199999999"), "direct");
   assertEquals(kindOf("123456-789@g.us"), "group");
   assertEquals(kindOf("123@broadcast"), "broadcast");
+  // a channel the account runs is a broadcast too: its followers are in no room
+  assertEquals(kindOf("120363400000000001@newsletter"), "broadcast");
+});
+
+Deno.test("a list's message from somebody else lands in the direct chat with them; the account's own stays at the list", async () => {
+  const { handler, published } = harness();
+  const list = "1731234567@broadcast";
+  await handler(post(
+    "/whatsapp-web-webhook",
+    batch({
+      messages: [
+        textMessage({
+          external_id: "wmw.5491100000000.1731234567.5491100000001.L1",
+          conversation_address: list,
+          sender_address: "5491100000001",
+          sender_name: "Ana",
+        }),
+        textMessage({
+          external_id: "wmw.5491100000000.1731234567.5491100000000.L2",
+          conversation_address: list,
+          sender_address: "5491100000000",
+          conversation_name: "Clientes",
+          status: { sent: "2026-08-11T12:00:00Z" },
+        }),
+      ],
+    }),
+  ));
+  const [theirs, ours] = published as MessageEvent[];
+  assertEquals(theirs.envelope.conversation, {
+    address: "5491100000001",
+    kind: "direct",
+    name: "Ana",
+  });
+  assertEquals(theirs.envelope.sender, { address: "5491100000001", name: "Ana" });
+  // the bridge's id is the merge key: a receipt for the list's message still finds it
+  assertEquals(
+    theirs.envelope.external_id,
+    externalId("wmw.5491100000000.1731234567.5491100000001.L1"),
+  );
+  assertEquals(ours.envelope.conversation, { address: list, kind: "broadcast", name: "Clientes" });
+});
+
+Deno.test("an edit and a delete of a list's message land where the message did", async () => {
+  const { handler, published } = harness();
+  const list = "1731234567@broadcast";
+  await handler(post(
+    "/whatsapp-web-webhook",
+    batch({
+      edits: [{
+        original_message_id: "wmw.5491100000000.1731234567.5491100000001.L1",
+        conversation_address: list,
+        sender_address: "5491100000001",
+        text: "hola, corregido",
+        timestamp: "2026-08-11T12:05:00Z",
+      }, {
+        original_message_id: "wmw.5491100000000.1731234567.5491100000000.L2",
+        conversation_address: list,
+        sender_address: "5491100000000",
+        text: "a todos, corregido",
+        timestamp: "2026-08-11T12:05:00Z",
+      }],
+      revokes: [{
+        original_message_id: "wmw.5491100000000.1731234567.5491100000001.L1",
+        conversation_address: list,
+        sender_address: "5491100000001",
+        timestamp: "2026-08-11T12:06:00Z",
+      }],
+    }),
+  ));
+  const [theirs, ours, deleted] = published as MessageEvent[];
+  assertEquals(theirs.envelope.conversation, { address: "5491100000001", kind: "direct" });
+  assertEquals(ours.envelope.conversation, { address: list, kind: "broadcast" });
+  assertEquals(deleted.payload?.action, "delete");
+  assertEquals(deleted.envelope.conversation, { address: "5491100000001", kind: "direct" });
+});
+
+Deno.test("a channel the account runs is a broadcast, and its posts are the account's", async () => {
+  const { handler, published } = harness();
+  await handler(post(
+    "/whatsapp-web-webhook",
+    batch({
+      messages: [textMessage({
+        external_id: "wmw.5491100000000.120363400000000001.5491100000000.P1",
+        conversation_address: "120363400000000001@newsletter",
+        conversation_name: "Obra al día",
+        sender_address: "5491100000000",
+        status: { sent: "2026-08-11T12:00:00Z" },
+      })],
+    }),
+  ));
+  const [post_] = published as MessageEvent[];
+  assertEquals(post_.envelope.conversation, {
+    address: "120363400000000001@newsletter",
+    kind: "broadcast",
+    name: "Obra al día",
+  });
+  assertEquals(post_.envelope.sender?.address, "5491100000000");
+});
+
+Deno.test("a group's line carries its facts on the conversation and its community on the row", async () => {
+  const { handler, published } = harness();
+  const group = "120363001234567890@g.us";
+  const facts = {
+    conversation_members: 312,
+    conversation_admin: false,
+    conversation_community: "Obra",
+  };
+  await handler(post(
+    "/whatsapp-web-webhook",
+    batch({
+      messages: [
+        textMessage({ conversation_address: group, conversation_name: "Ventas", ...facts }),
+        // a group in no community, the account an admin there
+        textMessage({
+          external_id: "wmw.a.b.c.2",
+          conversation_address: "120363001234567891@g.us",
+          conversation_members: 4,
+          conversation_admin: true,
+        }),
+      ],
+      edits: [{
+        original_message_id: "wmw.orig.1",
+        conversation_address: group,
+        sender_address: "5491199999999",
+        text: "corregido",
+        timestamp: "2026-08-11T12:05:00Z",
+        ...facts,
+      }],
+      rooms: [{
+        address: group,
+        joined: [{ address: "5491100000002" }],
+        by: { address: "5491100000001" },
+        timestamp: "2026-08-11T12:06:00Z",
+        members: 313,
+        community: "Obra",
+      }],
+    }),
+  ));
+  const [message, plain, edit, room] = published as MessageEvent[];
+  assertEquals(message.envelope.conversation, {
+    address: group,
+    kind: "group",
+    name: "Ventas",
+    members: 312,
+    admin: false,
+  });
+  assertEquals(message.extra, { community: "Obra" });
+  assertEquals(plain.envelope.conversation.members, 4);
+  assertEquals(plain.envelope.conversation.admin, true);
+  assertEquals(plain.extra, undefined);
+  assertEquals(edit.envelope.conversation, {
+    address: group,
+    kind: "group",
+    members: 312,
+    admin: false,
+  });
+  assertEquals(edit.extra, { community: "Obra" });
+  assertEquals(room.envelope.conversation.members, 313);
+  assertEquals(room.envelope.conversation.admin, undefined);
+  assertEquals(room.extra, { community: "Obra" });
+});
+
+Deno.test("the marked publish reads a group's facts: a crowded group is silenced, a line for the account is news", async () => {
+  const published: Event[] = [];
+  const publish = ((e: Draft | Draft[]) => {
+    const stored = (Array.isArray(e) ? e : [e]).map((d) => ({ ...d, id: newId() }) as Event);
+    published.push(...stored);
+    return Promise.resolve(Array.isArray(e) ? stored : stored[0]);
+  }) as Appender["publish"];
+  // a log holding the day's 41 lines of every room
+  const read = (() => Promise.resolve(Array.from({ length: 41 }, () => ({})))) as Reader["read"];
+  const marks = createMarks({ read, knobs: { crowd: 20, busy: 40, follow: [] } });
+  const { handler } = harness({ publish: marked(publish, marks) });
+  const group = "120363001234567890@g.us";
+  await handler(post(
+    "/whatsapp-web-webhook",
+    batch({
+      messages: [
+        textMessage({
+          conversation_address: group,
+          conversation_members: 312,
+          conversation_community: "Obra",
+        }),
+        // the account's own number, as the bridge writes a mention of it
+        textMessage({
+          external_id: "wmw.a.b.c.2",
+          conversation_address: group,
+          conversation_members: 312,
+          content: {
+            version: "1",
+            type: "text",
+            kind: "text",
+            text: "@5491100000000 ¿venís?",
+            mentions: [{ address: "5491100000000" }],
+          },
+        }),
+        textMessage({
+          external_id: "wmw.a.b.c.3",
+          conversation_address: "120363001234567891@g.us",
+          conversation_members: 312,
+          conversation_admin: true,
+        }),
+      ],
+    }),
+  ));
+  const [crowded, named, run] = published as MessageEvent[];
+  assertEquals(crowded.extra, { community: "Obra", crowded: true });
+  assertEquals(crowded.envelope.conversation, { address: group, kind: "group" });
+  assertEquals(named.extra, { crowded: true, addressed: true });
+  assertEquals(run.extra, undefined);
 });
 
 Deno.test("bridge token required when set — wrong or missing is 401", async () => {
