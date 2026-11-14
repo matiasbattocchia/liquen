@@ -175,7 +175,7 @@ function fanOut(config: AgentConfig, log: Log, ports: XiPorts): { stop(): Promis
 
 /** The account a scenario's agent holds unless it declares its own: first contact names
  *  one (`connection: "wa"`), since an address alone does not say which wire it is on. */
-// the org's account, with a key in the vault: every agent of the roster speaks through it
+// a shared account, with a key in the vault: every agent of the roster speaks through it
 const WA = {
   service: "whatsapp",
   address: "5491100000000",

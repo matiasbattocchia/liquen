@@ -642,7 +642,7 @@ one peripheral for both.
       | "thinking" | "alarm" | "error" | ...open set
   envelope: {       // WHICH CONVERSATION — every event names one (even internal ones)
     service: "whatsapp" | "slack" | "email" | "local" | ...   // local = harness's own channel
-    connection_address: string                // org account id / workspace; local's one: "default"
+    connection_address: string                // account id / workspace; local's one: "default"
     conversation: { address, name?, kind? }  // kind: direct | group | channel (below)
     sender?: { address, name? }   // external identity on the wire
     external_id?: string          // backfilled by dispatcher on send
@@ -978,18 +978,23 @@ ownership) only if double-answers show up.
 
 **A mind surface is a conversation whose every counterpart is a principal of the agent.**
 Nobody else can read it or write into it, so whatever lands there is steering and
-whatever the agent says there reaches its principals and no one else. Three shapes satisfy
+whatever the agent says there reaches its principals and no one else. Four shapes satisfy
 it, and conversation identity (§3) says which platforms can host them:
 
 - **Self-talk on an account the agent owns** — the alter-ego's, whose one principal is
   the account's owner: the WA self-chat, the Slack self-DM. The counterpart set is the
   principal alone.
 - **A DM between a principal and an account the agent owns** — its own number, its own
-  bot: one DM per principal, N surfaces of one mind. A DM has no third party, so no
-  membership is tracked and no admin on the wire can seat a stranger in it. Owning the
-  account is what makes its DMs the agent's: an org account's DMs are the world's, read by
-  every agent.
-- **A steering room on an org account** — the org-wide shape, and the one an account
+  Teams or Telegram account: one DM per principal, N surfaces of one mind. A DM has no
+  third party, so no membership is tracked and no admin on the wire can seat a stranger in
+  it. Owning the account is what makes its DMs the agent's: a shared account's DMs are the
+  world's, read by every agent, save the one below.
+- **A member's DM with the shared bot** — in a workspace, where everyone writing to the
+  bot is a colleague: the DM is a surface of the member's own agent, the one the
+  classifier stamps on their line, when that agent runs and counts them among its
+  principals. The ingest records it on the bot's row (`mirrors.dms`, member → channel) the
+  first time they write there; a stranger's DM stays in the shared inbox.
+- **A steering room on a shared account** — the org-wide shape, and the one an account
   several agents share can host: a room where being in it is being a principal, so
   whoever writes there steers. One exception stands by default: a roster member the
   classifier stamped, who is not among the agent's principals, writes there as another
@@ -1008,13 +1013,14 @@ it, and conversation identity (§3) says which platforms can host them:
   main has brought it up yet or not). The person behind such an agent has no Unix login
   and reaches it through its room: a line there the classifier stamps as the agent itself
   is its person's, which steers and whose `/y` settles a card. The
-  Slack ingest adopts a channel named exactly as an agent that owns no account, the first
-  time the bot is met in it — by id, so a rename never moves it — and lets it go when the
-  bot is out of the channel. Teams does the same with a group chat by its topic, and with
-  a channel from the org account's own listing of its teams. Neither move is said: the
+  Slack ingest adopts a channel named exactly as an agent, whatever the agent owns
+  elsewhere, the first time the shared bot is met in it — by id, so a rename never moves
+  it — and lets it go when the bot is out of the channel. Neither move is said: the
   record is the whole of it, and the room's own lines (a join, a rename) stay in the room,
-  never fanned in. The room stays the agent's once recorded, an account the agent
-  later gets of its own included. No binding can name one person, so each line is signed by
+  never fanned in. The room stays the agent's once recorded. An agent may hold its own
+  lines and be steered from a shared room all the same: a support agent owns its number,
+  so customers reach it alone, and the team steers it from `#support`, as its `principals`
+  name. No binding can name one person, so each line is signed by
   the sender the wire names, and a line naming none crosses as nothing. The roster's
   `principals` does not reach it: `[]` still says no member steers through a DM, and the
   room's writers steer all the same, save one: a roster member the classifier stamped on
@@ -1022,7 +1028,15 @@ it, and conversation identity (§3) says which platforms can host them:
   keeps who (`extra.via.agent`), renders as `<agent name="…">`, and its `/y` settles no
   card. Who may enter the room is the rule of the system
   that hosts it, a deployment rule like the alter-ego's below — it cannot be checked
-  here, only kept.
+  here, only kept: a person's augmented self is steered from a room that holds that
+  person alone.
+
+**Workspaces and open networks.** Slack and Teams are workspaces: everyone in one is a
+colleague, so a shared account's DMs and rooms can steer there. WhatsApp, Telegram and
+Google reach anyone, and a shared account there is the shared inbox alone. Teams is owned
+only: a shared Microsoft account is its mail and calendar, its Teams unread
+(`readsTeams`). So the shared account that steers is the Slack bot, and the connector
+of a system the org runs (sonar), which records its own rooms.
 
 No other room hosts a mind. A group or a channel on a wire is room-defined —
 its identity survives churn, and whoever administers it on the wire decides who reads it;
@@ -1032,9 +1046,11 @@ its principals included (they are then *coexisting*, §2, not steering).
 
 **Whose account.** The connection row carries ownership: `agent_id` names the agent whose
 account it is — a member's alter-ego, or an agent given an account of its own — and null
-says the org's. An agent speaks through the accounts it owns and through every org
-account that holds a credential: an org account is the shared world every agent reads
-(§6), and reaches a mind only through a steering room recorded on it. The account the agent
+says the org's: shared. A Slack bot is always shared and a Slack user grant always owned; a
+WhatsApp number, a Telegram account, a Google account and a Microsoft account may be
+either. An agent speaks through the accounts it owns and through every shared account that
+holds a credential: a shared account is the world every agent reads (§6), and reaches a
+mind only through a steering room or a member's DM recorded on it. The account the agent
 acts as must be the agent's alone: a person also running that number on WhatsApp Web
 would read the mind's traffic and could write into it. That is a deployment rule, not a
 classifier's — it cannot be checked, only kept.
@@ -1057,16 +1073,15 @@ verdict rules on a card (§9).
 
 ```
 slack:  self-DM (an alter-ego posts via its owner's xoxp — notes-to-self)
-        a principal's DM with a bot the agent owns
-        a steering room: a channel an org bot is met in, named as the agent
+        a member's DM with the shared bot, for their own agent
+        a steering room: a channel the shared bot is met in, named as the agent
 wa:     self-chat ("Message Yourself") on the agent's own paired number
         a principal's DM with the agent's own number
 teams:  the self-chat of an account the agent owns
         a principal's oneOnOne chat with an account the agent owns
-        a steering room: a group chat or a channel an org account is in, named as the agent
 tg:     Saved Messages on the agent's own account
         a principal's DM with the agent's own account
-sonar:  a steering room the connector records on the org account (one per tenant)
+sonar:  a steering room the connector records on the shared account (one per tenant)
 email:  not a mind surface
 cli/ui: native local conversations, through the door (§9) — the socket proves the
         speaker may, `sender` says which principal they are
@@ -1153,7 +1168,7 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
   at connect (`conversations.open` on the granting user's own id) and recorded as
   `mirrors.self` on the **grant row**, beside the ownership edge that already names the
   principal — the same "who a wire address IS" semantics as the sender check — and a
-  principal's DM with an owned bot is recorded by the ingest on the bot's row
+  member's DM with the shared bot is recorded by the ingest on the bot's row
   (`mirrors.dms`, member → channel) the first time that member writes there, since the
   channel id is opaque; which member a Slack user is comes from the email on their
   profile (`users.info`, the `users:read.email` scope) scanned against the roster, never
@@ -1166,7 +1181,7 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
   whose only member is the account (`mirrors.self`, by the id the notices carry, so a send
   and its echo are one row), and a oneOnOne chat another member writes in (`mirrors.dms`),
   that member named by their own grant or by the email the chat lists for them; a steering
-  room is `mirrors.rooms` on an org account; local, native.
+  room is `mirrors.rooms` on a shared account; local, native.
   The agent must never treat any of its principals as a peer/customer.
 - **`send` exteriorizes the mind.** The one door from the mind to the world: `send`
   targets peer conversations only — no principal is ever a send target, on any surface,
@@ -1323,8 +1338,10 @@ The 3×2 grid, each cell real and distinct:
   enrolls it (the delivery itself proves the leg's user sees the conversation), so
   ordinary traffic converges the map. Dispatch's
   token resolver is per-author now: the author's principal xoxp when the vault holds
-  one (the alter-ego leg), else the org bot — unchanged frontier: the agent never
-  knows which. (Implementation status of the mind-alias: PROJECT item 6.)
+  one (the alter-ego leg), else the shared bot — unchanged frontier: the agent never
+  knows which. A mirror's crossing speaks as the account its surface is on, so one onto a
+  member's DM with the shared bot, or onto a steering room, is the bot's. (Implementation
+  status of the mind-alias: PROJECT item 6.)
 - **"Lends" ≠ copies the token.** The principal grants a **scoped, revocable OAuth
   credential** held by the **broker** (the §8 credential table on DB, a sidecar on files);
   the agent gets a **capability, not the raw secret** — it never enters the exec context.
@@ -2173,7 +2190,7 @@ with a time bound.
   one (`routedSession`, today: the mind; the same single decision defaults a wire-filled
   membership's session and reads an unstamped echo row's authorship):
   ∨ routed here AND connection ownerless AND org-credentialed (branch 1: the org's — the
-  bot/org account IS the shared inbox) ∨ routed here AND `connection.agent_id → agent`
+  bot or shared account IS the shared inbox) ∨ routed here AND `connection.agent_id → agent`
   (branch 2: owned ⇒ private) — all under one guard: an agent's own **mind-alias conversation is invisible
   to it** (§4 self-talk: the mirror's copies are its face in the window; the same
   predicate on the write side is what keeps the principal out of `send`'s reach).

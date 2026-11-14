@@ -418,7 +418,7 @@ export interface Sender {
 
 export interface Envelope {
   service: Service;
-  connection_address: string; // org account id / workspace
+  connection_address: string; // account id / workspace
   conversation: Conversation;
   sender?: Sender; // external identity on the wire
   external_id?: string; // platform id, backfilled by the dispatcher on send (echo-dedup, §4)

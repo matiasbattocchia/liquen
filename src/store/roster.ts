@@ -3,7 +3,7 @@
  *
  * The registry says who is in the org; the connections map says whose each account is and
  * where its mind surfaces are (`extra.mirrors`). Between them, nothing else is written
- * down: an agent speaks through the connections it owns and through every org account,
+ * down: an agent speaks through the connections it owns and through every shared account,
  * and its principals are itself when it owns an account — it is a person's — or the org's
  * people when it owns none, unless the entry declares the list itself.
  *
@@ -33,7 +33,7 @@ export function sameHandle(a: string | undefined, b: string | undefined): boolea
 }
 
 /** The connections an agent speaks through (§4, §6): the ones it owns, where it speaks as
- *  their owner, and every org account that holds a credential, where it speaks as the org.
+ *  their owner, and every shared account that holds a credential, where it speaks as the org.
  *  An ownerless row without a credential is a registration stub and nobody's voice. */
 export function speaksThrough(agent: AgentRow, connections: ConnectionRow[]): ConnectionRow[] {
   return connections.filter((c) =>
@@ -64,8 +64,10 @@ export function bindRoster(db: DatabaseSync): void {
  *                      one still listed, `live` 0
  *               dms    on a live connection the agent owns, each principal's DM with it:
  *                      on WhatsApp their own number, elsewhere the id the ingest recorded
- *                      (`mirrors.dms`, principal → conversation)
- *               rooms  on a live org account, each agent's steering room
+ *                      (`mirrors.dms`, principal → conversation); on a live shared one, a
+ *                      member's DM recorded there, their own agent's when it runs and
+ *                      counts them among its principals
+ *               rooms  on a live shared account, each agent's steering room
  *                      (`mirrors.rooms`, agent → conversation), `principal` null because
  *                      whoever writes there steers
  *               `raw` is the connection's `extra.raw`: its dispatcher renders a crossing
@@ -113,6 +115,16 @@ CREATE TEMP VIEW IF NOT EXISTS aliases AS
   FROM connections c, json_each(json_extract(c.extra, '$.mirrors.dms')) d
     JOIN principals p ON p.agent_id = c.agent_id AND p.principal = d.key
   WHERE c.deleted_at IS NULL AND d.type = 'text'
+  UNION ALL
+  SELECT c.service, c.address, d.value, d.key, d.key, 1,
+         json_extract(c.extra, '$.raw') IS 1
+  FROM connections c, json_each(json_extract(c.extra, '$.mirrors.dms')) d
+    JOIN principals p ON p.agent_id = d.key AND p.principal = d.key
+  WHERE c.deleted_at IS NULL AND c.agent_id IS NULL AND d.type = 'text'
+    AND coalesce(
+          (SELECT value FROM config WHERE scope = 'agents.' || d.key AND key = 'mind'),
+          (SELECT value FROM config WHERE scope = 'shared.agents' AND key = 'mind'),
+          'true') <> 'false'
   UNION ALL
   SELECT c.service, c.address, r.value, r.key, NULL, 1,
          json_extract(c.extra, '$.raw') IS 1

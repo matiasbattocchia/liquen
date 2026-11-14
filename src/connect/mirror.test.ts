@@ -1345,7 +1345,7 @@ Deno.test("mirror fan-out: presence crosses as the tag alone, and the CC is mark
   });
 });
 
-/** An org whose agent `sonar` has a steering room on an org account (`sonar:t1`, raw: its
+/** An org whose agent `sonar` has a steering room on a shared account (`sonar:t1`, raw: its
  *  dispatcher renders) and a Slack self-DM of its own (`D1`, tagged lines), so a crossing
  *  can be read on both kinds of surface. */
 async function withRoom(

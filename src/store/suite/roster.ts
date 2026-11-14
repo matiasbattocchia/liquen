@@ -101,52 +101,33 @@ export function rosterSuite(s: Substrate): void {
     });
   });
 
-  Deno.test("slack: the recorded DMs of principals are surfaces of the agent that owns the bot", async () => {
+  Deno.test("slack: a member's DM recorded on the shared bot is their own agent's surface, when it runs and counts them", async () => {
     const agents: AgentPut[] = [
-      { agentId: "matias", mind: "mind@matias", email: "matias@acme.co" },
+      { agentId: "matias", mind: "mind@matias", principals: ["matias"] },
       { agentId: "sol", mind: "mind@sol", email: "sol@acme.co", settings: { mind: false } },
-      { agentId: "ventas", mind: "mind@ventas", principals: ["matias", "sol"] },
+      { agentId: "lucia", mind: "mind@lucia", principals: ["matias"] },
     ];
     const connections: ConnectionRow[] = [
       { service: "slack", address: "T1" },
       {
         service: "slack",
         address: "T1:UBOT",
-        agentId: "ventas",
         credentialKey: "slack:T1:org",
         // the ingest's record of who has DMed the bot
-        extra: { mirrors: { dms: { sol: "D77", matias: "D78", stranger: "D79" } } },
-      },
-      {
-        service: "slack",
-        address: "T2:UBOT",
-        credentialKey: "slack:T2:org",
-        extra: { mirrors: { dms: { sol: "D90" } } }, // an org bot: its DMs are the world's
+        extra: { mirrors: { dms: { matias: "D78", sol: "D77", lucia: "D80", stranger: "D79" } } },
       },
     ];
-    assertEquals(speaksThrough(agents[2], connections).map((c) => c.address), [
-      "T1:UBOT",
-      "T2:UBOT",
-    ]);
+    assertEquals(speaksThrough(agents[0], connections).map((c) => c.address), ["T1:UBOT"]);
     await withRoster(agents, connections, async (log) => {
-      assertEquals((await dms(log)).sort((a, b) => a.conversation.localeCompare(b.conversation)), [
-        {
-          service: "slack",
-          connection: "T1:UBOT",
-          conversation: "D77",
-          agentId: "ventas",
-          principal: "sol",
-          live: true,
-        },
-        {
-          service: "slack",
-          connection: "T1:UBOT",
-          conversation: "D78",
-          agentId: "ventas",
-          principal: "matias",
-          live: true,
-        },
-      ]);
+      // sol's agent does not run, lucia's is not steered by her, a stranger has none
+      assertEquals((await log.aliases()).filter((a) => a.connection === "T1:UBOT"), [{
+        service: "slack",
+        connection: "T1:UBOT",
+        conversation: "D78",
+        agentId: "matias",
+        principal: "matias",
+        live: true,
+      }]);
     });
   });
 

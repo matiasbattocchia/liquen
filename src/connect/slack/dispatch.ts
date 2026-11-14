@@ -183,6 +183,16 @@ export interface SlackDispatchDeps {
  *  a message posts (and its `ts` backfills `external_id`), a reaction lands on its
  *  referent, an edit/delete amends it. Returns stop. */
 export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void> {
+  /** Whose token a send acts with (§4): its author's own grant, else the bot. A crossing
+   *  (`extra.via`) speaks as the account its surface is on, so one onto a surface of the
+   *  shared bot, a member's DM with it or a steering room, is the bot's. */
+  const voiceOf = async (event: MessageEvent, connection: string): Promise<string | undefined> => {
+    const author = event.agent?.id;
+    if (!author || !event.extra?.via || !deps.store) return author;
+    const row = (await deps.store.connections())
+      .find((c) => c.service === "slack" && c.address === connection);
+    return row && row.agentId === undefined ? undefined : author;
+  };
   return createDispatcher<Outbound>({
     subscribe: deps.subscribe,
     service: "slack",
@@ -194,17 +204,18 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void
     onSent: deps.onSent,
     post: async ({ target, text: said, files, re, ref, glyph, raw }, event) => {
       const action = event.payload?.action;
+      const voice = await voiceOf(event, target.connection);
       if (action === "edit" || action === "delete") {
         if (!re) throw new DispatchError(`a ${action} needs the message it acts on`, 400);
         if (!deps.amend) throw new DispatchError("this connection cannot edit", 400);
-        await deps.amend(target, { ts: re, action, text: said }, event.agent?.id);
+        await deps.amend(target, { ts: re, action, text: said }, voice);
         // chat.update keeps the original `ts`: there is no new artifact to converge on
         return {};
       }
       if (glyph !== undefined) {
         if (!re) throw new DispatchError("a reaction needs the message it lands on", 400);
         if (!deps.react) throw new DispatchError("this connection cannot react", 400);
-        await deps.react(target, { ts: re, glyph, remove: action === "remove" }, event.agent?.id);
+        await deps.react(target, { ts: re, glyph, remove: action === "remove" }, voice);
         // no `ts` of its own to backfill: the reaction is on the wire, and that is all
         // the log can ever learn about it
         return {};
@@ -224,7 +235,7 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void
       const encoded = text ? encodeSlackText(text, dir ?? []) : text;
       // the thread is the referent's ROOT: a reply to a reply lands in the same thread
       const threadTs = re && ref ? tsOf(await deps.rootOf?.(ref)) ?? re : re;
-      const { ts, user } = await deps.post(target, encoded, event.agent?.id, files, threadTs);
+      const { ts, user } = await deps.post(target, encoded, voice, files, threadTs);
       // sender stamps WITH dispatched_at when the response names the posting identity
       // (§4): the wire states its own side twice, and we take the first statement —
       // the echo's merge still fills what only it knows (the display name)

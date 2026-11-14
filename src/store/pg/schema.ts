@@ -327,6 +327,15 @@ CREATE OR REPLACE VIEW aliases AS
     JOIN principals p ON p.agent_id = c.agent_id AND p.principal = d.key
   WHERE c.deleted_at IS NULL AND jsonb_typeof(d.value) = 'string'
   UNION ALL
+  SELECT c.service, c.address, d.value #>> '{}', d.key, d.key, 1,
+         (c.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
+  FROM connections c
+    CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(c.extra #> '{mirrors,dms}') = 'object'
+                                       THEN c.extra #> '{mirrors,dms}' END) d
+    JOIN principals p ON p.agent_id = d.key AND p.principal = d.key
+  WHERE c.deleted_at IS NULL AND c.agent_id IS NULL AND jsonb_typeof(d.value) = 'string'
+    AND agent_runs(d.key)
+  UNION ALL
   SELECT c.service, c.address, r.value #>> '{}', r.key, NULL, 1,
          (c.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
   FROM connections c

@@ -458,17 +458,16 @@ Deno.test("config: the bot leg reads files — `url_private` answers a sign-in p
   }
 });
 
-Deno.test("bot door: --agent makes the bot that agent's own account (§4)", async () => {
+Deno.test("bot door: a bot lands shared, owned by no agent (§4)", async () => {
   const h = harness();
   await connectSlackBot("xoxb-bot", {
     ...h.deps,
     authTest: () => Promise.resolve({ ok: true, team_id: "T1", user_id: "UBOT" }),
-  }, "ventas");
+  });
   assertEquals(h.connections[1], {
     service: "slack",
     address: "T1:UBOT",
     credentialKey: "slack:T1:org",
-    agentId: "ventas",
     extra: UP,
   });
 });

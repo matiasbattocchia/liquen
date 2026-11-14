@@ -8,7 +8,7 @@
  * that minted it, acks within the wire's three seconds and reads the message back behind
  * the ack — a notice carries the resource's path and nothing else. The subscriptions that
  * feed it live for three days and are KEPT by the shared sweep (`connect/poll.ts`): every
- * minute, every grant, one subscription over all the member's chat messages
+ * minute, every owned grant (`readsTeams`), one subscription over all the member's chat messages
  * (`/users/<oid>/chats/getAllMessages`), one over the chats themselves (`chatsResource`)
  * and one per channel of every team the member is in — created when absent, renewed
  * inside its last day, recorded on the grant (`extra.teams_sub`, keyed by the resource
@@ -107,6 +107,12 @@ export const TEAMS_SUB = "teams_sub";
 const both = (scopes: string[]) => scopes.flatMap((s) => [s, `https://graph.microsoft.com/${s}`]);
 export const CHAT_SCOPES = both(["Chat.Read", "Chat.ReadWrite"]);
 export const CHANNEL_SCOPES = both(["ChannelMessage.Read.All"]);
+
+/** A grant whose Teams is read (§4): an owned account's, holding the chat or the channel
+ *  read. A shared account is its mail and calendar. */
+export function readsTeams(grant: CredentialRow): boolean {
+  return grant.agentId !== undefined && granted(grant, [...CHAT_SCOPES, ...CHANNEL_SCOPES]);
+}
 
 /** What the sweep keeps on every grant. */
 export const RESOURCES = ["chats", "channels"];
@@ -531,12 +537,13 @@ export function createTeamsWebhook(deps: TeamsWebhookDeps): WebhookHandler {
   };
 
   /** The grant holding a notice's subscription — its record must carry the secret the
-   *  notice echoes, or the notice is nobody's. */
+   *  notice echoes, and its Teams must be read, or the notice is nobody's. */
   function holderOf(
     n: Notice,
     grants: CredentialRow[],
   ): { grant: CredentialRow; resource: string } | undefined {
     for (const grant of grants) {
+      if (grant.agentId === undefined) continue;
       for (const [resource, sub] of Object.entries(subsOf(grant))) {
         if (sub.id === n.subscriptionId && sub.secret === n.clientState) return { grant, resource };
       }
@@ -765,7 +772,6 @@ export function teamsMapper(deps: MapperDeps): (
       const sender = by ?? change.joined?.[0] ?? change.left?.[0];
       const owner = sender ? await memberOf(sender.address, grants, info, deps.store) : undefined;
       if (surfaces && at.place.kind === "chat") {
-        await leftRooms(surfaces, address, change.left ?? [], grants);
         await chatSurfaces(surfaces, address, info, undefined, grants);
       }
       const id = msg.id;
@@ -1038,7 +1044,7 @@ function grantOf(userId: string, grants: CredentialRow[]): CredentialRow | undef
 
 /** The member a Teams user is (§3): the owner of the grant whose account it is, else the
  *  roster member who declares the email the chat lists for them. A connected account is
- *  only ever its grant's, so an org account names nobody. */
+ *  only ever its grant's, so a shared account names nobody. */
 async function memberOf(
   userId: string,
   grants: CredentialRow[],
@@ -1053,7 +1059,7 @@ async function memberOf(
 }
 
 /** What the mind surfaces are written through (§4): the account rows, and the roster
- *  that says who a member is and which agent a room is named for. */
+ *  that says who a member is. */
 type SurfaceStore =
   & Pick<Connections, "connection" | "connections" | "upsertConnections">
   & Pick<Registry, "agents">;
@@ -1083,12 +1089,10 @@ async function accountsIn(
  *  in the chat (`extra.mirrors`) by the address the notices carry, so a send there and its
  *  echo are one row. They are read off the chat's members, not off the grant whose notice
  *  this is: a chat two connected accounts share is delivered to each, and either delivery
- *  writes the same. Each is written the first time it is met.
- *    self   on an owned account, the chat whose only member is the account
- *    dms    on an owned account, a oneOnOne chat in which the other member writes, keyed
- *           by who that member is; the derivation keeps the principals among them
- *    rooms  on an org account, a group chat whose topic is exactly the name of an agent
- *           that owns no account
+ *  writes the same. Each is written the first time it is met, on an owned account alone.
+ *    self   the chat whose only member is the account
+ *    dms    a oneOnOne chat in which the other member writes, keyed by who that member is;
+ *           the derivation keeps the principals among them
  *  `from` is the line's sender; a room's own line has none. */
 async function chatSurfaces(
   s: SurfaceStore,
@@ -1099,67 +1103,21 @@ async function chatSurfaces(
 ): Promise<void> {
   const members = info.members ?? [];
   for (const { id, row } of await accountsIn(s, info, grants)) {
+    if (!row.agentId) continue;
     const mirrors = mirrorsOf(row);
     const write = (patch: Record<string, unknown>) =>
       s.upsertConnections([{ service: SERVICE, address: row.address, extra: { mirrors: patch } }]);
-    if (row.agentId) {
-      if (members.every((m) => m.id === id)) {
-        if (mirrors.self === undefined) await write({ self: address });
-        continue;
-      }
-      if (info.kind !== "direct" || from === undefined || from === id) continue;
-      const member = await memberOf(from, grants, info, s);
-      // the account's own agent is no principal of its own DMs
-      if (member && member !== row.agentId && mirrors.dms?.[member] !== address) {
-        await write({ dms: { [member]: address } });
-      }
+    if (members.every((m) => m.id === id)) {
+      if (mirrors.self === undefined) await write({ self: address });
       continue;
     }
-    if (info.kind !== "group" || !info.title) continue;
-    const agent = await adoptable(s, info.title);
-    if (!agent || mirrors.rooms?.[agent] !== undefined) continue;
-    await write({ rooms: { [agent]: address } });
+    if (info.kind !== "direct" || from === undefined || from === id) continue;
+    const member = await memberOf(from, grants, info, s);
+    // the account's own agent is no principal of its own DMs
+    if (member && member !== row.agentId && mirrors.dms?.[member] !== address) {
+      await write({ dms: { [member]: address } });
+    }
   }
-}
-
-/** The agent a room named `title` steers (§4): one of exactly that name that runs and owns
- *  no account. An agent with an account of its own is a person's, steered there. */
-async function adoptable(s: SurfaceStore, title: string): Promise<string | undefined> {
-  const agent = (await s.agents()).find((a) => a.agentId === title);
-  if (!agent || agent.runs === false) return undefined;
-  if ((await s.connections()).some((c) => c.agentId === agent.agentId)) return undefined;
-  return agent.agentId;
-}
-
-/** Org accounts out of a chat: whatever agent's steering room it was for them is nobody's
- *  now, and the next room wearing the name may be adopted. */
-async function leftRooms(
-  s: SurfaceStore,
-  address: string,
-  left: RoomMember[],
-  grants: CredentialRow[],
-): Promise<void> {
-  for (const m of left) {
-    const grant = grantOf(m.address, grants);
-    const row = grant && await s.connection(SERVICE, grant.key.slice(GRANT_PREFIX.length));
-    if (!row || row.agentId) continue;
-    await letGo(s, row, (c) => c === address);
-  }
-}
-
-/** Drop an org account's steering rooms that `gone` says it is out of. */
-async function letGo(
-  s: Pick<Connections, "upsertConnections">,
-  row: ConnectionRow,
-  gone: (conversation: string) => boolean,
-): Promise<void> {
-  const held = Object.entries(mirrorsOf(row).rooms ?? {}).filter(([, c]) => gone(c));
-  if (held.length === 0) return;
-  await s.upsertConnections([{
-    service: SERVICE,
-    address: row.address,
-    extra: { mirrors: { rooms: Object.fromEntries(held.map(([agent]) => [agent, null])) } },
-  }]);
 }
 
 /** Read bytes at `url` with the grant's token into the store; null when the wire refuses. */
@@ -1372,7 +1330,7 @@ export function createTeamsCatchUp(
     );
     for (const grant of grants) {
       if (typeof grant.extra?.oid !== "string" || !grant.extra.oid) continue;
-      if (!granted(grant, [...CHAT_SCOPES, ...CHANNEL_SCOPES])) continue;
+      if (!readsTeams(grant)) continue;
       try {
         const published = await sweepGrant(grant, grants);
         deps.onCaughtUp?.(grant.key, published);
@@ -1396,16 +1354,13 @@ async function collect<T>(items: AsyncGenerator<T>): Promise<T[]> {
   return out;
 }
 
-/* ── the keeper: subscriptions alive on every grant, over the shared sweep ─────────── */
+/* ── the keeper: subscriptions alive on every owned grant, over the shared sweep ───── */
 
 export interface TeamsKeeperDeps {
   creds: Pick<Credentials, "list" | "get" | "put">;
   broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
-  /** The account rows the sweep marks, and with the roster, where an org account's
-   *  steering rooms in channels are recorded. */
-  store?: Pick<Connections, "connections" | "upsertConnections"> & Partial<SurfaceStore>;
-  /** → the EventLog: a channel room adopted or let go is said in the agent's mind. */
-  publish?: Appender["publish"];
+  /** The account rows the sweep marks. */
+  store?: Pick<Connections, "connections" | "upsertConnections">;
   /** Where Graph dials the ingest — `<edge.publicUrl>/microsoft/ingest`, sent as the
    *  `notificationUrl` and `lifecycleNotificationUrl` of every subscription made. */
   notificationUrl: string;
@@ -1413,14 +1368,6 @@ export interface TeamsKeeperDeps {
   now?: () => string;
   onError?: (key: string, err: unknown) => void;
   onPolled?: (key: string, resource: string, published: number) => void;
-}
-
-/** A channel as a grant's listing shows it: its address, its own name, and the name a
- *  row shows (`Team / Channel`). */
-interface Channel {
-  address: string;
-  title?: string;
-  name?: string;
 }
 
 /** The sweep over `microsoft:` grants: `chats` keeps the subscription over the messages of
@@ -1502,7 +1449,6 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
     type Named = { id?: string; displayName?: string };
     const teams = await page<Named>(graph, `${GRAPH}/me/joinedTeams?$select=id,displayName`);
     const paths: string[] = [];
-    const channels: Channel[] = [];
     for (const team of teams) {
       if (!team.id) continue;
       const listing = await page<Named>(
@@ -1510,46 +1456,11 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
         `${GRAPH}/teams/${enc(team.id)}/channels?$select=id,displayName`,
       );
       for (const c of listing) {
-        if (!c.id) continue;
-        paths.push(`/teams/${team.id}/channels/${c.id}/messages`);
-        channels.push({
-          address: addressOf({ kind: "channel", team: team.id, channel: c.id }),
-          title: c.displayName,
-          name: [team.displayName, c.displayName].filter(Boolean).join(" / ") || undefined,
-        });
+        if (c.id) paths.push(`/teams/${team.id}/channels/${c.id}/messages`);
       }
     }
-    await steer(grant, channels);
     listed.set(grant.key, { at: t, paths, foreign: new Set() });
     return paths;
-  };
-
-  /** An org account's steering rooms in channels (§4), from its own listing: a channel
-   *  named exactly as an agent that owns no account is adopted, once and by id, and a held
-   *  one the listing no longer shows (the channel gone, or the account out of its team) is
-   *  let go. A channel's notices reach whichever grant holds its one subscription, so the
-   *  org account's own view of its channels decides, at the hour the listing is asked. */
-  const steer = async (grant: CredentialRow, channels: Channel[]): Promise<void> => {
-    const s = surfaceStore(deps.store);
-    if (!s || grant.agentId) return;
-    const row = await s.connection(SERVICE, grant.key.slice(GRANT_PREFIX.length));
-    if (!row || row.agentId) return;
-    const shown = new Set(channels.map((c) => c.address));
-    const gone = (c: string) => c.includes("/") && !shown.has(c);
-    await letGo(s, row, gone);
-    const held = Object.fromEntries(
-      Object.entries(mirrorsOf(row).rooms ?? {}).filter(([, c]) => !gone(c)),
-    );
-    for (const c of channels) {
-      const agent = c.title ? await adoptable(s, c.title) : undefined;
-      if (!agent || held[agent] !== undefined) continue;
-      held[agent] = c.address;
-      await s.upsertConnections([{
-        service: SERVICE,
-        address: row.address,
-        extra: { mirrors: { rooms: { [agent]: c.address } } },
-      }]);
-    }
   };
 
   return createPoller({
@@ -1560,7 +1471,7 @@ export function createTeamsKeeper(deps: TeamsKeeperDeps): { tick(): Promise<void
     creds: deps.creds,
     store: deps.store,
     resources: RESOURCES,
-    watches: (grant) => granted(grant, [...CHAT_SCOPES, ...CHANNEL_SCOPES]),
+    watches: readsTeams,
     poll: keep,
     now,
     onError: deps.onError,

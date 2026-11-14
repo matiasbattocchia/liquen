@@ -273,16 +273,14 @@ export interface SlackBotDeps {
 
 /** Finish a pasted bot-token grant: verify with Slack, write the bare workspace stub
  *  (membership-only; the anchor of personal-witnessed deliveries) and the bot's own grant
- *  row `<team>:<bot user>` carrying `credential_key` (no owner ⇒ the org's shared inbox,
- *  §6; `agent` ⇒ that agent's own account; bot-witnessed deliveries anchor here) — and
- *  vault the blob at `slack:<team>:org`.
+ *  row `<team>:<bot user>` carrying `credential_key` (no owner: a bot is always shared,
+ *  §4; bot-witnessed deliveries anchor here) — and vault the blob at `slack:<team>:org`.
  *  The identity and nothing else: the socket carrier is app-scoped where this is
  *  workspace-scoped, and lands under its own key. Throws (writing nothing) on a rejected
  *  token. */
 export async function connectSlackBot(
   token: string,
   deps: SlackBotDeps,
-  agent?: string,
 ): Promise<{ team: string; botUser: string; missing: string[] }> {
   const authTest = deps.authTest ?? defaultAuthTest;
   const now = deps.now ?? (() => new Date().toISOString());
@@ -305,17 +303,14 @@ export async function connectSlackBot(
   const credentialKey = `slack:${team}:org`;
   // the workspace stub opens the log for personal-witnessed deliveries; the bot's own
   // row is where bot-witnessed ones anchor (`<team>:<bot user>`, the ingest's anchor) and
-  // the one that carries the credential. With no agent the account reads as the org (§6):
-  // every agent reads it, and its steering rooms are recorded on it as the ingest meets
-  // them. Named for an agent it is that agent's own (§4): private to it, and its
-  // principals' DMs with the bot are the agent's mind
+  // the one that carries the credential. Shared (§4): every agent reads it, its steering
+  // rooms and its members' DMs are recorded on it as the ingest meets them
   await deps.store.upsertConnections([
     { service: "slack", address: team },
     {
       service: "slack",
       address: `${team}:${botUser}`,
       credentialKey,
-      ...(agent ? { agentId: agent } : {}),
       extra: linked(now()),
     },
   ]);
@@ -339,7 +334,6 @@ export async function connectSlackBot(
         type: "text",
         kind: "text",
         text: `Slack bot connected on workspace ${team} (bot user ${botUser})` +
-          (agent ? ` → ${agent}` : "") +
           (missing.length ? ` — NOT granted: ${missing.join(" ")}` : ""),
       }],
     } satisfies Draft<MessageEvent>,
@@ -579,21 +573,6 @@ if (import.meta.main) {
     const ask = (label: string): string | undefined =>
       (lines ? lines.shift() : prompt(label)?.trim()) || undefined;
 
-    /** A roster agent, or the reason it cannot own a bot. */
-    const rosterAgent = async (name: string): Promise<void> => {
-      const entry = (await readConfig(root)).agents[name];
-      if (!entry) {
-        console.error(
-          `no agent "${name}" in ${root} — \`liquen agent ${name}\` makes one`,
-        );
-        Deno.exit(2);
-      }
-      if (entry.mind === false) {
-        console.error(`"${name}" is a member with no agent of their own (mind: false)`);
-        Deno.exit(2);
-      }
-    };
-
     /** What the org still owes after this door — read off the vault, so finishing one door
      *  is where you learn what the next one is. */
     const owed = async (creds: { list: (p: string) => Promise<CredentialRow[]> }) => {
@@ -670,17 +649,13 @@ if (import.meta.main) {
         if (flags.has("bot")) {
           const token = ask("Bot token (xoxb-…):");
           if (token) {
-            const agent = ask("Agent that owns it (empty = the org):");
-            if (agent) await rosterAgent(agent);
             const { team, botUser, missing } = await connectSlackBot(token, {
               creds,
               store: log!,
               publish: log!.publish,
               asked: botScopes,
-            }, agent);
-            console.error(
-              `✓ bot connected: workspace ${team}, bot user ${botUser} → ${agent ?? "the org"}`,
-            );
+            });
+            console.error(`✓ bot connected: workspace ${team}, bot user ${botUser}, shared`);
             report(missing, "Reinstall the app to the workspace after adding them.");
             wrote = true;
           }

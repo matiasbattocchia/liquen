@@ -91,6 +91,8 @@ async function withDispatch(
     noReact?: boolean;
     rootOf?: SlackDispatchDeps["rootOf"];
     nameByEmail?: SlackDispatchDeps["nameByEmail"];
+    /** the connections map in reach: the shared bot's row and a1's own grant */
+    store?: boolean;
   } = {},
 ): Promise<void> {
   const dir = await Deno.makeTempDir();
@@ -101,6 +103,13 @@ async function withDispatch(
     { service: "slack", address: "T1" },
     { service: "github", address: "gh-app" },
   ]);
+  if (opts.store) {
+    await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
+    await log.upsertConnections([
+      { service: "slack", address: "T1:UBOT", credentialKey: "slack:T1:org" },
+      { service: "slack", address: "T1:UA1", agentId: "a1", credentialKey: "slack:T1:a1" },
+    ]);
+  }
   const posts: Post[] = [];
   const reactions: Reaction[] = [];
   const amends: Amend[] = [];
@@ -130,6 +139,7 @@ async function withDispatch(
     directory: opts.directory,
     rootOf: opts.rootOf,
     nameByEmail: opts.nameByEmail,
+    ...(opts.store ? { store: log } : {}),
   });
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {
     const t0 = Date.now();
@@ -189,6 +199,21 @@ Deno.test("slack dispatch: outbound send is posted, parsed, ts backfilled as ext
     // the echo key: our posted ts — the ingest's echo merges into this row (§4)
     await waitFor(async () => (await read())[0]?.envelope.external_id === "slack:T1:C1:999.111");
   });
+});
+
+Deno.test("slack dispatch: a crossing onto the shared bot's surface speaks as the bot; onto the author's own grant, and any send of their own, as them (§4)", async () => {
+  await withDispatch(async ({ publish, posts, waitFor }) => {
+    const crossing = (id: string, connection: string, address: string): MessageEvent => ({
+      ...agentMsg(id, `[agent] ${id}`, { connection, address }),
+      extra: { via: { event: "e1", service: "local", conversation: "mind@a1" } },
+    });
+    await publish(crossing("21", "T1:UBOT", "D78"));
+    await publish(crossing("22", "T1:UA1", "D11"));
+    await publish(agentMsg("23", "to the channel", { connection: "T1:UBOT", address: "C1" }));
+    await waitFor(() => posts.length === 3);
+    const by = Object.fromEntries(posts.map((p) => [p.target.channel, p.author]));
+    assertEquals(by, { D78: undefined, D11: "a1", C1: "a1" });
+  }, { store: true });
 });
 
 Deno.test("slack dispatch: a permanent failure stamps failed + its 4xx error_code (§5)", async () => {
