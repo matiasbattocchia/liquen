@@ -295,8 +295,8 @@ export async function start(
       creds,
       log,
       edge: catalog.edge,
-      declare: async (service) => {
-        if (await declareConnection(log, service)) {
+      declare: async (service, knobs) => {
+        if (await declareConnection(log, service, knobs)) {
           console.error(`[sign-in] declared connections.${service}: ${await reloaded(root)}`);
         }
       },

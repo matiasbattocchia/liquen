@@ -167,8 +167,9 @@ that hands it over (below).
 A door may **decide** a knob's value the way `liquen init` decides the org's clock — what a
 human would otherwise type, typed once and written with the connection's scope in the
 store, so the org says it from then on. `connections.whatsapp.organizationId` is the case: the whatsmeow bridge is
-multi-tenant, orgs sharing one sidecar each name their own, and the first
-`liquen connect whatsapp` names the tenant after the org's folder. Set it beforehand to
+multi-tenant, orgs sharing one sidecar each name their own, and the first pairing,
+whether `liquen connect whatsapp` or the `connect` tool asked it, names the tenant after
+the org's folder. Set it beforehand to
 choose otherwise, in `config.yaml`; a connection already declared is left as found.
 
 When a connector also **prints an app definition** — slack's manifest, the prefill link
