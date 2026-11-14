@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { COUNT_MS, createMarks, type MarkDeps } from "./marks.ts";
+import { COUNT_MS, createMarks, type MarkDeps, marked } from "./marks.ts";
 import { silenced } from "../render.ts";
 import type { Draft, Event, MessageEvent } from "../types.ts";
 
@@ -127,4 +127,21 @@ Deno.test("marks: a crowded room's line for the account is news; the account's o
   const quiet = harness(0);
   await quiet.marks([line({ payload: { ref_external_id: "telegram:700100.7" } })]);
   assertEquals(quiet.reads.length, 0);
+});
+
+Deno.test("marked: one draft or a list, marked before the publish, answered as the publish answers", async () => {
+  const { marks } = harness(400);
+  const got: unknown[] = [];
+  const publish = (one: unknown) => {
+    got.push(one);
+    return Promise.resolve("answered");
+  };
+  const wrapped = marked(publish, marks);
+  const single = line({ members: 300 });
+  assertEquals(await wrapped(single), "answered");
+  assertEquals((got[0] as Draft<MessageEvent>).extra, { crowded: true });
+  const list = [line({ members: 300 })];
+  await wrapped(list);
+  assertEquals(got[1], list);
+  assertEquals(list[0].extra, { crowded: true });
 });

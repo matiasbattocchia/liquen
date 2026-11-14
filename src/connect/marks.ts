@@ -115,11 +115,15 @@ function strip(c: Line["envelope"]["conversation"]): Line["envelope"]["conversat
 }
 
 /** A publish that marks its drafts first: the seam a connector's process wires its
- *  ingest to, in place of the log's own. */
-export function marked<P extends (drafts: Line[], ...rest: never[]) => Promise<unknown>>(
+ *  ingest to, in place of the log's own. One draft or a list, as the log takes them; the
+ *  marks land on the drafts themselves, so the publish answers as it would have. */
+// deno-lint-ignore no-explicit-any
+export function marked<P extends (one: any, ...rest: any[]) => Promise<unknown>>(
   publish: P,
   marks: (drafts: Line[]) => Promise<Line[]>,
 ): P {
-  return (async (drafts: Line[], ...rest: never[]) =>
-    publish(await marks(drafts), ...rest)) as unknown as P;
+  return (async (one: Line | Line[], ...rest: unknown[]) => {
+    await marks(Array.isArray(one) ? one : [one]);
+    return publish(one, ...rest);
+  }) as unknown as P;
 }
