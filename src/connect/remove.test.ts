@@ -89,3 +89,40 @@ Deno.test("a token grant is its vault key; a connection's secret and the harness
   assertEquals(state.keys, ["slack:T1:org", "media:sign"]);
   assertEquals(state.rows.length, 1);
 });
+
+Deno.test("a connector that can end the platform's side does, while the secret still stands", async () => {
+  const row = { service: "telegram", address: "700100", credentialKey: "telegram:700100" };
+  const { state, deps } = fake([row], ["telegram:700100"], ["telegram"]);
+  const seen: string[][] = [];
+  deps.end = (r) => {
+    seen.push([r.address, ...state.keys]);
+    return Promise.resolve("its session on Telegram is ended");
+  };
+  const said = await removeConnection("telegram:700100", deps);
+  assertEquals(seen, [["700100", "telegram:700100"]]);
+  assertEquals(said.at(-1), "its session on Telegram is ended");
+  assertEquals(state.keys, []);
+});
+
+Deno.test("an end that failed says so and where to revoke; one with nothing to end says the usual", async () => {
+  const row = { service: "telegram", address: "700100", credentialKey: "telegram:700100" };
+  const failing = fake([row], ["telegram:700100"], []);
+  failing.deps.end = () => Promise.reject(new Error("FLOOD_WAIT_30"));
+  assertEquals(
+    (await removeConnection("telegram:700100", failing.deps)).at(-1),
+    "telegram could not be reached to end it (FLOOD_WAIT_30) — revoke it in the account's " +
+      "devices (Telegram → Settings → Devices)",
+  );
+  assertEquals(failing.state.rows, []);
+  const other = fake(
+    [{ service: "slack", address: "T1", credentialKey: "slack:T1:org" }],
+    ["slack:T1:org"],
+    [],
+  );
+  other.deps.end = () => Promise.resolve(undefined);
+  assertEquals(
+    (await removeConnection("slack:T1", other.deps)).at(-1),
+    "slack itself still holds the grant — revoke it in the workspace's installed apps " +
+      "(Settings → Manage apps) to end it",
+  );
+});

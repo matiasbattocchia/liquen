@@ -6858,15 +6858,11 @@ Open:
 - Nothing here has met a live account: the sign-in (QR, code, two-step password), the
   replay after downtime, a channel's gap, uploads and each port leg are tested against
   the wire's shapes, not against Telegram.
-- A forum's topics are lines of the supergroup, not conversations of their own; a reply's
-  topic is dropped.
 - The about text's memory is the process's: a restart reads a stranger again.
 - Reactions in a room past a few hundred reactors, or one whose list the account may not
   see (a channel's), are not read: a set cut short says nothing, since a person missing
   from it would read as a reaction taken back. Whether Telegram pushes a supergroup's
   reaction changes to a member at all is for the live run to show.
-- A removal is taken up within a minute, by the reconcile's tick: `--remove` writes no
-  line the process hears.
 
 ### Telegram: a sign-in touches only its account, and reactions come in (2026-11-13) — LANDED
 

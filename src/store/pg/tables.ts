@@ -310,7 +310,7 @@ export function pgConnections(db: Db): Connections {
     async connection(service, address) {
       const [r] = await rows<Parameters<typeof connectionOf>[0]>(
         db,
-        `SELECT service, address, agent_id, credential_key, extra FROM connections
+        `SELECT service, address, agent_id, credential_key, extra, deleted_at FROM connections
          WHERE service = $1::text AND address = $2::text`,
         [service, address],
       );

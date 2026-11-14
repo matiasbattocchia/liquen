@@ -13,7 +13,14 @@
  * its marked id and its kind the chat's own type: a user is `direct`, a basic group a
  * `group`, a supergroup a `group` or, with a public handle, a `channel`, and a channel
  * the account posts in a `broadcast`. A channel it only follows is a newsletter and no
- * conversation: nothing of it is published.
+ * conversation: nothing of it is published. A forum's line sits in its topic,
+ * `<chat>/<topic>`, named by the topic's title and stamped with the forum's name as its
+ * `community`; General takes a line that names no topic. A room's lines carry its member
+ * count and whether the account administers it, for the crowd rule (`connect/marks.ts`).
+ *
+ * After a sign-in (`signedIn`), a line dated before it is history, `backfill`, whether the
+ * import brought it (`backfill()`) or the session's replay: its file is named and left on
+ * Telegram, and its stranger's about text is not read.
  *
  * `external_id` is `telegram:<account>.<message id>` in a direct chat or a basic group,
  * whose ids the account's whole inbox shares, and `telegram:<account>.<chat>.<message id>`
@@ -57,10 +64,11 @@ import type {
 } from "../../types.ts";
 import { roomPart } from "../../room.ts";
 import { setState } from "../health.ts";
-import type { Bios } from "./bio.ts";
+import { type Bios, floodSeconds } from "./bio.ts";
 import { fromTelegram } from "./text.ts";
 import { reactionDiff, standingOn } from "./reactions.ts";
 import {
+  chatOf,
   externalId,
   messageIdOf,
   ownNumbering,
@@ -69,7 +77,9 @@ import {
   type TgEvent,
   type TgMessage,
   type TgPeer,
+  type TgTopic,
   type TgWire,
+  topicAddress,
 } from "./wire.ts";
 
 /** The largest file the ingest fetches. A bigger one is named on its line and left on
@@ -80,6 +90,8 @@ export const BIO_WAIT_MS = 4_000;
 /** How many message ids of direct chats and basic groups are remembered with their chat:
  *  a delete there names the id alone. */
 const RECENT = 8192;
+/** How many times one chat's import is read again after a flood wait. */
+const IMPORT_TRIES = 3;
 /** The pause before a failed publish is tried again, doubling up to the cap. */
 const RETRY_MS = 1_000;
 const RETRY_CAP_MS = 30_000;
@@ -87,7 +99,7 @@ const RETRY_CAP_MS = 30_000;
 export interface TelegramIngestDeps {
   /** The account's session: its own identity, how its app holds a chat, and the history a
    *  gap is read back from. */
-  wire: Pick<TgWire, "self" | "view" | "history">;
+  wire: Pick<TgWire, "self" | "view" | "history" | "topics" | "dialogs" | "since">;
   publish: Appender["publish"];
   /** The newest row of a conversation, where a gap's reading starts. */
   read?: Reader["read"];
@@ -100,6 +112,10 @@ export interface TelegramIngestDeps {
   storage?: Storage;
   /** Strangers' about texts. Absent: none is read. */
   bios?: Bios;
+  /** When the session was signed in, set while this opening follows a sign-in: a line
+   *  dated before it is history (`backfill`), the import's and the replay's alike. Absent
+   *  on an opening that only resumes a session, whose replay is news. */
+  signedIn?: string;
   now?: () => string;
   sleep?: (ms: number) => Promise<void>;
   onError?: (what: string, err: unknown) => void;
@@ -192,6 +208,9 @@ const megabytes = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`;
  *  its deps. `handle` settles when the event's drafts are in the log. */
 export function createTelegramIngest(deps: TelegramIngestDeps): {
   handle: (event: TgEvent) => Promise<void>;
+  /** Import every chat's history dated after `since` and before the sign-in, one chat at
+   *  a time. Answers whether it went through every chat, which a stop cuts short. */
+  backfill: (since: string) => Promise<boolean>;
   stop: () => void;
 } {
   const now = deps.now ?? (() => new Date().toISOString());
@@ -202,17 +221,30 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
   const told = new Set<string>(); // sender + conversation: the about text is on a line there
   let stopped = false;
 
+  /** Whether a line dated `at` is history: it happened before the sign-in this opening
+   *  follows. */
+  const history = (at: string) => deps.signedIn !== undefined && at < deps.signedIn;
+
   const remember = (m: TgMessage) => {
     if (ownNumbering(m.chat.id)) return;
     recent.set(m.id, m.chat.id);
     if (recent.size > RECENT) recent.delete(recent.keys().next().value!);
   };
 
-  const conversationOf = (chat: TgPeer): Conversation => ({
-    address: chat.id,
+  /** The conversation a line sits in: its chat, or its forum topic, named by the topic's
+   *  title. A room carries the facts the crowd rule reads (`marks.ts`), which the row
+   *  drops. */
+  const conversationOf = (chat: TgPeer, topic?: TgTopic): Conversation => ({
+    address: topic ? topicAddress(chat.id, topic.id) : chat.id,
     kind: kindOf(chat),
-    ...(chat.name ? { name: chat.name } : {}),
+    ...(topic ? (topic.title ? { name: topic.title } : {}) : chat.name ? { name: chat.name } : {}),
+    ...(chat.members !== undefined ? { members: chat.members } : {}),
+    ...(chat.admin !== undefined ? { admin: chat.admin } : {}),
   });
+
+  /** A topic's line names the forum it belongs to. */
+  const communityOf = (chat: TgPeer, topic?: TgTopic) =>
+    topic && chat.name ? { community: chat.name } : {};
 
   /** The envelope's sender: the account's own id on its own lines, whoever wrote it
    *  otherwise, and nobody on a channel's post. */
@@ -223,14 +255,17 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
       ? { address: m.sender.id, ...(m.sender.name ? { name: m.sender.name } : {}) }
       : undefined;
 
-  const partsOf = async (m: TgMessage): Promise<Part[]> => {
+  /** A message's parts. `fetch` false names a file and leaves it on Telegram. */
+  const partsOf = async (m: TgMessage, fetch = true): Promise<Part[]> => {
     const text = fromTelegram(m.text, m.entities);
     const parts: Part[] = [];
     let said = text;
     if (m.file) {
       const f = m.file;
       const named = f.name ?? f.kind;
-      if (!deps.storage || (f.size ?? 0) > MAX_FILE_BYTES) {
+      if (!fetch) {
+        said = [`[${named}: left on Telegram]`, text].filter(Boolean).join("\n");
+      } else if (!deps.storage || (f.size ?? 0) > MAX_FILE_BYTES) {
         const why = deps.storage ? `${megabytes(f.size!)}, left on Telegram` : "not fetched";
         said = [`[${named}: ${why}]`, text].filter(Boolean).join("\n");
       } else {
@@ -280,10 +315,13 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
     return about || undefined;
   };
 
-  const marksOf = (m: TgMessage) => ({
+  /** The sidecar a line wears. `at` is when it happened: a message's date, an edit's. */
+  const marksOf = (m: TgMessage, at: string = m.date) => ({
     ...(m.muted ? { muted: true } : {}),
     ...(m.archived ? { archived: true } : {}),
+    ...(history(at) ? { backfill: true } : {}),
     ...(!m.out && m.sender?.contact && m.sender.name ? { [SENDER_SAVED]: true } : {}),
+    ...communityOf(m.chat, m.topic),
   });
 
   const mapMessage = async (m: TgMessage): Promise<Draft<MessageEvent> | null> => {
@@ -293,10 +331,12 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
     const envelope = {
       service: SERVICE,
       connection_address: connection,
-      conversation: conversationOf(m.chat),
+      conversation: conversationOf(m.chat, m.topic),
       ...(sender ? { sender } : {}),
       external_id: externalId(connection, m.chat.id, m.id),
     };
+    // history is text: its files are named and left on Telegram, its strangers unread
+    const old = history(m.date);
     if (m.action) {
       const part = roomPart(roomChange(m.action, m.out ? account : m.sender));
       if (!Object.keys(part.data).length) return null;
@@ -322,13 +362,13 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
         : {}),
       ...(mentions.length ? { mentions } : {}),
     };
-    const about = await aboutOf(m);
+    const about = old ? undefined : await aboutOf(m);
     const extra = { ...marksOf(m), ...(about ? { [SENDER_ABOUT]: about } : {}) };
     return {
       ts: m.date,
       type: "message",
       envelope,
-      parts: await partsOf(m),
+      parts: await partsOf(m, !old),
       ...(Object.keys(payload).length ? { payload } : {}),
       ...(Object.keys(extra).length ? { extra } : {}),
     };
@@ -338,7 +378,7 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
     if (followed(m.chat) || m.action || !m.edited) return null;
     const sender = senderOf(m);
     const mentions = mentionsOf(m, account);
-    const marks = marksOf(m);
+    const marks = marksOf(m, m.edited);
     const stamp = Math.floor(Date.parse(m.edited) / 1_000);
     return {
       ts: m.edited,
@@ -352,7 +392,7 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
       envelope: {
         service: SERVICE,
         connection_address: connection,
-        conversation: conversationOf(m.chat),
+        conversation: conversationOf(m.chat, m.topic),
         ...(sender ? { sender } : {}),
         external_id: externalId(connection, m.chat.id, `${m.id}.edit.${stamp}`),
       },
@@ -385,12 +425,36 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
     };
   };
 
-  const mapDelete = (ids: number[], chat: string | undefined): Draft<MessageEvent>[] => {
+  /** Where a message of a supergroup sits, read off its row: a delete names only the
+   *  chat, and a forum's line sits in a topic. With no row, the chat itself. A crowded
+   *  room's line takes its delete with it into the quiet. */
+  const placeOf = async (
+    chat: string,
+    id: number,
+  ): Promise<{ address: string; crowded?: true }> => {
+    if (!ownNumbering(chat) || !deps.read) return { address: chat };
+    const [row] = await deps.read({ externalId: externalId(connection, chat, id), limit: 1 });
+    return {
+      address: row?.envelope.conversation.address || chat,
+      ...(row?.extra?.crowded === true ? { crowded: true as const } : {}),
+    };
+  };
+
+  const mapDelete = async (
+    ids: number[],
+    chat: string | undefined,
+  ): Promise<Draft<MessageEvent>[]> => {
     const ts = now();
-    return ids.flatMap((id) => {
-      const where = chat ?? recent.get(id) ?? "";
-      const marks = where ? chatMarks(where) : {};
-      return [
+    const out: Draft<MessageEvent>[] = [];
+    for (const id of ids) {
+      const known = chat ?? recent.get(id) ?? "";
+      const place = known ? await placeOf(known, id) : { address: "" };
+      const where = place.address;
+      const marks = {
+        ...(known ? chatMarks(chatOf(known).chat) : {}),
+        ...(place.crowded ? { crowded: true } : {}),
+      };
+      out.push(
         {
           ts,
           type: "message" as const,
@@ -408,8 +472,9 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
           ...(Object.keys(marks).length ? { extra: marks } : {}),
         },
         mergeOnly(where, id, { state: "deleted", deleted_at: ts }),
-      ];
-    });
+      );
+    }
+    return out;
   };
 
   /** The classifier (§3): a sender whose own connection row names a mind, or whose phone
@@ -483,16 +548,19 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
   ): Promise<Draft<MessageEvent>[]> => {
     if (followed(event.chat) || !deps.read) return [];
     const target = externalId(connection, event.chat.id, event.id);
+    const chat = conversationOf(event.chat, event.topic);
     const drafts = reactionDiff({
       account,
-      chat: conversationOf(event.chat),
+      chat,
       id: event.id,
       set: event.reactions,
-      standing: await standingOn(deps.read, connection, event.chat.id, target),
+      standing: await standingOn(deps.read, connection, chat.address, target),
       now: now(),
     });
-    const marks = chatMarks(event.chat.id);
-    if (Object.keys(marks).length) { for (const d of drafts) d.extra = { ...d.extra, ...marks }; }
+    const marks = { ...chatMarks(event.chat.id), ...communityOf(event.chat, event.topic) };
+    if (Object.keys(marks).length) {
+      for (const d of drafts) d.extra = { ...d.extra, ...marks };
+    }
     const phones = new Map<string, string>();
     for (const r of event.reactions) if (r.by.phone) phones.set(r.by.id, r.by.phone);
     await classify(drafts, phones);
@@ -506,38 +574,73 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
     return phones;
   };
 
-  /** The messages a channel's replay left out, read from its history: the newest row the
-   *  log holds of the room is where the listening stopped. A room the log never heard is
-   *  left alone. */
-  const readGap = async (chat: string): Promise<Draft<MessageEvent>[]> => {
-    if (!deps.read) return [];
-    const rows = await deps.read({
-      service: SERVICE,
-      connection,
-      conversation: chat,
-      types: ["message"],
-      // a message's own row: an edit, a delete or a reaction names an older one
-      filter: (e) => messageIdOf(e.envelope.external_id ?? "") !== undefined,
-      limit: 20,
-    });
-    const since = Math.max(0, ...rows.map((r) => messageIdOf(r.envelope.external_id!)!));
-    if (since === 0) return [];
-    const missed = await deps.wire.history(chat, since);
+  /** The drafts of a run of messages, mapped, classified and with their DMs recorded. */
+  const linesOf = async (ms: TgMessage[]): Promise<Draft<MessageEvent>[]> => {
     const drafts: Draft<MessageEvent>[] = [];
-    for (const m of missed) {
+    for (const m of ms) {
       const d = await mapMessage(m);
       if (d) drafts.push(d);
       const e = mapEdit(m);
       if (e) drafts.push(e);
     }
-    await classify(drafts, phonesOf(missed));
+    await classify(drafts, phonesOf(ms));
     await recordDms(drafts);
     return drafts;
+  };
+
+  /** The newest message id the log holds of one conversation. */
+  const newestIn = async (conversation: string): Promise<number> => {
+    const rows = await deps.read!({
+      service: SERVICE,
+      connection,
+      conversation,
+      types: ["message"],
+      // a message's own row: an edit, a delete or a reaction names an older one
+      filter: (e) => messageIdOf(e.envelope.external_id ?? "") !== undefined,
+      limit: 20,
+    });
+    return Math.max(0, ...rows.map((r) => messageIdOf(r.envelope.external_id!)!));
+  };
+
+  /** The messages a channel's replay left out, read from its history: the newest row the
+   *  log holds of the room is where the listening stopped, a forum's read across its
+   *  topics. A room the log never heard is left alone. */
+  const readGap = async (chat: string): Promise<Draft<MessageEvent>[]> => {
+    if (!deps.read) return [];
+    let since = await newestIn(chat);
+    const topics = await deps.wire.topics(chat).catch(() => [] as number[]);
+    for (const topic of topics) since = Math.max(since, await newestIn(topicAddress(chat, topic)));
+    if (since === 0) return [];
+    return await linesOf(await deps.wire.history(chat, since));
+  };
+
+  /** One chat's history, read again after a flood wait Telegram names. */
+  const importChat = async (chat: TgPeer, since: string) => {
+    for (let tries = 0; !stopped; tries++) {
+      try {
+        const ms = (await deps.wire.since(chat.id, since)).filter((m) => history(m.date));
+        return await publish(await linesOf(ms));
+      } catch (err) {
+        const wait = floodSeconds(err);
+        if (wait === undefined || tries >= IMPORT_TRIES) {
+          return deps.onError?.(`importing the history of ${chat.id}`, err);
+        }
+        await sleep(wait * 1_000);
+      }
+    }
   };
 
   return {
     stop() {
       stopped = true;
+    },
+    async backfill(since) {
+      if (deps.signedIn === undefined) return true;
+      for (const chat of await deps.wire.dialogs()) {
+        if (stopped) return false;
+        if (!followed(chat)) await importChat(chat, since);
+      }
+      return !stopped;
     },
     async handle(event) {
       switch (event.type) {
@@ -555,7 +658,7 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
           return publish([d]);
         }
         case "delete":
-          return publish(mapDelete(event.ids, event.chat));
+          return publish(await mapDelete(event.ids, event.chat));
         case "reactions":
           try {
             return await publish(await mapReactions(event));

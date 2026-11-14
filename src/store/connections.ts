@@ -51,6 +51,8 @@ export interface ConnectionRow {
   agentId?: string; // the owner: present ⇒ private, absent ⇒ shared/org (§6)
   credentialKey?: string; // → the vault row this grant authenticates with (§4)
   extra?: Record<string, unknown>; // discovered account facts (slack: {url, …})
+  /** When the grant was removed: only `connection()` answers a soft-deleted row. */
+  deletedAt?: string;
 }
 
 /** The mind surfaces recorded on a connection row (§4), `extra.mirrors`: `self` its
@@ -174,7 +176,8 @@ export interface Connections {
    *  history), and a re-grant upsert revives ingestion. */
   deleteConnections(keys: { service: string; address: string }[]): Promise<void>;
   /** Point lookup for policy and the ingest classifier (live — the RLS-join emulation).
-   *  Deletion does not hide the row here; only the gate checks `deleted_at`. */
+   *  Deletion does not hide the row here, which says it as `deletedAt`; only the gate
+   *  checks `deleted_at`. */
   connection(service: string, address: string): Promise<ConnectionRow | null>;
   /** The map as it stands — live rows only: a soft-deleted grant is not a surface anyone
    *  has. What the anchor reads to say which surfaces exist and which are down (§5). */
@@ -333,6 +336,7 @@ export function connectionOf(r: {
   agent_id: string | null;
   credential_key: string | null;
   extra: string | null;
+  deleted_at?: string | null;
 }): ConnectionRow {
   return {
     service: r.service,
@@ -340,6 +344,7 @@ export function connectionOf(r: {
     ...(r.agent_id ? { agentId: r.agent_id } : {}),
     ...(r.credential_key ? { credentialKey: r.credential_key } : {}),
     ...(r.extra ? { extra: JSON.parse(r.extra) as Record<string, unknown> } : {}),
+    ...(r.deleted_at ? { deletedAt: r.deleted_at } : {}),
   };
 }
 
@@ -384,7 +389,7 @@ export function createConnections(db: DatabaseSync): Connections {
     "UPDATE connections SET deleted_at = ?, updated_at = ? WHERE service = ? AND address = ?",
   );
   const getC = db.prepare(
-    `SELECT service, address, agent_id, credential_key, extra FROM connections
+    `SELECT service, address, agent_id, credential_key, extra, deleted_at FROM connections
      WHERE service = ? AND address = ?`,
   );
   const listC = db.prepare(

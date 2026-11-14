@@ -79,8 +79,10 @@ export function createMarks(deps: MarkDeps): (drafts: Line[]) => Promise<Line[]>
     const own = new Set(self(d.envelope.connection_address));
     if (d.payload?.mentions?.some((m) => own.has(m.address))) return true;
     const ref = d.payload?.ref_external_id;
-    // a reply names its line with no action; an edit, a delete or a reaction names one too
-    if (!ref || d.payload?.action) return false;
+    // a reply names its line with no action or as `reply`; an edit, a delete, a reaction
+    // and a forward name one too, and answer nobody
+    const action = d.payload?.action;
+    if (!ref || (action !== undefined && action !== "reply")) return false;
     const [target] = await deps.read({ externalId: ref, limit: 1 }) as Event[];
     const by = target?.envelope.sender?.address;
     return by !== undefined && own.has(by);

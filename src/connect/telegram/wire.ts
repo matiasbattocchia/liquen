@@ -17,13 +17,28 @@ import type { MediaKind } from "../../types.ts";
 
 export const SERVICE = "telegram" as const;
 
+/** A forum's General topic: every line that names no topic of its own. */
+export const GENERAL = 1;
+
+/** A forum topic's address: its supergroup's marked id and the topic's, the topic being
+ *  its opening message's id. */
+export const topicAddress = (chat: string, topic: number): string => `${chat}/${topic}`;
+
+/** The chat an address names, and the forum topic when it names one. */
+export function chatOf(address: string): { chat: string; topic?: number } {
+  const m = /^(-100\d+)\/(\d+)$/.exec(address);
+  return m ? { chat: m[1], topic: Number(m[2]) } : { chat: address };
+}
+
 /** Whether a chat numbers its own messages: a supergroup or a channel. A direct chat and
  *  a basic group number theirs in the account's one inbox. */
 export const ownNumbering = (chat: string): boolean => chat.startsWith("-100");
 
 /** A message's `external_id`: `telegram:<account>.<id>`, with the chat between them where
- *  the chat numbers its own. */
-export function externalId(account: string, chat: string, id: number | string): string {
+ *  the chat numbers its own. A forum's topics share their supergroup's numbering, so a
+ *  topic's address keys its lines by the supergroup. */
+export function externalId(account: string, address: string, id: number | string): string {
+  const { chat } = chatOf(address);
   return ownNumbering(chat) ? `${SERVICE}:${account}.${chat}.${id}` : `${SERVICE}:${account}.${id}`;
 }
 
@@ -53,6 +68,18 @@ export interface TgPeer {
   min?: boolean;
   /** A channel the account may post in. */
   posts?: boolean;
+  /** A supergroup whose lines sit in topics. */
+  forum?: boolean;
+  /** A room's member count, when Telegram has said it. */
+  members?: number;
+  /** The account administers the room: its creator, or an admin. */
+  admin?: boolean;
+}
+
+/** A forum's topic, as a line names it. */
+export interface TgTopic {
+  id: number;
+  title?: string;
 }
 
 /** A span of a message's text. Offsets and lengths count UTF-16 units, which is how
@@ -115,6 +142,8 @@ export type TgAction =
 export interface TgMessage {
   id: number;
   chat: TgPeer;
+  /** The topic it sits in, in a forum. */
+  topic?: TgTopic;
   /** Whoever wrote it. Absent on a channel's post, which the channel signs. */
   sender?: TgPeer;
   /** The account wrote it, from this session or any other device. */
@@ -148,7 +177,7 @@ export type TgEvent =
   | { type: "delete"; ids: number[]; chat?: string }
   /** Every reaction message `id` of `chat` wears now, by person: the whole set, never a
    *  change. Said only when the set is whole: a set Telegram cut short says nothing. */
-  | { type: "reactions"; chat: TgPeer; id: number; reactions: TgReaction[] }
+  | { type: "reactions"; chat: TgPeer; topic?: TgTopic; id: number; reactions: TgReaction[] }
   /** The other side read the account's messages up to `id`. */
   | { type: "read"; chat: string; id: number }
   /** A channel fell further behind than Telegram replays: its history is the record. */
@@ -180,8 +209,9 @@ export interface TgWire {
   self: TgPeer;
   /** How the account's own app holds `chat` now: muted, archived. */
   view(chat: string): { muted?: boolean; archived?: boolean };
-  /** Post one message in `chat`: an address the log holds, or a handle (`@name`) for a
-   *  first contact. Answers the message's id and the chat it landed in. */
+  /** Post one message in `chat`: an address the log holds (a forum topic's among them),
+   *  or a handle (`@name`) for a first contact. Answers the message's id and where it
+   *  landed, its `id` the address: a topic's when it went into one. */
   send(chat: string, out: TgOutbound): Promise<{ id: number; chat: TgPeer }>;
   edit(chat: string, id: number, text: string, entities: TgEntity[]): Promise<void>;
   delete(chat: string, ids: number[]): Promise<void>;
@@ -204,7 +234,15 @@ export interface TgWire {
   leave(chat: string): Promise<void>;
   add(chat: string, members: string[]): Promise<void>;
   remove(chat: string, members: string[]): Promise<void>;
+  /** A room's new title; a forum topic's address renames the topic. */
   rename(chat: string, title: string): Promise<void>;
   /** The messages of `chat` after `since`, oldest first. */
   history(chat: string, since: number): Promise<TgMessage[]>;
+  /** A forum's topics, by id. */
+  topics(chat: string): Promise<number[]>;
+  /** The account's chats, as its dialog list holds them. */
+  dialogs(): Promise<TgPeer[]>;
+  /** The messages of `chat` dated after `since`, oldest first. A file's bytes stay on
+   *  Telegram until asked for. */
+  since(chat: string, since: string): Promise<TgMessage[]>;
 }

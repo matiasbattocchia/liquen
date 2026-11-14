@@ -25,6 +25,13 @@
  * How the account's own app holds a chat, muted or archived, is read from the dialog list
  * at start and kept current from the settings updates the session carries; each message
  * wears the marks its chat had when it arrived.
+ *
+ * A group's lines carry its member count and whether the account administers it, the
+ * facts the crowd rule reads (`connect/marks.ts`): a basic group says both on itself, a
+ * supergroup's count is read off its full chat once in `ROOM_FACTS_MS`. A forum's lines
+ * name their topic, its title read once and kept current by the topics' own service
+ * messages. Both lookups can wait on the network, so messages and edits are said in a
+ * queue of their own, in the order they arrived.
  */
 
 import {
@@ -47,15 +54,18 @@ import type { ConnectionState } from "../../store/connections.ts";
 import type { MediaKind } from "../../types.ts";
 import { DispatchError, SignedOut } from "../errors.ts";
 import { floodSeconds } from "./bio.ts";
-import type {
-  TgAction,
-  TgEntity,
-  TgEvent,
-  TgFile,
-  TgMessage,
-  TgOutbound,
-  TgPeer,
-  TgWire,
+import {
+  chatOf,
+  GENERAL,
+  type TgAction,
+  type TgEntity,
+  type TgEvent,
+  type TgFile,
+  type TgMessage,
+  type TgOutbound,
+  type TgPeer,
+  type TgTopic,
+  type TgWire,
 } from "./wire.ts";
 
 /** How the session names itself in the account's list of devices. */
@@ -65,6 +75,11 @@ const PAGE = 100;
 const PAGES = 10;
 /** The most seats a roster is read to. */
 const MEMBERS_MAX = 1_000;
+/** How long a supergroup's member count and the account's role in it stand before its
+ *  full chat is read again. */
+export const ROOM_FACTS_MS = 6 * 60 * 60_000;
+/** The most messages one chat's history import reads. */
+export const IMPORT_MAX = 5_000;
 
 /** Telegram's words for a session that is over. */
 const ENDED = new Set([
@@ -96,9 +111,10 @@ export function wireError(err: unknown): Error {
 }
 
 /** A chat or a person as the SDK is asked for one: a marked id as a number, a handle or
- *  a phone as text. */
+ *  a phone as text. A forum topic's address names its supergroup. */
 function target(address: string): InputPeerLike {
-  return /^-?\d+$/.test(address) ? Number(address) : address.replace(/^@/, "");
+  const { chat } = chatOf(address);
+  return /^-?\d+$/.test(chat) ? Number(chat) : chat.replace(/^@/, "");
 }
 
 export function peerOf(p: Peer): TgPeer {
@@ -119,12 +135,17 @@ export function peerOf(p: Peer): TgPeer {
     : p.chatType === "channel"
     ? "channel" as const
     : "supergroup" as const;
+  // a stub of a chat carries none of the account's rights in it
+  const room = kind !== "channel";
   return {
     id: String(p.id),
     kind,
     ...(p.title ? { name: p.title } : {}),
     ...(p.username ? { username: p.username } : {}),
     ...(kind === "channel" && (p.isCreator || p.adminRights?.postMessages) ? { posts: true } : {}),
+    ...(p.isForum ? { forum: true } : {}),
+    ...(room && p.membersCount !== null ? { members: p.membersCount } : {}),
+    ...(room && !p.isMin ? { admin: p.isCreator || p.isAdmin } : {}),
   };
 }
 
@@ -199,12 +220,73 @@ export function createTelegramWire(
 ): {
   wire: TgWire;
   messageOf: (m: Message) => TgMessage;
+  /** A message as a line: `messageOf`, its room's facts and its topic looked up. */
+  lineOf: (m: Message) => Promise<TgMessage>;
+  /** A room with the facts the crowd rule reads, and a forum's topic by id. */
+  roomed: (p: TgPeer) => Promise<TgPeer>;
+  topicOf: (chat: string, id: number) => Promise<TgTopic>;
   /** Whether a message is a line: a service message the room vocabulary has no word
    *  for is none. */
   said: (m: Message) => boolean;
   views: Views;
+  rooms: Rooms;
 } {
   const views: Views = new Map();
+  const rooms: Rooms = new Map();
+  const titles = new Map<string, string>(); // a topic's address → its title
+
+  /** A room as its lines carry it: a supergroup's count and the account's role, read off
+   *  its full chat when the peer did not say them, at most once in `ROOM_FACTS_MS`. */
+  const roomed = async (p: TgPeer): Promise<TgPeer> => {
+    if (p.kind !== "group" && p.kind !== "supergroup") return p;
+    const held = rooms.get(p.id);
+    const fresh = held && Date.now() - held.at < ROOM_FACTS_MS;
+    if (p.members !== undefined && p.admin !== undefined) {
+      rooms.set(p.id, { members: p.members, admin: p.admin, at: held?.at ?? Date.now() });
+      return p;
+    }
+    let facts = held;
+    if (!fresh && p.kind === "supergroup") {
+      facts = { ...held, at: Date.now() };
+      rooms.set(p.id, facts);
+      try {
+        const full = await client.getFullChat(Number(p.id));
+        facts.members = full.membersCount ?? facts.members;
+        facts.admin = full.isCreator || full.isAdmin;
+      } catch { /* the facts wait for the next read */ }
+    }
+    return {
+      ...p,
+      ...(p.members === undefined && facts?.members !== undefined
+        ? { members: facts.members }
+        : {}),
+      ...(p.admin === undefined && facts?.admin !== undefined ? { admin: facts.admin } : {}),
+    };
+  };
+
+  /** A forum topic, its title read once and then kept by the topics' service messages. */
+  const topicOf = async (chat: string, id: number): Promise<TgTopic> => {
+    const key = `${chat}/${id}`;
+    if (!titles.has(key)) {
+      try {
+        const [topic] = await client.getForumTopicsById(Number(chat), id);
+        if (topic) titles.set(key, topic.title);
+      } catch { /* untitled until a line says it */ }
+    }
+    const title = titles.get(key);
+    return { id, ...(title ? { title } : {}) };
+  };
+
+  /** The topic a forum's message sits in: the one it opens, the one its reply header
+   *  names, or General. */
+  const topicIdOf = (m: Message): number => {
+    if (m.action?.type === "topic_created") return m.id;
+    const header = (m.raw as { replyTo?: tl.TypeMessageReplyHeader }).replyTo;
+    if (header?._ === "messageReplyHeader" && header.forumTopic) {
+      return header.replyToTopId ?? header.replyToMsgId ?? GENERAL;
+    }
+    return GENERAL;
+  };
 
   /** A person an action names by id, with the name the message came with. */
   const named = (m: Message, id: number): TgPeer => {
@@ -365,6 +447,16 @@ export function createTelegramWire(
     };
   };
 
+  const lineOf = async (m: Message): Promise<TgMessage> => {
+    const line = messageOf(m);
+    const chat = await roomed(line.chat);
+    if (!chat.forum) return { ...line, chat };
+    const id = topicIdOf(m);
+    const a = line.action;
+    if (a?.type === "topic" && a.title) titles.set(`${chat.id}/${id}`, a.title);
+    return { ...line, chat, topic: await topicOf(chat.id, id) };
+  };
+
   const inputEntities = async (entities: TgEntity[]): Promise<tl.TypeMessageEntity[]> => {
     const out: tl.TypeMessageEntity[] = [];
     for (const e of entities) {
@@ -467,12 +559,18 @@ export function createTelegramWire(
     send: (chat, out) =>
       asked(async () => {
         const to = target(chat);
-        const reply = out.reply !== undefined ? { replyTo: out.reply } : {};
+        const { topic } = chatOf(chat);
+        const params = {
+          ...(out.reply !== undefined ? { replyTo: out.reply } : {}),
+          // General takes a line that names no topic
+          ...(topic !== undefined && topic !== GENERAL ? { threadId: topic } : {}),
+        };
         const media = await mediaOf(out);
         const sent = media
-          ? await client.sendMedia(to, media, reply)
-          : await client.sendText(to, await textOf(out), reply);
-        return { id: sent.id, chat: peerOf(sent.chat) };
+          ? await client.sendMedia(to, media, params)
+          : await client.sendText(to, await textOf(out), params);
+        const landed = peerOf(sent.chat);
+        return { id: sent.id, chat: topic !== undefined ? { ...landed, id: chat } : landed };
       }),
     edit: (chat, id, text, entities) =>
       asked(async () => {
@@ -562,8 +660,38 @@ export function createTelegramWire(
           await client.kickChatMember({ chatId: target(chat), userId: target(m) });
         }
       }),
-    rename: (chat, title) => asked(() => client.setChatTitle(target(chat), title)),
+    rename: (chat, title) =>
+      asked(async () => {
+        const { topic } = chatOf(chat);
+        if (topic === undefined) return await client.setChatTitle(target(chat), title);
+        await client.editForumTopic({ chatId: target(chat), topicId: topic, title });
+        titles.set(chat, title);
+      }),
     view: (chat) => ({ ...views.get(chat) }),
+    topics: (chat) =>
+      asked(async () => {
+        const out: number[] = [];
+        for await (const t of client.iterForumTopics(target(chat))) out.push(t.id);
+        return out;
+      }),
+    dialogs: () =>
+      asked(async () => {
+        const out: TgPeer[] = [];
+        for await (const d of client.iterDialogs()) out.push(peerOf(d.peer));
+        return out;
+      }),
+    since: (chat, since) =>
+      asked(async () => {
+        const floor = Date.parse(since);
+        const got: Message[] = [];
+        for await (const m of client.iterHistory(target(chat), { limit: IMPORT_MAX })) {
+          if (m.date.getTime() <= floor) break;
+          got.push(m);
+        }
+        const out: TgMessage[] = [];
+        for (const m of got.reverse()) if (said(m)) out.push(await lineOf(m));
+        return out;
+      }),
     history: (chat, since) =>
       asked(async () => {
         const out: Message[] = [];
@@ -579,19 +707,26 @@ export function createTelegramWire(
           out.push(...fresh);
           below = Math.min(...fresh.map((m) => m.id));
         }
-        return out.sort((a, b) => a.id - b.id).filter(said).map(messageOf);
+        const lines: TgMessage[] = [];
+        for (const m of out.sort((a, b) => a.id - b.id)) if (said(m)) lines.push(await lineOf(m));
+        return lines;
       }),
   };
-  return { wire, messageOf, said, views };
+  return { wire, messageOf, lineOf, roomed, topicOf, said, views, rooms };
 }
 
 /** How the account's app holds each chat, by marked id. */
 type Views = Map<string, { muted?: boolean; archived?: boolean }>;
+/** A group's member count and the account's role in it, by marked id, and when its full
+ *  chat was last read. */
+type Rooms = Map<string, { members?: number; admin?: boolean; at: number }>;
 
 export interface TelegramSession {
   wire: TgWire;
   /** Close the session's connection and its cache. */
   stop: () => Promise<void>;
+  /** End the session on Telegram, then close it. */
+  logOut: () => Promise<void>;
 }
 
 export interface OpenOptions {
@@ -689,8 +824,20 @@ export async function openTelegram(opts: OpenOptions): Promise<TelegramSession> 
   });
   // the account is known once the session starts, and the listeners stand before it does:
   // starting is what begins the replay of what the account missed
-  const { wire, messageOf, said, views } = createTelegramWire(client, { id: "", kind: "user" });
+  const { wire, lineOf, roomed, topicOf, said, views, rooms } = createTelegramWire(client, {
+    id: "",
+    kind: "user",
+  });
   behind = (chat) => opts.onEvent({ type: "gap", chat });
+
+  // a line's facts may wait on a lookup, and the lines still go out in arrival order
+  let queue: Promise<void> = Promise.resolve();
+  const inOrder = (what: string, make: () => Promise<TgEvent | undefined>) => {
+    queue = queue.then(make).then(
+      (event) => event && opts.onEvent(event),
+      (err) => opts.onError?.(what, err),
+    );
+  };
 
   // what the session says before the chats' marks are read waits for them, in order
   let ready = false;
@@ -707,10 +854,11 @@ export async function openTelegram(opts: OpenOptions): Promise<TelegramSession> 
     else held.push(run);
   };
   client.onNewMessage.add(guarded("a message", (m: Message) => {
-    if (said(m)) opts.onEvent({ type: "message", message: messageOf(m) });
+    if (!said(m)) return;
+    inOrder("a message", async () => ({ type: "message", message: await lineOf(m) }));
   }));
   client.onEditMessage.add(guarded("an edit", (m: Message) => {
-    opts.onEvent({ type: "edit", message: messageOf(m) });
+    inOrder("an edit", async () => ({ type: "edit", message: await lineOf(m) }));
   }));
   client.onDeleteMessage.add(guarded("a delete", (d) => {
     opts.onEvent({
@@ -731,7 +879,8 @@ export async function openTelegram(opts: OpenOptions): Promise<TelegramSession> 
   ): Promise<TgEvent | undefined> => {
     if (u.reactions.reactionsAsTags) return undefined; // Saved Messages' tags, not people
     const chatId = getMarkedPeerId(u.peer);
-    const chat = peerOf(await client.getPeer(chatId));
+    const chat = await roomed(peerOf(await client.getPeer(chatId)));
+    const topic = chat.forum ? { topic: await topicOf(chat.id, u.topMsgId ?? GENERAL) } : {};
     const person = (id: number): TgPeer => {
       try {
         const raw = peers.user(id);
@@ -749,6 +898,7 @@ export async function openTelegram(opts: OpenOptions): Promise<TelegramSession> 
       return {
         type: "reactions",
         chat,
+        ...topic,
         id: u.msgId,
         reactions: (u.reactions.recentReactions ?? []).flatMap(said),
       };
@@ -766,7 +916,7 @@ export async function openTelegram(opts: OpenOptions): Promise<TelegramSession> 
     if (listed.filter((r) => glyphOf(r.reaction) !== undefined).length !== counted) {
       return undefined;
     }
-    return { type: "reactions", chat, id: u.msgId, reactions: listed.flatMap(said) };
+    return { type: "reactions", chat, ...topic, id: u.msgId, reactions: listed.flatMap(said) };
   };
 
   client.onRawUpdate.add(guarded("a reactions update", ({ update, peers }) => {
@@ -815,13 +965,18 @@ export async function openTelegram(opts: OpenOptions): Promise<TelegramSession> 
     throw wireError(err);
   }
 
-  // the marks every chat wears today; a chat met later wears none until its settings move
+  // the marks every chat wears today, and the facts its peer says of it; a chat met later
+  // wears no marks until its settings move
   try {
     for await (const d of client.iterDialogs()) {
-      views.set(String(d.peer.id), {
+      const peer = peerOf(d.peer);
+      views.set(peer.id, {
         ...(d.isMuted ? { muted: true } : {}),
         ...(d.isArchived ? { archived: true } : {}),
       });
+      if (peer.members !== undefined && peer.admin !== undefined) {
+        rooms.set(peer.id, { members: peer.members, admin: peer.admin, at: Date.now() });
+      }
     }
   } catch (err) {
     opts.onError?.("reading the dialogs", err);
@@ -834,6 +989,15 @@ export async function openTelegram(opts: OpenOptions): Promise<TelegramSession> 
     wire,
     stop: async () => {
       await client.destroy();
+    },
+    logOut: async () => {
+      try {
+        await client.logOut();
+      } catch (err) {
+        if (!ended(err)) throw wireError(err);
+      } finally {
+        await client.destroy().catch(() => {});
+      }
     },
   };
 }

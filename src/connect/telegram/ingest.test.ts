@@ -643,6 +643,185 @@ Deno.test("telegram ingest: a reaction and a delete in a muted or archived chat 
   assertEquals(published[3].extra, undefined);
 });
 
+const FORUMS: TgPeer = { ...FORUM, forum: true, members: 340, admin: false };
+
+Deno.test("telegram ingest: a forum's line sits in its topic, named by it, in the forum's community", async () => {
+  const { ingest, published } = harness();
+  await ingest.handle({
+    type: "message",
+    message: message({ id: 77, chat: FORUMS, topic: { id: 45, title: "Ventas" } }),
+  });
+  const [line] = published;
+  assertEquals(line.envelope.conversation, {
+    address: "-1009000/45",
+    kind: "group",
+    name: "Ventas",
+    members: 340,
+    admin: false,
+  });
+  assertEquals(line.extra?.community, "Obra");
+  // a line's identity is its supergroup's numbering, whatever topic it sits in
+  assertEquals(line.envelope.external_id, "telegram:700100.-1009000.77");
+  // General takes a line that names no topic of its own; a group that is no forum keeps
+  // its own address and names no community
+  await ingest.handle({
+    type: "message",
+    message: message({ id: 78, chat: FORUMS, topic: { id: 1, title: "General" } }),
+  });
+  assertEquals(published[1].envelope.conversation.address, "-1009000/1");
+  await ingest.handle({
+    type: "message",
+    message: message({ id: 79, chat: { ...TEAM, members: 12, admin: true } }),
+  });
+  assertEquals(published[2].envelope.conversation, {
+    address: "-4100",
+    kind: "group",
+    name: "Equipo",
+    members: 12,
+    admin: true,
+  });
+  assertEquals(published[2].extra, undefined);
+});
+
+Deno.test("telegram ingest: a supergroup's delete takes the conversation and the quiet of the line it deletes", async () => {
+  const row = {
+    envelope: { conversation: { address: "-1009000/45" } },
+    extra: { crowded: true },
+  } as unknown as Event;
+  const { ingest, published } = harness({
+    read: (q) => Promise.resolve(q?.externalId === "telegram:700100.-1009000.77" ? [row] : []),
+  });
+  await ingest.handle({ type: "delete", ids: [77], chat: "-1009000" });
+  assertEquals(published[0].envelope.conversation, { address: "-1009000/45" });
+  assertEquals(published[0].extra, { crowded: true });
+  // a line the log never held is the chat's own
+  await ingest.handle({ type: "delete", ids: [78], chat: "-1009000" });
+  assertEquals(published[2].envelope.conversation, { address: "-1009000" });
+});
+
+Deno.test("telegram ingest: a reaction in a forum topic is that topic's line", async () => {
+  const { ingest, published } = harness({ read: () => Promise.resolve([]) });
+  await ingest.handle({
+    type: "reactions",
+    chat: FORUMS,
+    topic: { id: 45, title: "Ventas" },
+    id: 77,
+    reactions: [{ by: SOL, emoji: "👍", date: NOW }],
+  });
+  assertEquals(published[0].envelope.conversation.address, "-1009000/45");
+  assertEquals(published[0].extra, { community: "Obra" });
+});
+
+Deno.test("telegram ingest: after a sign-in, a line dated before it is history, its file named and its stranger unread", async () => {
+  let fetched = 0;
+  const bios = {
+    of: () => Promise.resolve("Arquitecta."),
+    stop: () => {},
+  };
+  const file = {
+    kind: "image" as const,
+    mime: "image/jpeg",
+    name: "obra.jpg",
+    bytes: () => {
+      fetched++;
+      return Promise.resolve(new Uint8Array([1]));
+    },
+  };
+  const { ingest, published } = harness({
+    signedIn: "2026-11-14T10:00:00.000Z",
+    bios,
+    storage: memoryStorage(),
+  });
+  await ingest.handle({
+    type: "message",
+    message: message({ id: 41, date: "2026-11-01T09:00:00.000Z", text: "vieja", file }),
+  });
+  assertEquals(published[0].extra, { backfill: true });
+  assertEquals(published[0].parts, [{
+    type: "text",
+    kind: "text",
+    text: "[obra.jpg: left on Telegram]\nvieja",
+  }]);
+  assertEquals(fetched, 0);
+  await ingest.handle({
+    type: "message",
+    message: message({ id: 42, date: "2026-11-14T10:05:00.000Z", text: "nueva" }),
+  });
+  assertEquals(published[1].extra?.backfill, undefined);
+  // an edit is history by when it was made, not by the message it edits
+  await ingest.handle({
+    type: "edit",
+    message: message({
+      id: 41,
+      date: "2026-11-01T09:00:00.000Z",
+      edited: "2026-11-14T10:06:00.000Z",
+      text: "editada",
+    }),
+  });
+  assertEquals(published[2].extra?.backfill, undefined);
+});
+
+Deno.test("telegram ingest: an opening that only resumes stamps no history", async () => {
+  const { ingest, published } = harness();
+  await ingest.handle({
+    type: "message",
+    message: message({ date: "2020-01-01T00:00:00.000Z" }),
+  });
+  assertEquals(published[0].extra?.backfill, undefined);
+  assertEquals(await ingest.backfill("2019-01-01T00:00:00.000Z"), true);
+});
+
+Deno.test("telegram ingest: the import reads every chat but the followed, keeps what predates the sign-in, and sits out a flood", async () => {
+  const news: TgPeer = { id: "-1007000", kind: "channel", name: "Noticias" };
+  let tries = 0;
+  const waits: number[] = [];
+  const wire = fakeWire({
+    dialogs: () => Promise.resolve([SOL, news, TEAM]),
+    since: (chat: string) => {
+      if (chat === TEAM.id && tries++ === 0) {
+        return Promise.reject(new Error("FLOOD_WAIT_3"));
+      }
+      return Promise.resolve([
+        message({ id: 1, chat: chat === SOL.id ? SOL : TEAM, date: "2026-10-01T00:00:00.000Z" }),
+        message({ id: 2, chat: chat === SOL.id ? SOL : TEAM, date: "2026-11-14T11:00:00.000Z" }),
+      ]);
+    },
+  });
+  const { ingest, published } = harness({
+    wire,
+    signedIn: "2026-11-14T10:00:00.000Z",
+    sleep: (ms) => {
+      waits.push(ms);
+      return Promise.resolve();
+    },
+  });
+  assertEquals(await ingest.backfill("2026-09-15T10:00:00.000Z"), true);
+  assertEquals(
+    wire.calls.filter((c) => c.op === "since").map((c) => c.args[0]),
+    [SOL.id, TEAM.id, TEAM.id],
+  );
+  assertEquals(waits, [3_000]);
+  assertEquals(published.map((d) => [d.envelope.conversation.address, d.extra?.backfill]), [
+    ["700200", true],
+    ["-4100", true],
+  ]);
+});
+
+Deno.test("telegram ingest: a forum's gap is read from the newest line across its topics", async () => {
+  const rows: Record<string, Event[]> = {
+    "-1009000/45": [{ envelope: { external_id: "telegram:700100.-1009000.90" } } as Event],
+    "-1009000/1": [{ envelope: { external_id: "telegram:700100.-1009000.60" } } as Event],
+  };
+  const wire = fakeWire({ topics: () => Promise.resolve([1, 45]) });
+  const { ingest } = harness({
+    wire,
+    read: (q) =>
+      Promise.resolve((rows[q?.conversation ?? ""] ?? []).filter((e) => !q?.filter || q.filter(e))),
+  });
+  await ingest.handle({ type: "gap", chat: "-1009000" });
+  assertEquals(wire.calls.find((c) => c.op === "history")?.args, ["-1009000", 90]);
+});
+
 Deno.test("telegram ingest: the session's state lands on the account's row", async () => {
   const upserts: ConnectionRow[] = [];
   const row: ConnectionRow = {
