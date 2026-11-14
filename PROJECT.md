@@ -6860,7 +6860,6 @@ Open:
   the wire's shapes, not against Telegram.
 - A forum's topics are lines of the supergroup, not conversations of their own; a reply's
   topic is dropped.
-- An org account adopts no steering room.
 - The about text's memory is the process's: a restart reads a stranger again.
 - Reactions in a room past a few hundred reactors, or one whose list the account may not
   see (a channel's), are not read: a set cut short says nothing, since a person missing
@@ -6890,6 +6889,25 @@ Open:
   own replaced, which Telegram never says.
 - **A message id is parsed strictly.** A reaction's id ends in a number too, and the gap
   read took it for the newest message.
+
+### Telegram: a principal's DM with an owned account steers (2026-11-14) — LANDED
+
+- **The DM is recorded.** On an account an agent owns, a member's direct chat is written
+  as `mirrors.dms` the first time they write there, before that line lands, and the
+  `aliases` view keeps the agent's principals among them. A WhatsApp DM is derived from
+  the principal's number; a Telegram chat's address is a user id no roster holds, so it
+  is recorded, as Teams records a oneOnOne.
+- **A shared account steers nobody.** Telegram reaches anyone, as WhatsApp does: anyone
+  can open a group, name it after an agent and add the account. A shared account's DMs
+  and groups stay the shared inbox (CHANGES, 14 Nov: steering on a shared connection is
+  a workspace's, Slack's). The open item on a shared account adopting no steering room
+  is closed by that.
+
+Open:
+
+- A member is known by their own connected account or by the phone Telegram shows; one
+  who hides their number and connects nothing writes as a stranger, and their DM steers
+  nothing.
 
 ### Witnesses, and a Teams DM with an org account (2026-09-27) — NEVER MERGED
 

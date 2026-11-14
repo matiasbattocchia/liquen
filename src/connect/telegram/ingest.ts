@@ -33,12 +33,14 @@
  * member's declared phone when Telegram shows the number. The name is Telegram's display
  * fact, `sender_saved` when the account's address book holds the person. For a stranger
  * in a direct chat or a private group the about text of their profile rides the first
- * line they write in each conversation (`sender_about`, `bio.ts`).
+ * line they write in each conversation (`sender_about`, `bio.ts`). A member writing to an
+ * owned account in a direct chat has that chat recorded on the account's row as
+ * `mirrors.dms`: a principal's DM there is their agent's mind surface (§4).
  */
 
 import { SENDER_ABOUT, SENDER_SAVED } from "../../sender.ts";
 import type { Appender, Reader } from "../../store/log.ts";
-import type { Connections } from "../../store/connections.ts";
+import { type Connections, mirrorsOf } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
 import { saveMedia } from "../../store/media.ts";
@@ -411,13 +413,43 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
     }
   };
 
-  /** Publish, again and again until it lands or the ingest stops. */
+  /** A member's direct chat with an owned account is a face of its agent's mind (§4),
+   *  recorded as `mirrors.dms`, member → chat, before the line that meets it lands, so
+   *  that line is already the mind's. A chat's address is the person's user id, which no
+   *  roster names, so the record is the only way to know it. Every member is written; the
+   *  aliases view keeps the agent's principals among them. */
+  const recordDms = async (drafts: Draft<MessageEvent>[]) => {
+    if (!deps.store) return;
+    for (const d of drafts) {
+      const member = d.agent?.id;
+      const chat = d.envelope.conversation;
+      if (!member || chat.kind !== "direct" || d.envelope.sender?.address !== chat.address) {
+        continue;
+      }
+      try {
+        const row = await deps.store.connection(SERVICE, connection);
+        // the account's own agent is no principal of its own DMs
+        if (!row?.agentId || member === row.agentId) continue;
+        if (mirrorsOf(row).dms?.[member] === chat.address) continue;
+        await deps.store.upsertConnections([{
+          service: SERVICE,
+          address: connection,
+          extra: { mirrors: { dms: { [member]: chat.address } } },
+        }]);
+      } catch (err) {
+        // the line lands all the same; the record is tried again on the member's next one
+        deps.onError?.(`recording ${member}'s DM`, err);
+      }
+    }
+  };
+
   /** Whether the account's row still stands: once it is removed, the log takes nothing
    *  more of it, and a publish it refuses is refused for good. */
   const standing = async () =>
     !deps.store ||
     (await deps.store.connections()).some((r) => r.service === SERVICE && r.address === connection);
 
+  /** Publish, again and again until it lands, the ingest stops, or the row is gone. */
   const publish = async (drafts: Draft<MessageEvent>[]) => {
     if (!drafts.length) return;
     for (let wait = RETRY_MS; !stopped; wait = Math.min(wait * 2, RETRY_CAP_MS)) {
@@ -484,6 +516,7 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
       if (e) drafts.push(e);
     }
     await classify(drafts, phonesOf(missed));
+    await recordDms(drafts);
     return drafts;
   };
 
@@ -497,6 +530,7 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
           const d = await mapMessage(event.message);
           if (!d) return;
           await classify([d], phonesOf([event.message]));
+          await recordDms([d]);
           return publish([d]);
         }
         case "edit": {

@@ -1064,6 +1064,8 @@ wa:     self-chat ("Message Yourself") on the agent's own paired number
 teams:  the self-chat of an account the agent owns
         a principal's oneOnOne chat with an account the agent owns
         a steering room: a group chat or a channel an org account is in, named as the agent
+tg:     Saved Messages on the agent's own account
+        a principal's DM with the agent's own account
 sonar:  a steering room the connector records on the org account (one per tenant)
 email:  not a mind surface
 cli/ui: native local conversations, through the door (§9) — the socket proves the
