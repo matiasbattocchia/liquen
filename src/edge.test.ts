@@ -6,6 +6,7 @@ import {
   localBase,
   reached,
   routeOf,
+  SIGN_IN_CLOSED,
   socketOf,
 } from "./edge.ts";
 import { serveIngest, serveLeg } from "./connect/serve.ts";
@@ -95,6 +96,11 @@ Deno.test("createEdge: forwards to the sockets with query and body, keeps a redi
       await down.text(),
       "microsoft's ingest is not listening (data/run/microsoft.sock)",
     );
+
+    // a door no sign-in holds open answers the person, not with a socket
+    const closed = await edge(new Request(`${BASE}/microsoft/oauth/callback?state=x`));
+    assertEquals(closed.status, 410);
+    assertEquals(await closed.text(), SIGN_IN_CLOSED);
 
     const noRoute = await edge(new Request(`${BASE}/`));
     assertEquals(noRoute.status, 404);

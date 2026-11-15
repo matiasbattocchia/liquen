@@ -3891,8 +3891,10 @@ loudly, the same law as an unknown config key.
   them by name; `edge.tunnel` is an argv `liquen start` keeps alive beside the org for the
   one that runs here. Behind the port stands the edge process, always one child of the
   supervisor: it forwards each path to the socket the grammar names, an ingest handed the
-  path under its root, a door the path as it came, and answers 502 naming the socket when
-  nothing is there. The doors DERIVE the address rather than ask for it — the portal
+  path under its root, a door the path as it came. Nothing at an ingest is a 502 naming
+  the socket; nothing at a door is a 410 telling the person no sign-in is open, since a
+  door stands only while one is, and a page reloaded after its sign-in finished meets it
+  closed. The doors DERIVE the address rather than ask for it — the portal
   guides print it, Slack's manifest and GitHub's form carry it — and check it from the
   internet in while a human is there to read the answer: every ingest names itself to a
   `GET /`, so the fetched string says whether the tunnel is up, aimed at this port and in

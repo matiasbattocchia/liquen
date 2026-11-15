@@ -22,9 +22,10 @@
  * nothing to be reachable, and two orgs on one machine never meet. The edge forwards each
  * path to the socket the grammar names — an ingest is a server rooted at `/`, so it is
  * handed the path UNDER `/<service>/ingest`; a door matches by suffix, so it is handed
- * the path as it came. Nothing answering on the socket is a 502 that names it — a service
- * whose process is down, or a door nobody is holding open — and a path outside the
- * grammar is a 404. `liquen start` runs the edge as one more child, always, and
+ * the path as it came. Nothing answering on an ingest's socket is a 502 that names it, a
+ * service whose process is down; nothing at a door is a 410 that tells the person no
+ * sign-in is open, since a door stands only while one is; and a path outside the grammar
+ * is a 404. `liquen start` runs the edge as one more child, always, and
  * `edge.tunnel` beside it when the org runs its own tunnel.
  */
 
@@ -72,6 +73,10 @@ export function routeOf(pathname: string): { service: string; leg: Leg; rest: st
     : { service, leg: "oauth", rest: pathname };
 }
 
+/** What a person reads at a sign-in door no sign-in holds open. */
+export const SIGN_IN_CLOSED = "No sign-in is open here. If you just signed in, it is done: " +
+  "you can close this window. Otherwise, ask for a new link.";
+
 /** The forwarder over the org's sockets. */
 export function createEdge(root: string): (req: Request) => Promise<Response> {
   const clients = new Map<string, Deno.HttpClient>();
@@ -104,6 +109,9 @@ export function createEdge(root: string): (req: Request) => Promise<Response> {
         client: clientFor(sock),
       });
     } catch {
+      // a sign-in door stands only while one of its sign-ins is open: a reload of the page
+      // that finished one, or a stale link, meets it closed, and the person reads why
+      if (at.leg === "oauth") return text(410, SIGN_IN_CLOSED);
       // the path under the org, not the machine's: this answer reaches the internet
       const where = sock.slice(root.length + 1);
       return text(502, `${at.service}'s ${at.leg} is not listening (${where})`);
