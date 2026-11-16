@@ -345,7 +345,8 @@ function fakeLog(queued: Event[] = [], rows: Event[] = []) {
     push: (e: Draft) => deliver?.({ ...e, id: e.id ?? newId() } as Event),
     patches,
     setDelivery: (id: EventId, patch: DeliveryPatch) => {
-      patches.push({ id, patch });
+      // what the wire answered; the in-flight stamp before each post is the dispatcher's own
+      if (patch.status?.posting_at === undefined) patches.push({ id, patch });
       return Promise.resolve();
     },
   };

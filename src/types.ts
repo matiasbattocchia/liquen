@@ -373,6 +373,10 @@ export type DeliveryStatus =
 export interface Lifecycle {
   state?: DeliveryStatus;
   queued_at?: string;
+  /** When a dispatcher took the offer of `queued_at` to the wire: from here until a
+   *  `dispatched_at` or a `failed_at` lands, a post is in flight, and the platform may hand
+   *  it back as an inbound before the row holds its id (the 小-window, §4). */
+  posting_at?: string;
   dispatched_at?: string;
   failed_at?: string;
   delivered_at?: string | Record<string, string>;

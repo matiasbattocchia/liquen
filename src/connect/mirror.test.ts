@@ -15,6 +15,7 @@ import type {
   ToolUseEvent,
 } from "../types.ts";
 import type { Connections } from "../store/connections.ts";
+import type { DeliveryPatch } from "../store/log.ts";
 
 /** A live org with two alias surfaces bound to `ana`: the Slack self-DM `D1` (grant
  *  `T1:U1`) and the WA self-chat `549` (paired own number). The mirror under test rides a
@@ -25,11 +26,11 @@ async function withMirror(
     inConv: (conversation: string) => Promise<MessageEvent[]>;
     /** ana's mind, rows of one type — what a settlement or a harness word lands as. */
     inMind: (type: string) => Promise<Event[]>;
-    setDelivery: (id: string, patch: { external_id: string }) => Promise<void>;
+    setDelivery: (id: string, patch: DeliveryPatch) => Promise<void>;
     waitFor: (cond: () => boolean | Promise<boolean>, ms?: number) => Promise<void>;
     log: Pick<Connections, "deleteConnections">;
   }) => Promise<void>,
-  settleMs = 30, // the waited constant, shrunk (§9) — one test widens it to race the backfill
+  postingMs = 30, // the waited constant, shrunk (§9) — the echo tests widen it past any wait
   locale?: string, // the org's tongue — unset, the harness speaks English
   presence: PresenceLevel = "tools", // the loudest level: every line a surface can hear
   asked = true, // whether the mind's stretch was asked for (presence's `asked`)
@@ -52,7 +53,7 @@ async function withMirror(
     locale: () => locale,
     presence: () => presence,
     asked: () => asked,
-  }, settleMs);
+  }, postingMs);
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {
     const t0 = Date.now();
     while (Date.now() - t0 < ms) {
@@ -690,27 +691,138 @@ Deno.test("mirror fan-in: a transcript lands on the mind's COPY of the audio it 
   });
 });
 
-Deno.test("mirror fan-in settles: an echo absorbed by the dispatch backfill copies nothing", async () => {
-  await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
-    // the agent speaks → a CC to the self-DM lands (what a dispatcher would then post)
-    await publish(
-      mindMsg("done!", { agent: { id: "ana", session_id: "mind" }, payload: { turn_id: "t9" } }),
-    );
-    await waitFor(async () => (await inConv("D1")).length === 1);
-    const [cc] = await inConv("D1");
+/** What a dispatcher stamps on a row: taken to the wire, and then landed with its id. */
+const taking = (id: string): [string, DeliveryPatch] => [
+  id,
+  { status: { posting_at: new Date().toISOString() } },
+];
+const landing = (id: string, external_id: string): [string, DeliveryPatch] => [
+  id,
+  { external_id, status: { state: "dispatched", dispatched_at: new Date().toISOString() } },
+];
 
-    // the 小-window: the platform echoes the post BEFORE the ts backfill — a fresh row
+/** The agent's voice, crossed to both surfaces: its CC on the self-DM. */
+async function spoke(
+  publish: (e: Draft<Event>) => Promise<Event>,
+  inConv: (conversation: string) => Promise<MessageEvent[]>,
+  waitFor: (cond: () => Promise<boolean>) => Promise<void>,
+): Promise<MessageEvent> {
+  await publish(
+    mindMsg("done!", { agent: { id: "ana", session_id: "mind" }, payload: { turn_id: "t9" } }),
+  );
+  await waitFor(async () =>
+    (await inConv("D1")).length === 1 && (await inConv("549")).length === 1
+  );
+  return (await inConv("D1"))[0];
+}
+
+Deno.test("mirror fan-in: an echo that beats its id home waits for the post to land, and copies nothing", async () => {
+  await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
+    const cc = await spoke(publish, inConv, waitFor);
+    await setDelivery(...taking(cc.id)); // a dispatcher takes the CC to the wire
+
+    // the 小-window: the platform echoes the post BEFORE the backfill — a fresh row
     const echo = await publish(aliasInbound("done!", { external_id: "slack:T1:D1:222.2" }));
     assert(echo.id !== cc.id);
-    // …and the backfill lands within the settle window, absorbing the echo into the CC
-    await setDelivery(cc.id, { external_id: "slack:T1:D1:222.2" });
+    // …the mirror holds it while the post is in flight, and the backfill absorbs it
+    await new Promise((r) => setTimeout(r, 150));
+    assertEquals((await inConv("mind@ana")).length, 1);
+    await setDelivery(...landing(cc.id, "slack:T1:D1:222.2"));
 
-    // past the settle: the echo is gone, so the mirror found nothing to copy — the mind
-    // still holds only the original voice line
+    // the echo is gone, so the mirror found nothing to copy — the mind still holds only the
+    // original voice line, and nothing crossed to the other surface
     await new Promise((r) => setTimeout(r, 300));
     assertEquals((await inConv("mind@ana")).length, 1);
     assertEquals((await inConv("D1")).length, 1);
-  }, 150);
+    assertEquals((await inConv("549")).length, 1);
+  }, 10_000);
+});
+
+Deno.test("mirror fan-in: a person's line copies at once — a CC never taken, or in flight elsewhere, holds nothing", async () => {
+  await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
+    // the self-DM's CC stays queued and untaken (a dispatcher that sends nothing for it);
+    // the WA one is on the wire right now
+    await spoke(publish, inConv, waitFor);
+    await setDelivery(...taking((await inConv("549"))[0].id));
+
+    const t0 = Date.now();
+    await publish(aliasInbound("ship it", { external_id: "slack:T1:D1:600.1" }));
+    await waitFor(async () => (await inConv("mind@ana")).length === 2);
+    // well inside the bound a dead post is waited out for: nothing was waited on
+    assert(Date.now() - t0 < 2_000, `took ${Date.now() - t0}ms`);
+    assertEquals(textOf((await inConv("mind@ana"))[1]), "ship it");
+  }, 10_000);
+});
+
+Deno.test("mirror fan-in: a person's line during a post on its surface copies the moment the post lands", async () => {
+  await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
+    const cc = await spoke(publish, inConv, waitFor);
+    await setDelivery(...taking(cc.id));
+
+    await publish(aliasInbound("and the PR?", { external_id: "slack:T1:D1:601.1" }));
+    await new Promise((r) => setTimeout(r, 150));
+    assertEquals((await inConv("mind@ana")).length, 1); // could still be the post, coming back
+
+    const t0 = Date.now();
+    await setDelivery(...landing(cc.id, "slack:T1:D1:600.9")); // landed under another id
+    await waitFor(async () => (await inConv("mind@ana")).length === 2);
+    assert(Date.now() - t0 < 2_000, `took ${Date.now() - t0}ms`);
+    assertEquals(textOf((await inConv("mind@ana"))[1]), "and the PR?");
+  }, 10_000);
+});
+
+Deno.test("mirror fan-in: a post that never lands holds a line only for the bound", async () => {
+  await withMirror(async ({ publish, inConv, setDelivery, waitFor }) => {
+    const cc = await spoke(publish, inConv, waitFor);
+    await setDelivery(...taking(cc.id)); // …and the dispatcher dies mid-post
+
+    const t0 = Date.now();
+    await publish(aliasInbound("hello?", { external_id: "slack:T1:D1:602.1" }));
+    await waitFor(async () => (await inConv("mind@ana")).length === 2);
+    assert(Date.now() - t0 >= 300, `took ${Date.now() - t0}ms`); // the post had its bound
+    // …and a later line, the dead post past its bound, holds on nothing
+    const t1 = Date.now();
+    await publish(aliasInbound("anyone?", { external_id: "slack:T1:D1:602.2" }));
+    await waitFor(async () => (await inConv("mind@ana")).length === 3);
+    assert(Date.now() - t1 < 300, `took ${Date.now() - t1}ms`);
+  }, 400);
+});
+
+Deno.test("mirror fan-in: a burst copies whole and in order", async () => {
+  await withMirror(async ({ publish, inConv, waitFor }) => {
+    for (const [i, line] of ["one", "two", "three"].entries()) {
+      await publish(aliasInbound(line, { external_id: `slack:T1:D1:603.${i}` }));
+    }
+    await waitFor(async () => (await inConv("mind@ana")).length === 3);
+    await new Promise((r) => setTimeout(r, 100));
+    assertEquals((await inConv("mind@ana")).map(textOf), ["one", "two", "three"]);
+  }, 10_000);
+});
+
+Deno.test("mirror fan-in: the post in flight is the store's word — one another process wrote is waited on all the same", async () => {
+  await withMirror(async ({ publish, inConv, setDelivery }) => {
+    // a CC written before this mirror ran (a restart since): straight into the store
+    const cc = await publish({
+      ts: new Date().toISOString(),
+      type: "message",
+      agent: { id: "ana", session_id: "mind" },
+      envelope: {
+        service: "slack",
+        connection_address: "T1:U1",
+        conversation: { address: "D1" },
+      },
+      parts: [{ type: "text", kind: "text", text: "`[agent]` earlier" }],
+      extra: { via: { event: "01-earlier", service: "local", conversation: "mind@ana" } },
+    });
+    await setDelivery(...taking(cc.id));
+
+    await publish(aliasInbound("earlier", { external_id: "slack:T1:D1:604.1" }));
+    await new Promise((r) => setTimeout(r, 150));
+    await setDelivery(...landing(cc.id, "slack:T1:D1:604.1"));
+    await new Promise((r) => setTimeout(r, 300));
+    assertEquals((await inConv("mind@ana")).length, 0);
+    assertEquals((await inConv("D1")).length, 1);
+  }, 10_000);
 });
 
 Deno.test("mirror fan-in: an echo whose claim never lands is absorbed by the CC it came from", async () => {
