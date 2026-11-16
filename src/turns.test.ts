@@ -140,6 +140,33 @@ Deno.test("turnsOf: the steps from the look to the closing, opened by the news t
   assertStringIncludes(turnLine(t), "end_turn · ");
 });
 
+Deno.test("turnsOf: a horizon in another room is the opener, over news the room held before it", () => {
+  const verdict: Event = {
+    id: nextId(),
+    ts: at(),
+    type: "permission_response",
+    agent: self,
+    envelope: { ...here(), sender: { address: "matias", name: "matias" } },
+    payload: { ref_id: "01a1-0000" },
+    parts: [{
+      type: "data",
+      kind: "permission_response",
+      data: { behavior: "allow", scope: "once" },
+    }],
+  } as Event;
+  at(1000);
+  const elsewhere = nextId(); // a contact's reply on a wire: the row the digest read last
+  const look = step("d1", elsewhere, { text: "<|SILENCE|>" });
+  const [t] = turnsOf([verdict, ...look], REF);
+  assertEquals(t.opener, { kind: "unknown", id: elsewhere });
+  assertEquals(t.started, look[0].ts); // until the lookup, the look itself: not the verdict's
+  assertEquals(t.span.from, look[0].id);
+  // a horizon the room holds still names the room's freshest news at it
+  const hi = said("hola");
+  const [u] = turnsOf([verdict, hi, ...step("d2", hi.id, { text: "hola" })], REF);
+  assertEquals(u.opener.id, hi.id);
+});
+
 Deno.test("price: a checkpoint's call is priced on its own, and the line says it after its id", () => {
   const hi = said("cerrá el día");
   const s1 = step("p1", hi.id, { text: "listo" });
