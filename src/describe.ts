@@ -333,11 +333,15 @@ function kindIn(rows: Event[]): Pick<Landing, "kind"> {
 }
 
 /** What a conversation goes by: its own name wins (a group's title); a direct chat carries
- *  none, so the other side's sender name is the name it is known by. */
+ *  none, so the other side's sender name is the name it is known by. The NEWEST naming
+ *  row speaks: a name is what the wire says now, and an old one ("." once stood for
+ *  someone's push name, live 2026-11-16) must not outlive its rename. */
 function nameIn(rows: Event[]): string | undefined {
-  return rows.find((r) => r.envelope.conversation.name)?.envelope.conversation.name ??
+  return rows.findLast((r) => r.envelope.conversation.name)?.envelope.conversation.name ??
     (rows.some((r) => r.envelope.conversation.kind === "direct")
-      ? rows.find((r) => r.envelope.sender?.name)?.envelope.sender?.name
+      ? rows.findLast((r) =>
+        r.envelope.sender?.name && r.envelope.sender.address === r.envelope.conversation.address
+      )?.envelope.sender?.name
       : undefined);
 }
 

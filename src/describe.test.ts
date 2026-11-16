@@ -207,6 +207,27 @@ Deno.test("nameResolver: the directory shows both halves — who, and which", as
   assertEquals(stranger("5491122334455"), undefined);
 });
 
+Deno.test("nameResolver: the newest name speaks, not the first one the log kept", async () => {
+  const at = (id: string, name: string): Event => ({
+    id,
+    ts: "2026-11-16T21:37:13.000Z",
+    type: "message",
+    envelope: {
+      service: "whatsapp",
+      connection_address: "5491133585694",
+      conversation: { address: "5492612349159", kind: "direct", name },
+      sender: { address: "5492612349159", name },
+    },
+    parts: [{ type: "text", kind: "text", text: "hola" }],
+  } as unknown as Event);
+  // read() hands rows oldest first; the push name was "." before it was a name
+  const rows = [at("01-a", "."), at("01-b", "Gasti Manglar")];
+  const resolve = await nameResolver(() => Promise.resolve(rows) as never, [
+    { name: "send", input: { to: "5492612349159" } },
+  ]);
+  assertEquals(resolve("5492612349159")?.name, "Gasti Manglar");
+});
+
 Deno.test("describeSendCard: rows a person judges — where, what it answers, what it says", () => {
   const labels = {
     conversation: "Conversación",
