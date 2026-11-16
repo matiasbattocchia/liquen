@@ -7142,7 +7142,17 @@ Open:
 - Telegram's page goes by code alone. A QR would serve a person at a computer; a phone
   cannot scan its own screen.
 - A restart mid-Telegram begins the page again, the code Telegram sent spent.
-- A shared token, like a new shared account, stays the CLI's.
+- A shared token, like a new shared account, stays the CLI's. So does renewing one, which
+  a shared account allows through `account`: an agent asking again writes its own, which
+  wins for it alone.
+
+### A token's contention follows the rule main fronts by (2026-11-16) — LANDED
+
+`contention` said what a landed row loses to as if the shared row won its variable, while
+`frontedFor` gives an agent's own row the win. It now speaks the same rule: an agent's own
+row is contended only by another of that agent's for its variable, and a shared row by
+another shared one, or by the agents it misses because they hold their own. The CLI doors
+and the token page say what it says.
 
 ### What is open (2026-10-20)
 
