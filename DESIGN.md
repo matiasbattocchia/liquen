@@ -1324,6 +1324,23 @@ The 3×2 grid, each cell real and distinct:
   ticket's, never the link's. With the `agent` tool beside it, offered only where an
   agent's `tools` names it, one agent provisions another: the agent made with a member's
   email, then a sign-in for it sent to that member.
+  **A page is a folder an agent publishes for a WhatsApp conversation** (`src/pages.ts`,
+  the `page` tool in `src/exec/page.ts`), gated `ask` as a send is. Its files go through
+  the session's files port, so the agent publishes only what it could attach, and are
+  kept under `pages/<id>/` in the object store; its row is in the vault under
+  `page:<id>`, owned by the agent, for `pages.days`. Main serves it behind the edge, in
+  two steps. The door, `/pages/<id>`, admits a visitor whose login belongs to the page:
+  the conversation's own number in a direct chat, a seat on the group's roster as the
+  bridge reads it at that moment. The box, `/pages/<id>/<view>/`, serves the files under
+  a view key signed for that page alone, and every file wears the headers that close it
+  in: it loads only its own files (`default-src 'self'`) and runs in an origin of its own
+  (`sandbox` without `allow-same-origin`), so it reaches neither other pages nor the
+  login. The login is a cookie that names a phone, signed with the vault's `pages:sign`
+  key. A direct chat's link carries a token that logs its person in once, posted by a
+  button so a previewer that only fetches spends nothing. Anyone else types their number:
+  main checks it belongs before anything is sent, DMs a code from the page's account
+  through the bridge, with no line in the log, so no agent ever holds a code, and answers
+  the same whether or not it sent one.
   **The two Slack doors (`liquen connect slack {app,user}`, `connect/slack/connect.ts`)**: the dashboard's
   "Install to Workspace" button IS an OAuth flow with Slack hosting the redirect, so a
   dev self-serves tokens with zero public surface — `app` is one sitting at the console:
@@ -3933,6 +3950,10 @@ loudly, the same law as an unknown config key.
   address changes. With no `publicUrl` the org is reached on localhost only, and what
   needs the internet to dial in — Graph's push, a member's Slack sign-in, a GitHub webhook
   short of `gh webhook forward` — waits for the address to exist, said by the door.
+- **Pages stand beside the grammar.** `<base>/pages/<id>` is a page an agent published,
+  and the edge hands every path under `/pages/` to `data/run/pages.sock`, which main
+  serves, as it came (`pagesSocket`). With main down the edge answers 502, as it does for
+  an ingest.
 - **A crash comes back, a refusal does not.** `entry` picks the exit code by the same rule
   it picks the message: an `Error` the program modeled is a refusal and exits `REFUSAL`
   (2), the runtime's own is a fault and exits 1. The supervisor reads that code (`comesBack`, src/start.ts): a

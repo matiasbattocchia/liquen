@@ -201,8 +201,8 @@ export function docsSuite(s: DocsSubstrate): void {
       await seedAgent(bed, "alter");
       // a store with no doc and no manifest takes every system doc, and records each
       const first = await bringSystemDocs(bed, manifest);
-      assertEquals(first.laid.length, 23);
-      assertEquals(Object.keys(manifest.rows).length, 23);
+      assertEquals(first.laid.length, 24);
+      assertEquals(Object.keys(manifest.rows).length, 24);
       const listed = await docs.list({ agent: "alter" });
       assertEquals(refs(listed).sort(), [
         "agent/instruction/instructions",
@@ -231,6 +231,7 @@ export function docsSuite(s: DocsSubstrate): void {
           "contact",
           "conversation",
           "edit",
+          "page",
           "read",
           "search",
           "send",
@@ -334,7 +335,7 @@ export function docsSuite(s: DocsSubstrate): void {
       assertEquals(adopted.laid, []);
       assertEquals(adopted.kept.sort(), ["skills/workflows", "tools/send"]);
       assertEquals(await docs.text("system", "", "skills/workflows"), null);
-      assertEquals(Object.keys(manifest.rows).length, 23);
+      assertEquals(Object.keys(manifest.rows).length, 24);
       assertEquals((await bringSystemDocs(bed, manifest)).kept, []);
     });
   });

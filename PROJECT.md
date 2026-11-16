@@ -7165,6 +7165,36 @@ backfill as before. A post stamped longer ago than `POSTING_MS` (5s) is a dispat
 died mid-post and holds nothing; its echo is the unclaimed-CC guard's, unchanged. A row a
 dispatcher never takes (its `select` sends nothing) is never in flight.
 
+### Pages, and a login by WhatsApp (2026-11-16) — LANDED
+
+The CHANGES batch of 16 Nov, all five items.
+
+- **The tool.** `page({to, files, dir?, title?, id?})` reads the files through the
+  session's files port and copies them under `pages/<id>/`; `remove` takes a page down.
+  The conversation is one the agent's scoped log reads, by address or by name, and only
+  WhatsApp's. Gated `ask`, in `DEFAULT_TOOLS`.
+- **The box.** Every file is served under a view key with `sandbox allow-scripts
+  allow-forms allow-popups` and `default-src 'self' 'unsafe-inline' data: blob:`, open to
+  any origin (`access-control-allow-origin: *`), since the sandbox makes its own fetches
+  cross-origin and the key in the path is their lock.
+- **The door.** A login cookie that names a phone, checked against the conversation at
+  each opening; a direct chat's token spent by a button; a code by DM through the bridge,
+  sent only to a number that belongs, capped at one a minute and five an hour, answered
+  the same either way. Codes and caps live in main's memory: a restart asks for a new
+  code.
+- **The row.** In the vault, owned by the agent, so the agent's removal takes it; the
+  sweep, at boot and hourly, lets go of the files a row no longer stands for.
+
+Open:
+
+- Nothing here has met a browser or a live WhatsApp account. Whether a sandboxed page's
+  `'self'` admits its own files in every browser is untested.
+- A page's script can still move its window elsewhere, carrying what it shows.
+- The pages and the code speak English, as the sign-in pages do.
+- The code DM leaves no line in the log, but its receipts reach the ingest as a stub row
+  the message never fills, and a later history sync of the chat brings the message in.
+- Only WhatsApp logs a visitor in, so a page is for a WhatsApp conversation alone.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

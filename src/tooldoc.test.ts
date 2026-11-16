@@ -14,6 +14,7 @@ import { openFileDocs } from "./store/docs.ts";
 import { bringSystemDocs, onFiles } from "./store/seed.ts";
 import { connectSpec } from "./exec/connect.ts";
 import { AGENT_SPEC } from "./exec/agent.ts";
+import { PAGE_SPEC } from "./exec/page.ts";
 
 const PIN: ToolShape = {
   spec: {
@@ -168,6 +169,7 @@ Deno.test("the seeded docs word every builtin tool, the numbers filled from code
       ...Object.values(DOC_TOOLS),
       { spec: connectSpec(["google", "token"]) },
       { spec: AGENT_SPEC },
+      { spec: PAGE_SPEC },
     ];
     await checkToolDocs(shapes, read);
     const tools = await wordedAll(shapes, read);
