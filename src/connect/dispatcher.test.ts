@@ -17,13 +17,16 @@ function fakeLog(queued: Event[] = []) {
     return () => {};
   };
   const patches: { id: EventId; patch: DeliveryPatch }[] = [];
+  const taken: EventId[] = []; // the `posting_at` stamps, apart from what the wire answered
   return {
     subscribe,
     read: () => Promise.resolve(queued),
     push: (e: Draft) => deliver?.({ ...e, id: e.id ?? newId() } as Event),
     patches,
+    taken,
     setDelivery: (id: EventId, patch: DeliveryPatch) => {
-      patches.push({ id, patch });
+      if (patch.status?.posting_at !== undefined) taken.push(id);
+      else patches.push({ id, patch });
       return Promise.resolve();
     },
   };
@@ -101,6 +104,27 @@ Deno.test("dispatcher: a select of null is nothing to send — no post, no stamp
   await settle();
   assertEquals(posts, 0);
   assertEquals(log.patches.length, 0);
+  assertEquals(log.taken.length, 0); // never taken to the wire: no post in flight
+});
+
+Deno.test("dispatcher: a row is stamped in flight before its post goes out", async () => {
+  const log = fakeLog();
+  const seen: EventId[][] = [];
+  createDispatcher<string>({
+    subscribe: log.subscribe,
+    read: log.read,
+    service: "github",
+    select: () => "x",
+    post: () => {
+      seen.push([...log.taken]); // what the store said while the post was on the wire
+      return Promise.resolve({ external_id: "svc:1" });
+    },
+    setDelivery: log.setDelivery,
+  });
+  log.push(outbound({ id: "e1" }));
+  await settle();
+  assertEquals(seen, [["e1"]]);
+  assertEquals(log.patches.length, 1); // …and then what the wire answered
 });
 
 Deno.test("dispatcher: a throwing post ALWAYS stamps failed (error_code when it has a class) and reports", async () => {

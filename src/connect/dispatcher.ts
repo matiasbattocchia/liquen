@@ -2,7 +2,8 @@
  * connect/dispatcher.ts — the DISPATCH loop every connector runs: log → world.
  *
  * A dispatcher subscribes to the log, picks the agent's OUTBOUND rows on its service,
- * posts each one in publish order, and stamps the row with what the wire answered —
+ * posts each one in publish order — the row stamped `posting_at` as it goes — and stamps
+ * the row with what the wire answered —
  * `external_id` (the echo-reconciliation key, §4), the wire's own name for our side, and
  * `state: dispatched` with its `dispatched_at`. A post that throws stamps `failed`
  * (`failedStatus`, §5): the row IS the agent's only sign that a queued send never left, so
@@ -94,6 +95,11 @@ export function createDispatcher<W>(deps: DispatcherDeps<W>): () => Promise<void
       // waited behind others is not posted
       const [now] = await deps.read({ beforeId: `${event.id}0`, limit: 1 }).catch(() => []);
       if (now?.id === event.id && now.envelope.status !== "queued") return;
+      // in flight from here: what tells an echo that beats the id home from a person's line
+      // (the mirror reads it). A stamp the store refuses costs that only, never the post
+      await deps.setDelivery?.(event.id, {
+        status: { posting_at: new Date().toISOString() },
+      }).catch(() => {});
       try {
         const posted = await deps.post(work, event);
         await deps.setDelivery?.(event.id, {

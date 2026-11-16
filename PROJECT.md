@@ -7154,6 +7154,17 @@ row is contended only by another of that agent's for its variable, and a shared 
 another shared one, or by the agents it misses because they hold their own. The CLI doors
 and the token page say what it says.
 
+### A person's line on a surface reaches the mind at once (2026-11-16) — LANDED
+
+Fan-in no longer waits a fixed second before copying a surface line home. A dispatcher
+stamps `posting_at` on a row before it posts, so the store shows which posts are in flight,
+and only one of those can come back as an echo before its row holds its id. Fan-in waits
+for the posts in flight in that conversation and nothing else: none, and the line copies
+at once; some, and it copies the moment they land, an echo among them absorbed by the
+backfill as before. A post stamped longer ago than `POSTING_MS` (5s) is a dispatcher that
+died mid-post and holds nothing; its echo is the unclaimed-CC guard's, unchanged. A row a
+dispatcher never takes (its `select` sends nothing) is never in flight.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
