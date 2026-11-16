@@ -1313,7 +1313,9 @@ The 3×2 grid, each cell real and distinct:
   the vault per sign-in, keyed by service and by who signs in (the account when it is known
   before, else whom the grant is for), so two asks share one sign-in. A link service's
   handler is served by main while one of its tickets is open, and a code service's poll
-  runs there, noting on the ticket what a restart needs. The handler hands the account the
+  runs there, noting on the ticket what a restart needs. A secret a person types (a
+  Telegram code, a pasted token) goes on a page main draws behind the link, never through
+  a chat or the model. The handler hands the account the
   service vouched for to the ticket before anything is written: a reconnect lands only as
   its account, a grant for another agent only as the handle on their row, and nobody's
   account changes owner. The link carries the ticket's id alone, so whom it binds is the

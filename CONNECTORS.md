@@ -111,20 +111,30 @@ and says whether it is this machine's browser (`openBrowser`) or a link to send.
 A shipped service's sign-in is main's (`src/connect/signin.ts`), whoever asks for it: the
 `connect` tool, or a CLI door over main's socket (`signInHere`, door.ts). Each sign-in is a
 ticket in the vault (`sign_ins`), keyed by service and by who signs in: the account when it
-is known before the sign-in (a reconnect, a WhatsApp pairing code's number), else whom the
-grant is for. A second ask under an open key gets the first one back, so a link goes out
-once and a phone is never linked twice.
+is known before the sign-in (a reconnect, a WhatsApp pairing code's number, a token's vault
+key), else whom the grant is for. A second ask under an open key gets the first one back,
+so a link goes out once and a phone is never linked twice. The tool offers the services
+main holds a flow for, and nothing else.
 
 - **A link service** (Google, Microsoft, Slack's user leg) has its handler served by main on
   the oauth socket while any of its tickets is open, and shut when the last one ends. The
   link carries the ticket alone, so nobody holding it can change whom it binds. Each click
   mints a state pointing at the ticket, and the first callback settles it.
+- **A page service** (Telegram, Mercado Pago, a pasted token) is a link whose door draws a
+  form (`connect/page.ts`): the person types the secret there, and it goes through main to
+  the vault without the model seeing it. Telegram's page asks for the number, the code and
+  the two-step password in turn, its sign-in held in main's memory; Mercado Pago's asks for
+  the access token, which `/users/me` vouches for; a token's page shows the variable, the
+  hosts and the paths before the paste, and runs the probe. A failure before the judge
+  draws the form again, the ticket open. Each grant is written by its CLI door's path, and
+  a token declares no connection.
 - **A code service** (WhatsApp's pairing code or QR, GitHub's device flow) runs its poll in
   main, noting on the ticket what a restart needs to take it up (the bridge's pending
   session, the device code). The device code itself never leaves the vault.
 - **The judge.** Before anything is written, the handler or the poll hands the account the
   service vouched for to the ticket (`Gate.judge`). A reconnect lands only as its account; a
-  grant for another agent only as the handle on their row (email, or phone for WhatsApp);
+  grant for another agent only as the handle on their row (email, or phone for WhatsApp and
+  Telegram; a token, capability rather than identity, matches none);
   and an account someone else owns, or a shared one asked as anyone's own, is never taken
   over. The first callback settles the ticket whatever it brings.
 - **The outcome** is said once: to each call that asked, as its update, final, and to each CLI
