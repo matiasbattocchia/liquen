@@ -7094,7 +7094,8 @@ The CHANGES batch of 15 Nov, all seven items.
   main, an embedder through `raise.ts`. Main never applies.
 - **Read on each use.** `config_version`, moved by a trigger on `config` and `agents`,
   lets `liveConfig` and `liveKnobs` read again only when something changed. Main refreshes
-  at each turn, tick and sign-in and reconciles every agent when the count moved; the
+  at each turn, tick and sign-in and reconciles every agent when the count moved, laying
+  an attached interface's tune back over the row; the
   sandbox asks the locale and clock per command and the bash wait per shell; the mirror and
   the transcriber ask per line. The connectors read their knobs per batch, delivery, send,
   probe or account opening. A spec's `start` names what only a start takes up: Google's
@@ -7114,8 +7115,6 @@ Open:
 - Turning a disabled service back on from the file meets the store's `false` as a
   conflict, since the file never said it before: it takes `liquen connect`, or
   `--overwrite`, which takes every other file value too.
-- Every config write moves the count, and main then retunes every agent, which puts back
-  the model and effort an attached interface had tuned, as a reload always did.
 - An org's own connectors keep reading their knobs once, until each moves to `liveKnobs`.
 
 ### What is open (2026-10-20)

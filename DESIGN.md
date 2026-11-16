@@ -2950,8 +2950,9 @@ knowing what was said through it; its `model` · `effort` · `provider` are what
 thinks with for as long as the connection lives — `liquen repl --model … --effort …
 --provider …`, the CLI alike — checked as boot checks the roster, so a provider that cannot
 run the model at that effort refuses the attach, and the hang-up puts the roster's values
-back, the lifetime `cwd` has; the store's settings stay what the daemon thinks with on
-its own). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
+back, the lifetime `cwd` has; the tune lives in main alone, laid back over the row each
+time a store write retunes the agent, and the store's settings stay what the daemon
+thinks with on its own). The tail also carries the turn's **edges**: `{status: "busy"}` when a turn
 begins, `{status: "idle", after}` when `decide` answers `ignore` — the one fact an attach
 client cannot compute, since only the deciding read runs under the lease. `after` is the
 last event that read saw, so a client that wrote id M knows its line was weighed once
