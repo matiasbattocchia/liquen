@@ -34,8 +34,8 @@ async function withTranscriber(
     publish: log.publish,
     read: (q) => log.read(q),
     storage,
-    command,
-    ...org,
+    command: () => command,
+    locale: () => org.locale,
     onError: (_e, err) => errors.push(err),
   });
   const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 20_000) => {

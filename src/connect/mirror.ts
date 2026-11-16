@@ -122,8 +122,9 @@ export interface MirrorDeps {
   principalsOf?: (agentId: string) => Promise<string[] | "*">;
   /** The org's language (config `locale`) — the harness's own words on a surface: the tags,
    *  the reply hint, the presence line. The model's voice needs no translating: the prefix
-   *  states the locale and it answers in it. Unset, or a tongue we don't speak ⇒ English. */
-  locale?: string | null;
+   *  states the locale and it answers in it. Unset, or a tongue we don't speak ⇒ English.
+   *  Asked for each line it carries. */
+  locale?: () => string | null | undefined;
   /** An agent's presence level (§9): what its surfaces hear of it at work, beyond its
    *  words, its cards and its errors. Unset, `waiting`. */
   presence?: (agentId: string) => PresenceLevel;
@@ -142,7 +143,6 @@ export interface MirrorDeps {
  *  passes a smaller one rather than sitting out the real window. */
 export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): () => void {
   const now = deps.now ?? (() => new Date().toISOString());
-  const w = words(deps.locale);
   let chain: Promise<void> = Promise.resolve();
   const enqueue = (e: Event, work: () => Promise<void>) => {
     chain = chain.then(work).catch((err) => deps.onError?.(e, err));
@@ -159,6 +159,7 @@ export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): ()
     const mind = mindOf(e);
     if (mind !== null) {
       enqueue(e, async () => {
+        const w = words(deps.locale?.());
         if (answered(e)) told.delete(mind);
         if (e.type === "error" && (e as ErrorEvent).parts[0].data.failed) {
           const said = errorLine(e as ErrorEvent, w);

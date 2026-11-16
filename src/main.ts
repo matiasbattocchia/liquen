@@ -103,7 +103,9 @@ import {
   DEFAULT_BASH_WAIT_MS,
   DEFAULT_DEBOUNCE_MS,
   DEFAULT_PRESENCE,
+  disabled,
   findRoot,
+  isDisabled,
   orgFlag,
   orgOf,
   parseDeclared,
@@ -112,10 +114,9 @@ import {
   STOP_TIMEOUT_MS,
   TICK_MS,
 } from "./config.ts";
-import { applyFile } from "./org.ts";
 import { declareConnection, IDLE_DAYS, idleAgents } from "./roster.ts";
-import { reloaded } from "./reload.ts";
-import { createSignIns, ends, type SignInAsk, type Word } from "./connect/signin.ts";
+import { reconciled } from "./reload.ts";
+import { createSignIns, ends, type SignInAsk, type SignIns, type Word } from "./connect/signin.ts";
 import { googleSignIn } from "./connect/google/signin.ts";
 import { microsoftSignIn } from "./connect/microsoft/signin.ts";
 import { slackSignIn } from "./connect/slack/signin.ts";
@@ -135,9 +136,10 @@ const COLLECT_MS = 3_600_000;
 
 export interface MainConfig {
   dir: string; // the org's data root (§9): log/ · system/ · shared/ · agents/
-  /** The org's root. Its `config.yaml` is applied to the store at start, and the org is
-   *  what the store then holds: the roster's rows, each agent's settings resolved over
-   *  the org's — agentId = the row's name, the session's conversation = `mind@<name>`. */
+  /** The org's root. Its `config.yaml` was applied to the store by whoever raised main,
+   *  and the org is what the store holds: the roster's rows, each agent's settings
+   *  resolved over the org's — agentId = the row's name, the session's conversation =
+   *  `mind@<name>`. */
   root?: string;
   /** One agent per principal, given in code and run as given (tests). The `Policy` half
    *  (using/check, §6) never reaches xi: main lifts it into the agent's scoped log —
@@ -198,20 +200,20 @@ export async function start(
   const media = memoizedLoader((uri) => loadMediaBlock(uri, storage));
   // the store IS the org (§9): no explicit principals ⇒ the roster's rows are the agents
   const derived = config.principals === undefined; // …and gets the connections-map policy (§6)
-  // boot is a reload at start: the file is applied to the store — a key it declares
-  // overwrites, a key it leaves out keeps the store's value, an agent it does not name is
-  // left alone — and from here the org is what the store holds. Explicit principals
-  // (tests) are rows too: policy derives from rows (§6), the ingest classifier scans the
-  // handles (email/phone → member), and render names members by them (§5).
-  if (derived && config.root) await applyFile(config.root, log);
-  else if (!derived) await log.putAgents(config.principals!.map(rowOf));
+  // the org is what the store holds: whoever raised main applied the file first (§9).
+  // Explicit principals (tests) are rows too: policy derives from rows (§6), the ingest
+  // classifier scans the handles (email/phone → member), and render names members by
+  // them (§5).
+  if (!derived) await log.putAgents(config.principals!.map(rowOf));
   const readOrg = async () => orgOf(deployment, await log.config(), await log.agents());
-  // the org as it stands, read again whenever an agent is reconciled: an agent's settings
-  // resolve its own scope over the org's when they are read
+  // the org as it stands, read on each use: a turn, a tick and a sign-in each start by
+  // asking the store's config version (`refresh`), and read the org again when it moved.
+  // An agent's settings resolve its own scope over the org's when they are read
+  let version = await log.configVersion();
   let org = await readOrg();
-  // what is read once, at start: where the org's parts live, its clock and locale, the
-  // machinery's knobs. Explicit principals (tests) carry their own settings and need none.
-  const catalog = derived ? org : null;
+  // the org's sections as main reads them; explicit principals (tests) carry their own
+  // settings and read none. `deployment` is the file's, taken at start
+  const catalog = () => derived ? org : null;
   // what a caller passes in code rides beside the row — a policy, a compiled gate, a
   // retry pace: seams, and no row carries a function.
   const inCode = new Map((config.principals ?? []).map((p) => [p.agentId, p]));
@@ -276,7 +278,7 @@ export async function start(
     await checkToolDocs(
       [
         ...OWN_TOOLS,
-        bashShape(catalog?.system.bashWaitMs ?? DEFAULT_BASH_WAIT_MS),
+        bashShape(catalog()?.system.bashWaitMs ?? DEFAULT_BASH_WAIT_MS),
         ...Object.values(DOC_TOOLS),
         { spec: CONNECT_SPEC },
         { spec: AGENT_SPEC },
@@ -286,18 +288,33 @@ export async function start(
   }
   // the vault: the model keys below, and the rooms' grants further down
   const creds = await store.vault();
+  // the start of each unit of work: the org read again when the store's config version
+  // moved, and every agent brought in line with its row and what it now resolves. The
+  // agents are reconciled beside the work, never under it: the work runs on as it began
+  let reconcileAll: () => Promise<void> = () => Promise.resolve();
+  const refresh = async (): Promise<void> => {
+    const now = await log.configVersion();
+    if (now === version) return;
+    version = now;
+    org = await readOrg();
+    void reconcileAll().catch((err) => console.error("[main] reconcile:", err));
+  };
   // every sign-in in flight (connect/signin.ts): the tool's and the CLI doors', one table
-  // in the vault, each link service's door served here while one of its tickets is open
+  // in the vault, each link service's door served here while one of its tickets is open.
+  // Each one opens on the org as it stands: its edge, and whether its service is on
   const root = config.root;
-  const signIns = root && catalog
+  const table = root && derived
     ? createSignIns({
       root,
       creds,
       log,
-      edge: catalog.edge,
+      get edge() {
+        return org.edge;
+      },
+      enabled: (service) => !isDisabled(org, service),
       declare: async (service, knobs) => {
         if (await declareConnection(log, service, knobs)) {
-          console.error(`[sign-in] declared connections.${service}: ${await reloaded(root)}`);
+          console.error(`[sign-in] declared connections.${service}: ${await reconciled(root)}`);
         }
       },
     }, {
@@ -308,6 +325,13 @@ export async function start(
       github: createGithubSignIn(),
     })
     : null;
+  const signIns: SignIns | null = table && {
+    ...table,
+    open: async (ask, listen) => {
+      await refresh();
+      return await table.open(ask, listen);
+    },
+  };
   // one client per provider and key, the key read off the vault at every call (an agent's
   // own before the org's, the environment's when it holds none); a test's scripted edge
   // stands in for all of them
@@ -317,13 +341,14 @@ export async function start(
   // the exec plane (§9): one provider owns the proxy, the grounds and the shells; main
   // holds only the provider, and every session's exec, ambient and files come from it —
   // this machine's, bare or in bubbles, or the sandbox gateway's the catalog names
-  const bubble = catalog?.deployment.sandbox === "bwrap";
-  const remote = bubble ? null : catalog?.deployment.sandbox ?? null;
+  const bubble = catalog()?.deployment.sandbox === "bwrap";
+  const remote = bubble ? null : catalog()?.deployment.sandbox ?? null;
   const updating = new Set<Promise<void>>();
   const planeOptions = {
-    locale: catalog?.shared.locale,
-    timezone: catalog?.shared.timezone,
-    bashWaitMs: catalog?.system.bashWaitMs,
+    // asked as a shell opens, and the locale and clock as each command runs
+    locale: () => catalog()?.shared.locale,
+    timezone: () => catalog()?.shared.timezone,
+    bashWaitMs: () => catalog()?.system.bashWaitMs,
     tell: (u: SessionUpdate) => {
       // a shell's word on a call (late.ts): published as the update it is. Held until
       // stored, so the shutdown that kills every job tells each one before the log closes
@@ -339,13 +364,13 @@ export async function start(
       url: remote,
       token: sandboxToken(),
       storage,
-      sleepMinutes: catalog?.deployment.sandboxSleepMinutes,
+      sleepMinutes: catalog()?.deployment.sandboxSleepMinutes,
       ...planeOptions,
     })
     : await openLocalSandbox(dir, {
       store,
       bubble,
-      mounts: catalog?.deployment.mounts,
+      mounts: catalog()?.deployment.mounts,
       // read at each call, so a change of `export` reaches the next command
       exports: (agentId) => inCode.has(agentId) ? [] : settingsOf(org, agentId).export,
       ...planeOptions,
@@ -371,7 +396,7 @@ export async function start(
         "bubble of its own that sees its folder, the shared floor and the system",
     );
   }
-  for (const home of bubble ? partialToolHomes(catalog?.deployment.mounts ?? []) : []) {
+  for (const home of bubble ? partialToolHomes(catalog()?.deployment.mounts ?? []) : []) {
     console.error(
       `[exec] a bubble shows ${home} only by its PATH folders: deployment.mounts ` +
         `["${home}"] shows it whole, so the tools there run`,
@@ -398,24 +423,33 @@ export async function start(
   //
   // the address book (§9): one port per service that keeps one — whatsapp's rides the
   // bridge the dispatcher already talks to, on the same token, and carries both legs:
-  // `contact` writes through it, `search` reads through it
-  const bridge = catalog?.connections?.whatsapp?.bridgeUrl;
-  const bridgeUrl = typeof bridge === "string" ? bridge : DEFAULT_BRIDGE_URL;
+  // `contact` writes through it, `search` reads through it. Its address is the org's as
+  // it stands, the default until one is declared
+  const bridgeUrl = () => {
+    const bridge = catalog()?.connections?.whatsapp?.bridgeUrl;
+    return typeof bridge === "string" ? bridge : DEFAULT_BRIDGE_URL;
+  };
   const bridgeToken = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
+  // a service's port answers while the service is on, and refuses in a sentence while it
+  // is disabled
+  const on = <T extends object>(service: string, port: T): T =>
+    guarded(port, () => {
+      if (isDisabled(org, service)) throw disabled(service);
+    });
   // telegram's ports ask the connector's process, which alone holds each account's session
   const telegram = portCall(dir);
   const contact: XiPorts["contact"] = {
-    whatsapp: whatsappContact(bridgeUrl, bridgeToken),
-    telegram: telegramContact(telegram),
+    whatsapp: on("whatsapp", whatsappContact(bridgeUrl, bridgeToken)),
+    telegram: on("telegram", telegramContact(telegram)),
   };
   // the rooms (§9): one port per service whose API opens and changes conversations, over
   // the vault the dispatcher posts with — so a room is opened by the grant that speaks in
   // it; whatsapp's rides the bridge, whose session is the grant
   const rooms: XiPorts["rooms"] = {
-    slack: slackRooms({ tokenFor: slackTokenFor(creds) }),
-    microsoft: teamsRooms({ broker: createGrantBroker({ creds }), creds }),
-    whatsapp: whatsappRooms(bridgeUrl, bridgeToken),
-    telegram: telegramRooms(telegram),
+    slack: on("slack", slackRooms({ tokenFor: slackTokenFor(creds) })),
+    microsoft: on("microsoft", teamsRooms({ broker: createGrantBroker({ creds }), creds })),
+    whatsapp: on("whatsapp", whatsappRooms(bridgeUrl, bridgeToken)),
+    telegram: on("telegram", telegramRooms(telegram)),
   };
 
   let stopped = false;
@@ -464,7 +498,7 @@ export async function start(
     const port = sessionId === MIND ? minds.get(agentId)?.log : named.get(who)?.log;
     if (!port) return;
     readTurns(port, { agentId, id: sessionId }, 1, TURN_PAGE, {
-      prices: catalog?.system.prices ?? [],
+      prices: catalog()?.system.prices ?? [],
     })
       .then(([t]) => {
         if (!t || t.end === "open" || told.get(who) === t.id) return;
@@ -509,7 +543,7 @@ export async function start(
             sessionId,
             signIns,
             log,
-            clock: (ms) => hhmm(new Date(ms).toISOString(), catalog?.shared.timezone),
+            clock: (ms) => hhmm(new Date(ms).toISOString(), catalog()?.shared.timezone),
           }),
         }
         : {}),
@@ -562,7 +596,10 @@ export async function start(
       if (stopped || !minds.has(a.config.agentId)) return;
       const mine = inflight.get(key) ?? new Set<Promise<unknown>>();
       inflight.set(key, mine);
-      const run = xi(a.config, a.ports, trigger)
+      // the turn runs on the org as it stands when the turn starts
+      const run = refresh()
+        .catch((err) => console.error("[main] the org could not be read again:", err))
+        .then(() => xi(a.config, a.ports, trigger))
         .then((r) => {
           if (r === "held" && mine.size > 1) owed.add(key);
         })
@@ -598,11 +635,12 @@ export async function start(
   // Only world triggers wait. A trigger-less poke (boot, the clock) has no burst to wait for,
   // and the agent's own writes are how a turn CHAINS to the next one — delaying those would
   // put the debounce between every step of a single piece of work.
-  const debounceMs = config.debounceMs ?? catalog?.system.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+  const debounce = () => config.debounceMs ?? catalog()?.system.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const settling = new Map<string, ReturnType<typeof setTimeout>>();
   const wake = (a: Runner) => {
     const fire = invoke(a);
     return (trigger?: Event) => {
+      const debounceMs = debounce();
       const own = trigger !== undefined &&
         ownComplex(trigger, { agentId: a.config.agentId, id: a.config.sessionId });
       // the class gate, run here too: an irrelevant event must not even arm a timer, or
@@ -843,13 +881,17 @@ export async function start(
   // main's socket (roster.ts): a caller that wrote the roster pokes here, and is answered
   // with what main did; a CLI door asks for a sign-in at `/sign-in`. The harness's own
   // user's alone: an agent's user cannot connect
+  const everyAgent = async () => [
+    ...new Set([...rows.keys(), ...(await log.agents()).map((a) => a.agentId)]),
+  ];
+  reconcileAll = async () => {
+    for (const name of await everyAgent()) await reconcile(name);
+  };
   const asked = await serveSocket(`${dir}/run/main.sock`, async (req) => {
     if (new URL(req.url).pathname === "/sign-in") return await signInOver(req);
     try {
       const body = req.method === "POST" ? await req.json() : {};
-      const names = typeof body.agent === "string"
-        ? [body.agent]
-        : [...new Set([...rows.keys(), ...(await log.agents()).map((a) => a.agentId)])];
+      const names = typeof body.agent === "string" ? [body.agent] : await everyAgent();
       const said: string[] = [];
       for (const name of names) said.push(await reconcile(name, body.down ? "down" : undefined));
       return new Response(said.join(" · ") || "no agents");
@@ -941,7 +983,7 @@ export async function start(
       (await log.agents()).find((a) => a.agentId === id)?.principals === "*"
         ? "*"
         : await log.principalsOf(id),
-    locale: catalog?.shared.locale,
+    locale: () => catalog()?.shared.locale,
     presence: presenceOf,
     asked: (id) => presence.asked(id),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
@@ -949,15 +991,15 @@ export async function start(
   }));
   // the transcriber rides the RAW log too (§5): connector-neutral — an audio message is an
   // audio message whatever surface it landed on, including alias conversations the scoped
-  // ports hide. Inert unless the org configured an audio processor.
-  if (catalog?.processors.audio) {
+  // ports hide. Inert while the org configures no audio processor.
+  if (derived) {
     unsubs.push(createTranscriber({
       subscribe: (l, o) => log.subscribe(l, o),
       publish: log.publish,
       read: (q) => log.read(q),
       storage,
-      command: catalog.processors.audio,
-      locale: catalog.shared.locale,
+      command: () => org.processors.audio,
+      locale: () => org.shared.locale,
       onError: (e, err) =>
         console.error(`transcriber FAILED on ${e.envelope.conversation.address}:`, err),
     }));
@@ -984,13 +1026,15 @@ export async function start(
     agents: () =>
       [...minds.values()].map((a) => ({ agentId: a.config.agentId, timezone: a.config.timezone })),
     docs,
-    backlogHours: config.backlogHours ?? catalog?.shared.backlogHours ??
-      DEFAULT_BACKLOG_HOURS,
+    get backlogHours() {
+      return config.backlogHours ?? catalog()?.shared.backlogHours ?? DEFAULT_BACKLOG_HOURS;
+    },
   };
   let beating: Promise<unknown> | undefined;
   const ticker = setInterval(() => {
     machine.look(); // a wake is stamped within a tick even when no turn reads it (awake.ts)
-    beating ??= tick(log, clock)
+    beating ??= refresh()
+      .then(() => tick(log, clock))
       .then(
         (beat) => {
           for (const f of beat.failed) console.error(`the tick's ${f.pass} pass failed:`, f.error);
@@ -1074,8 +1118,22 @@ function rowOf(p: AgentConfig & Policy): AgentRow {
   };
 }
 
-/** Resolve when `p` settles or `ms` elapses, whichever comes first — and never leave the
- *  timer dangling (an uncleared setTimeout would keep the event loop alive on a clean stop). */
+/** A port whose every leg runs `check` first: the same legs, each refused by what `check`
+ *  throws. */
+function guarded<T extends object>(port: T, check: () => void): T {
+  return Object.fromEntries(
+    Object.entries(port).map(([leg, call]) => [
+      leg,
+      typeof call === "function"
+        ? async (...args: unknown[]) => {
+          check();
+          return await call.apply(port, args);
+        }
+        : call,
+    ]),
+  ) as T;
+}
+
 /** The sandbox gateway's bearer token: a secret, so the environment's, and a boot refusal
  *  when the catalog names a gateway and the environment holds none. */
 function sandboxToken(): string {
@@ -1086,6 +1144,8 @@ function sandboxToken(): string {
   return token;
 }
 
+/** Resolve when `p` settles or `ms` elapses, whichever comes first — and never leave the
+ *  timer dangling (an uncleared setTimeout would keep the event loop alive on a clean stop). */
 function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
   return new Promise<void>((resolve) => {
     const t = setTimeout(resolve, ms);

@@ -80,13 +80,15 @@ export interface LocalSandboxOptions {
   agents?: string[];
   /** The org's locale, issued into user space under the names every program reads (§9):
    *  the shell speaks the org's language, and a script the agent runs by hand does too.
-   *  Null is the catalog's word for none. */
-  locale?: string | null;
+   *  Null is the catalog's word for none. Asked as each command runs. */
+  locale?: () => string | null | undefined;
   /** The org's clock, issued into user space as `TZ`: `date`, and every stamp a program
-   *  the agent runs prints, reads the zone its system prompt names, not the machine's. */
-  timezone?: string | null;
-  /** The `system.bashWaitMs` knob: how long a call is waited on by default. */
-  bashWaitMs?: number;
+   *  the agent runs prints, reads the zone its system prompt names, not the machine's.
+   *  Asked as each command runs. */
+  timezone?: () => string | null | undefined;
+  /** The `system.bashWaitMs` knob: how long a call is waited on by default. Asked as a
+   *  session's shell opens. */
+  bashWaitMs?: () => number | undefined;
   /** An agent's `export` knob, asked at each call: the variables of this process's
    *  environment its shells inherit. One the environment does not hold is not issued. */
   exports?: (agentId: string) => string[];
@@ -125,7 +127,6 @@ export async function openLocalSandbox(
   // space gets the placeholder + proxy env, never a real credential
   const proxy = await installProxy(dir, store);
   const storage = store.storage();
-  const localeEnv = orgEnv(locale, timezone);
   const grounds = new Map<string, ExecGround>();
   const add = async (agentId: string) => {
     if (grounds.has(agentId)) return;
@@ -139,7 +140,7 @@ export async function openLocalSandbox(
     const userEnv = async () => ({
       ...exported(),
       ...(await proxy.env(agentId)),
-      ...localeEnv,
+      ...orgEnv(locale?.(), timezone?.()),
     });
     const bubbled = bubble ? () => openBubble({ dir, agentId, mounts }) : undefined;
     grounds.set(agentId, await installExecGround(dir, agentId, userEnv, bashWaitMs, bubbled));
@@ -200,9 +201,9 @@ export interface CloudflareSandboxOptions {
   token: string;
   /** Where a file the agent attaches is kept. */
   storage: Storage;
-  locale?: string | null;
-  timezone?: string | null;
-  bashWaitMs?: number;
+  locale?: () => string | null | undefined;
+  timezone?: () => string | null | undefined;
+  bashWaitMs?: () => number | undefined;
   /** The `deployment.sandboxSleepMinutes` knob: a sandbox's life after its last bash call. */
   sleepMinutes?: number;
   /** Where every shell tells what its calls do after their answers (late.ts). */
@@ -243,7 +244,7 @@ export function openCloudflareSandbox(
   { url, token, storage, locale, timezone, bashWaitMs, sleepMinutes, tell }:
     CloudflareSandboxOptions,
 ): Sandbox {
-  const env = { ...REMOTE_ENV, ...orgEnv(locale, timezone) };
+  const env = () => ({ ...REMOTE_ENV, ...orgEnv(locale?.(), timezone?.()) });
   const minutes = sleepMinutes ?? DEFAULT_SANDBOX_SLEEP_MINUTES;
   const sandboxes = new Map<string, { gateway: Gateway; lease: ReturnType<typeof lease> }>();
   const shells = new Map<string, ExecPlane>();
@@ -270,12 +271,13 @@ export function openCloudflareSandbox(
           const key = sessionAddress(agentId, sessionId);
           let shell = shells.get(key);
           if (!shell) {
+            const waitMs = bashWaitMs?.();
             shell = remoteShell(
               gateway,
               {
                 workspace: REMOTE_HOME,
-                env: () => env,
-                ...(bashWaitMs ? { defaultWaitMs: bashWaitMs } : {}),
+                env,
+                ...(waitMs ? { defaultWaitMs: waitMs } : {}),
                 lease,
               },
               tell && ((u: ShellUpdate) => tell({ ...u, agentId, sessionId })),

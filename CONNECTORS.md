@@ -81,11 +81,16 @@ locates it. Whatever the body prints and exits on its own — a usage line, a mi
 credential — is its own business; the rule is only for what throws.
 
 Configuration follows the harness's own config rules: the connector ships a `config.ts`
-declaring its DEFAULT_s and its `ConnectorSpec`; `connectorConfig` reads the
+declaring its DEFAULT_s and its `ConnectorSpec` as `SPEC`; `connectorConfig` reads the
 `connections.<name>` scope of the org's configuration, as the store holds it — set by
-`config.yaml` at a boot or a reload, or by the connector's door — over the spec's defaults
+`config.yaml` at a start or a reload, or by the connector's door — over the spec's defaults
 (missing keys default, unknown keys a boot error, `check`s run at boot) and returns the
-merged values — nothing is ever written back. Secrets never enter the file — they live in the vault (slack and github keep
+merged values — nothing is ever written back. A running connector reads its knobs on each
+use, a delivery, a poll or a send, through `liveKnobs(root, SPEC, log)`, which reads the
+store again only when its config version moved. A key the process can only take up as it
+starts, the shape it takes, goes in the spec's `start` list, and `liquen reload` names a
+change to it with the `liquen restart <name>` that takes it up. Every connection has
+`enabled` beside its own knobs: false runs nothing for it and keeps the rest. Secrets never enter the file — they live in the vault (slack and github keep
 their app, bot, and grants there) or, for a local bridge, in env (`WA_BRIDGE_TOKEN`).
 
 A connector is reached through the org's edge (DESIGN §9, `src/edge.ts`), and it listens

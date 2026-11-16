@@ -165,4 +165,37 @@ export function agentsSuite(s: Substrate): void {
       assertEquals(Number(schema) > 0, true);
     });
   });
+
+  Deno.test("the base is replaced whole, and touches neither the config nor its version", async () => {
+    await withStore(s, async (log) => {
+      await log.setBase([
+        { scope: "shared", key: "timezone", value: "UTC" },
+        { scope: "roster.ana", key: "principals", value: ["bo"] },
+      ]);
+      const at = await log.configVersion();
+      await log.setBase([{ scope: "shared", key: "locale", value: "es" }]);
+      assertEquals(await log.base(), [{ scope: "shared", key: "locale", value: "es" }]);
+      assertEquals(await log.config(), []);
+      assertEquals(await log.configVersion(), at);
+    });
+  });
+
+  Deno.test("the config version moves on every write to the config or the roster", async () => {
+    await withStore(s, async (log) => {
+      const moves: number[] = [await log.configVersion()];
+      const step = async (write: () => Promise<void>) => {
+        await write();
+        moves.push(await log.configVersion());
+      };
+      await step(() => log.setConfig([{ scope: "shared", key: "locale", value: "es" }]));
+      await step(() => log.unsetConfig("shared", ["locale"]));
+      await step(() => log.putAgents([{ agentId: "ana", mind: "mind@ana" }]));
+      await step(() => log.dropAgent("ana"));
+      for (let i = 1; i < moves.length; i++) assertEquals(moves[i] > moves[i - 1], true);
+      // a read moves nothing
+      await log.config();
+      await log.agents();
+      assertEquals(await log.configVersion(), moves.at(-1));
+    });
+  });
 }

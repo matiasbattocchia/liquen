@@ -74,12 +74,13 @@ export interface TranscriberDeps {
   read: Reader["read"];
   /** Where the audio's bytes are kept. */
   storage: Storage;
-  /** The processor (config `processors.audio`): bytes on stdin → text on stdout. */
-  command: string;
+  /** The processor (config `processors.audio`): bytes on stdin → text on stdout. Asked
+   *  for each note; none, and the note waits for no words. */
+  command: () => string | null | undefined;
   /** The org's locale (config `locale`) — the processor's LANG. What a processor makes of
    *  it is its own business: the harness knows nothing about ASR languages, and the mapping
    *  from a locale to a model's own vocabulary belongs beside that model. */
-  locale?: string | null;
+  locale?: () => string | null | undefined;
   now?: () => string;
   onError?: (event: Event, err: unknown) => void;
 }
@@ -90,8 +91,9 @@ export function createTranscriber(deps: TranscriberDeps): () => void {
   let chain: Promise<void> = Promise.resolve();
   return deps.subscribe((e) => {
     const audio = transcribable(e);
-    if (!audio) return;
-    chain = chain.then(() => transcribe(deps, e as MessageEvent, audio, now))
+    const command = audio && deps.command();
+    if (!audio || !command) return;
+    chain = chain.then(() => transcribe(deps, command, e as MessageEvent, audio, now))
       .catch((err) => deps.onError?.(e, err));
   });
 }
@@ -107,12 +109,13 @@ export function transcribable(e: Event): FilePart | null {
 
 async function transcribe(
   deps: TranscriberDeps,
+  command: string,
   e: MessageEvent,
   audio: FilePart,
   now: () => string,
 ): Promise<void> {
   const parts = await heard(deps, audio.file.uri) ??
-    await partsOf(deps.storage, await hear(deps, audio.file.uri));
+    await partsOf(deps.storage, await hear(deps, command, audio.file.uri));
   if (!parts) return; // a silent clip, or bytes gone: no words to add
   const { service, connection_address, conversation, external_id } = e.envelope;
   await deps.publish({
@@ -170,20 +173,20 @@ async function heard(deps: TranscriberDeps, uri: string): Promise<Part[] | undef
 }
 
 /** The processor run over the object's bytes. */
-async function hear(deps: TranscriberDeps, uri: string): Promise<string> {
+async function hear(deps: TranscriberDeps, command: string, uri: string): Promise<string> {
   const bytes = await deps.storage.get(keyOf(uri));
   if (!bytes) return "";
-  return (await run(deps.command, bytes, PROCESSOR_TIMEOUT_MS, processorEnv(deps))).trim();
+  return (await run(command, bytes, PROCESSOR_TIMEOUT_MS, processorEnv(deps.locale?.()))).trim();
+}
+
+/** The org's locale under the name every program reads: stdin is the audio and stdout is
+ *  the words, so an ambient fact has nowhere but the environment to ride. */
+function processorEnv(locale: string | null | undefined): Record<string, string> {
+  return locale ? { LANG: locale } : {};
 }
 
 /** stdin → stdout through `sh -c`. Sequential write-then-read is safe because a
  *  transcriber emits at the end; killed hard on timeout so the queue survives a hang. */
-/** The org's locale under the name every program reads: stdin is the audio and stdout is
- *  the words, so an ambient fact has nowhere but the environment to ride. */
-function processorEnv(org: { locale?: string | null }): Record<string, string> {
-  return org.locale ? { LANG: org.locale } : {};
-}
-
 async function run(
   command: string,
   bytes: Uint8Array,

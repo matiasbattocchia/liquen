@@ -6,15 +6,16 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import {
   declareConnection,
+  disableConnection,
   ensureRoute,
   idleAgents,
   members,
   poke,
   removeAgent,
-  undeclareConnection,
   upsertAgent,
 } from "./roster.ts";
 import { applyFile, readConfig } from "./org.ts";
+import { enabledIn } from "./config.ts";
 import { openStore } from "./store/mod.ts";
 import type { Log } from "./store/log.ts";
 import { onFiles } from "./store/seed.ts";
@@ -133,39 +134,25 @@ Deno.test("upsertAgent: what it refuses, it refuses before a row is written", as
   });
 });
 
-Deno.test("every key has one owner: a command refuses what the file declares, and changes the rest", async () => {
+Deno.test("a command changes what the file declares too, and the next apply leaves the change alone", async () => {
   await withOrg(async (root, log) => {
-    await assertRejects(
-      () => upsertAgent(root, log, "dubiku", { set: { model: "claude-y" } }),
-      Error,
-      "agents.dubiku.model is declared in config.yaml; edit it there",
-    );
-    await assertRejects(
-      () => upsertAgent(root, log, "dubiku", { identity: { email: "x@y.z" } }),
-      Error,
-      "agents.dubiku.identity.email is declared in config.yaml",
-    );
-    await assertRejects(
-      () => upsertAgent(root, log, "dubiku", { unset: ["model"] }),
-      Error,
-      "agents.dubiku.model is declared",
-    );
-    // what the file leaves out is the command's
-    await upsertAgent(root, log, "dubiku", { identity: { name: "Dubi" }, set: { effort: "high" } });
-    assertEquals((await readConfig(root, log)).agents.dubiku, {
-      identity: { name: "Dubi", email: "d@org.example", phone: null },
-      model: "claude-x",
-      effort: "high",
+    await upsertAgent(root, log, "dubiku", {
+      identity: { name: "Dubi", email: "x@org.example" },
+      set: { model: "claude-y", effort: "high" },
     });
-    // and a boot puts the file's word back over nothing the command set
+    const changed = {
+      identity: { name: "Dubi", email: "x@org.example", phone: null },
+      model: "claude-y",
+      effort: "high" as const,
+    };
+    assertEquals((await readConfig(root, log)).agents.dubiku, changed);
+    // the file said nothing new: an apply takes none of it back
+    assertEquals((await applyFile(root, log)).conflicts, []);
+    assertEquals((await readConfig(root, log)).agents.dubiku, changed);
+    // an agent the file declares is a command's to remove, and stays removed
+    await removeAgent(root, log, "dubiku");
     await applyFile(root, log);
-    assertEquals((await readConfig(root, log)).agents.dubiku.effort, "high");
-    // the file's agent is the file's to remove
-    await assertRejects(
-      () => removeAgent(root, log, "dubiku"),
-      Error,
-      "agents.dubiku is declared in config.yaml; remove it there first",
-    );
+    assertEquals(await log.agents(), []);
   }, "agents:\n  dubiku:\n    identity:\n      email: d@org.example\n    model: claude-x\n");
 });
 
@@ -200,7 +187,7 @@ Deno.test("poke: with no main running the rows stand, and the answer is null", a
   });
 });
 
-Deno.test("a connection is declared in the store with what its door decided, and taken out unless the file declares it", async () => {
+Deno.test("a connection is declared in the store with what its door decided, and disabled with its knobs kept", async () => {
   await withOrg(async (root, log) => {
     assertEquals(await declareConnection(log, "slack"), true);
     assertEquals(await declareConnection(log, "acme", { port: 1234 }), true);
@@ -210,14 +197,18 @@ Deno.test("a connection is declared in the store with what its door decided, and
       acme: { port: 1234 },
       sonar: { rooms: true },
     });
-    assertEquals(await undeclareConnection(root, log, "acme"), true);
-    assertEquals(await undeclareConnection(root, log, "acme"), false);
-    await assertRejects(
-      () => undeclareConnection(root, log, "sonar"),
-      Error,
-      "connections.sonar is declared in config.yaml; remove it from config.yaml first",
-    );
-    assertEquals(Object.keys((await readConfig(root, log)).connections), ["slack", "sonar"]);
+    assertEquals(await disableConnection(log, "acme"), true);
+    assertEquals(await disableConnection(log, "acme"), false);
+    assertEquals(await disableConnection(log, "ghost"), false); // nothing declared
+    // one the file declares is disabled the same way, and the file unchanged leaves it so
+    assertEquals(await disableConnection(log, "sonar"), true);
+    await applyFile(root, log);
+    const { connections } = await readConfig(root, log);
+    assertEquals(connections.acme, { port: 1234, enabled: false });
+    assertEquals(connections.sonar, { rooms: true, enabled: false });
+    assertEquals(enabledIn({ connections }, "slack"), true);
+    assertEquals(enabledIn({ connections }, "sonar"), false);
+    assertEquals(enabledIn({ connections }, "ghost"), false);
   }, "connections:\n  sonar:\n    rooms: true\n");
 });
 

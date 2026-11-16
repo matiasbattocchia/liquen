@@ -2,9 +2,9 @@
  * start.ts — `liquen start`: the org as one command (DESIGN §9).
  *
  * A keep-alive loop and little more: apply config.yaml to the store, read the org off it,
- * spawn one child per process the org declares — main (the tail + fan-out, hosting the
- * egress proxy), one per `connections.<name>`, the edge (edge.ts) and the tunnel the org
- * runs itself (`edge.tunnel`, any argv) — and respawn whatever exits, with
+ * spawn one child per process the org runs — main (the tail + fan-out, hosting the
+ * egress proxy), one per enabled `connections.<name>`, the edge (edge.ts) and the tunnel
+ * the org runs itself (`edge.tunnel`, any argv) — and respawn whatever exits, with
  * backoff. The log is the bus, so there is no dependency order, no readiness probe, no
  * IPC: a child finds the org the way every process does (cwd walks up to config.yaml),
  * and env rides through untouched (secrets only).
@@ -15,17 +15,20 @@
  * org runs on with whatever is left instead of reprinting one complaint every minute
  * forever. When nothing is left, `liquen start` refuses too, naming who gave up.
  *
- * The file is applied at boot and again on a reload — asked over the run's socket,
- * `data/run/liquen.sock` (reload.ts), by `liquen reload` and by every setup door that
- * wrote the store: the run is brought in line with the store as it is now. Each process
- * restarts when the part of the configuration it reads at its start changed (`reads`), a
- * connection declared since starts, one no longer declared stops, one that refused gets
- * another go — the world it refused may be what the edit changed — and each process the
- * request NAMES restarts whatever the store says of it, for what it reads once at boot
- * from somewhere else (a connection's carrier, picked off the vault). An agent added,
- * changed or paused restarts nothing: main is told, and reconciles each from its row. The
- * request is answered with what moved. A file boot would reject changes nothing: the
- * supervisor says why, to the asker and in its own lines, and runs on as it was.
+ * The file is applied at boot, before main is raised: the supervisor is the one who
+ * raises it. From then on the store is the run's word. A poke on the run's socket,
+ * `data/run/liquen.sock` (reload.ts), from `liquen reload` or a command that declared,
+ * disabled or removed a connection, brings the run in line with the store as it is now:
+ * a connection declared or enabled since starts, one removed or disabled stops, one that
+ * refused gets another go (the world it refused may be what changed), and each process
+ * the request NAMES restarts, for what it reads once at its start from somewhere else (a
+ * connection's carrier, picked off the vault). Nothing else restarts: every process reads
+ * the store on each use, but for what only a start takes up (`startOnly`): where the
+ * store is, the edge's port, the tunnel, and the keys a connection's spec reads at its
+ * start. A change to one of those is answered as owed, for `liquen restart` to take up.
+ * The request is answered with what moved. SIGHUP stops the run as a restart does, main
+ * leaving what the agents' commands run for the next main: `liquen restart` sends it, and
+ * starts the run again.
  *
  * One of each role. A run holds `data/run/liquen.pid` for its life and its main holds
  * `data/run/main.pid` (stop.ts) — the locks that make them findable, so `liquen stop` has
@@ -54,14 +57,21 @@
  */
 
 import { TextLineStream } from "@std/streams";
-import { findRoot, type OrgConfig, orgFlag, readFile, STOP_TIMEOUT_MS } from "./config.ts";
-import { readConfig } from "./org.ts";
-import { poke } from "./roster.ts";
+import {
+  type ConnectorSpec,
+  enabledIn,
+  findRoot,
+  type OrgConfig,
+  orgFlag,
+  readFile,
+  STOP_TIMEOUT_MS,
+  valueAt,
+} from "./config.ts";
+import { conflictLines, readConfig } from "./org.ts";
 import { entry, REFUSAL } from "./entry.ts";
 import { claim, holder, MAIN, SUPERVISOR } from "./stop.ts";
-import { applied, moved, type Moves, runSocket } from "./reload.ts";
+import { applied, moved, type Moves, type Owed, owedLines, runSocket } from "./reload.ts";
 import { RUNNING, SHIPPED } from "./connect/connect.ts";
-import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
 import { helpFlag } from "./connect/help.ts";
 import { serveSocket } from "./connect/serve.ts";
 import { openRunLog, RUN_LOG, type RunLog, sayConsole } from "./runlog.ts";
@@ -79,7 +89,8 @@ export const USAGE = `usage: liquen start [-D | --detach] [--dir <org>]
 const DETACH_WAIT_MS = 15_000;
 
 /** What a start over a running org is told. */
-const RUNNING_HINT = "`liquen reload` applies an edit to config.yaml; `liquen stop` ends it";
+const RUNNING_HINT = "`liquen reload` applies an edit to config.yaml, `liquen restart` " +
+  "restarts it, `liquen stop` ends it";
 
 const RESTART_BASE_MS = 1_000;
 const RESTART_CAP_MS = 60_000;
@@ -130,7 +141,7 @@ export function failing(line: string, under: boolean): boolean {
  *  supervisor's lock, or with the child's code when it exits first. The lock is read, not
  *  probed: a probe takes the lock for an instant, and the child's claim landing in that
  *  instant would refuse. */
-async function detach(root: string): Promise<void> {
+export async function detach(root: string): Promise<void> {
   const log = `${root}/data/${RUN_LOG}`;
   const pidFile = `${root}/data/run/${SUPERVISOR}.pid`;
   await Deno.mkdir(`${root}/data/run`, { recursive: true });
@@ -179,23 +190,26 @@ async function pump(
   }
 }
 
-/** One process of the org's run: its tag, and the command that is it. */
+/** One process of the org's run: its tag, the command that is it, and for a connection
+ *  the module its spec is in (`SPEC`, the connector's `config.ts`). */
 export interface Proc {
   name: string;
   argv: string[];
+  spec?: string;
 }
 
 /** A liquen module as a process: this deno, the module, every permission. */
-function module(name: string, url: string): Proc {
-  return { name, argv: [Deno.execPath(), "run", "-A", url] };
+function module(name: string, url: string, spec?: string): Proc {
+  return { name, argv: [Deno.execPath(), "run", "-A", url], ...(spec ? { spec } : {}) };
 }
 
-/** Everything the catalog says this org runs. A connection is ONE process, its folder's
+/** Everything the store says this org runs. A connection is ONE process, its folder's
  *  `run.ts`: `src/connect/<name>/` ships with core, `<root>/connectors/<name>/` is the
- *  org's own. A shipped service that only grants a credential is declared for its knobs
- *  and runs nothing; a custom connection with no run.ts is a boot error, same law as an
- *  unknown config key. The edge is every connector's door and always stands; the tunnel
- *  is whatever argv the catalog says, verbatim. */
+ *  org's own; a disabled one runs nothing. A shipped service that only grants a
+ *  credential is declared for its knobs and runs nothing; a custom connection with no
+ *  run.ts is a boot error, same law as an unknown config key. The edge is every
+ *  connector's door and always stands; the tunnel is whatever argv the catalog says,
+ *  verbatim. */
 export function roster(root: string, cfg: Pick<OrgConfig, "connections" | "edge">): Proc[] {
   const has = (p: string | URL) => {
     try {
@@ -207,12 +221,16 @@ export function roster(root: string, cfg: Pick<OrgConfig, "connections" | "edge"
   };
   const procs: Proc[] = [module("main", new URL("./main.ts", import.meta.url).href)];
   for (const name of Object.keys(cfg.connections)) {
-    const bundled = new URL(`./connect/${name}/run.ts`, import.meta.url);
-    const local = `${root}/connectors/${name}/run.ts`;
-    if (RUNNING.includes(name)) procs.push(module(name, bundled.href));
-    else if (SHIPPED.includes(name)) continue;
-    else if (has(local)) procs.push(module(name, local));
-    else {
+    if (!enabledIn(cfg, name)) continue;
+    const bundled = new URL(`./connect/${name}/`, import.meta.url);
+    const local = `${root}/connectors/${name}`;
+    if (RUNNING.includes(name)) {
+      procs.push(module(name, new URL("run.ts", bundled).href, new URL("config.ts", bundled).href));
+    } else if (SHIPPED.includes(name)) continue;
+    else if (has(`${local}/run.ts`)) {
+      const spec = has(`${local}/config.ts`) ? `file://${local}/config.ts` : undefined;
+      procs.push(module(name, `${local}/run.ts`, spec));
+    } else {
       throw new Error(
         `connection "${name}" is declared but has no process: ` +
           `no run.ts under src/connect/${name}/ or ${root}/connectors/${name}/`,
@@ -224,53 +242,70 @@ export function roster(root: string, cfg: Pick<OrgConfig, "connections" | "edge"
   return procs;
 }
 
-/** The part of the org's configuration a process reads once, at its start, as a reload
- *  compares it. Every liquen process reads where the store is, the machinery's knobs and
- *  the org's clock; main reads the WhatsApp bridge's address too, because it speaks to the
- *  bridge itself (the address book, the rooms), and reads it as it resolves, the default
- *  until one is declared, so declaring WhatsApp moves main only when the address does; a
- *  connection reads the edge and its own scope; the edge its section; the tunnel is its
- *  argv. The roster and every agent's settings are in none of them: main reconciles an
- *  agent from its row while it runs. */
-export function reads(name: string, cfg: OrgConfig): string {
-  const { agents: _agents, connections, edge, shared, ...rest } = cfg;
-  const { agents: _defaults, ...clock } = shared;
-  const common = { ...rest, shared: clock };
-  if (name === "main") {
-    const bridge = connections.whatsapp?.bridgeUrl ?? DEFAULT_BRIDGE_URL;
-    return JSON.stringify({ ...common, bridge });
+/** A connection's spec, off the module its `config.ts` is; none when it exports none. */
+export async function specOf(proc: Proc): Promise<ConnectorSpec | undefined> {
+  if (!proc.spec) return undefined;
+  try {
+    return (await import(proc.spec)).SPEC as ConnectorSpec | undefined;
+  } catch {
+    return undefined;
   }
-  if (name === "edge") return JSON.stringify(edge);
-  if (name === "tunnel") return JSON.stringify(edge.tunnel);
-  return JSON.stringify({ ...common, edge, own: connections[name] });
 }
 
-/** What a process of the run is to a reload: what it read of the file when it started, and
- *  whether it refused (down for good until a reload gives it another go). */
+/** What a process reads only at its start, by path, each value as JSON: every liquen
+ *  process reads where the store is; the edge its port; the tunnel is its argv; and a
+ *  connection the keys its spec names (`ConnectorSpec.start`). Everything else every
+ *  process reads on each use. */
+export function startOnly(
+  name: string,
+  cfg: OrgConfig,
+  spec?: ConnectorSpec,
+): Record<string, string> {
+  const at = (paths: string[]) =>
+    Object.fromEntries(paths.map((p) => [p, JSON.stringify(valueAt(cfg, p, spec) ?? null)]));
+  if (name === "edge") return at(["edge.port"]);
+  if (name === "tunnel") return at(["edge.tunnel"]);
+  return at(["deployment", ...(spec?.start ?? [])]);
+}
+
+/** What a process of the run is to a poke: what it read only at its start, and whether
+ *  it refused (down for good until a poke gives it another go). */
 export interface Kept {
-  reads: string;
+  reads: Record<string, string>;
   refused: boolean;
 }
 
-/** A reload's moves, from what the run keeps to what the file says now: what stops (no
- *  longer declared), what restarts (its part of the file changed, it refused, or the
- *  reload named it), what starts (declared since). A process the edit left alone and
- *  nobody named is in none of them. */
+/** A poke's moves, from what the run keeps to what the store says now: what stops (no
+ *  longer declared, or disabled), what restarts (it refused, or the poke named it), what
+ *  starts (declared or enabled since), and what is owed a restart (a key it read at its
+ *  start that has changed since). */
 export function plan(
   kept: Map<string, Kept>,
   next: Proc[],
-  cfg: OrgConfig,
+  reads: Map<string, Record<string, string>>,
   named: string[] = [],
-): { stop: string[]; restart: Proc[]; start: Proc[] } {
+): { stop: string[]; restart: Proc[]; start: Proc[]; owed: Owed[] } {
   const wanted = new Set(next.map((p) => p.name));
+  const restart = next.filter((p) => {
+    const one = kept.get(p.name);
+    return one !== undefined && (one.refused || named.includes(p.name));
+  });
+  const owing = new Map<string, string[]>();
+  for (const p of next) {
+    const one = kept.get(p.name);
+    if (!one || restart.includes(p)) continue;
+    const now = reads.get(p.name) ?? {};
+    for (const [path, value] of Object.entries(now)) {
+      if (one.reads[path] !== undefined && one.reads[path] !== value) {
+        owing.set(path, [...owing.get(path) ?? [], p.name]);
+      }
+    }
+  }
   return {
     stop: [...kept.keys()].filter((name) => !wanted.has(name)),
-    restart: next.filter((p) => {
-      const one = kept.get(p.name);
-      return one !== undefined &&
-        (one.refused || one.reads !== reads(p.name, cfg) || named.includes(p.name));
-    }),
+    restart,
     start: next.filter((p) => !kept.has(p.name)),
+    owed: [...owing].map(([path, processes]) => ({ path, processes })),
   };
 }
 
@@ -287,10 +322,10 @@ if (import.meta.main) {
     // a refusal included; a detached start says its piece at the terminal and hands over
     let run: RunLog | undefined;
     if (!background) sayConsole(run = openRunLog(dir, true), SUPERVISOR);
-    // boot is a reload at start: the file applied to the store, the run made from what
+    // the file applied to the store before main is raised (§9), and the run made from what
     // the store then holds. A detached start leaves both to the child it spawns
     await readFile(root);
-    if (!background) await applied(root);
+    if (run) { for (const line of conflictLines(await applied(root))) run.say(SUPERVISOR, line); }
     const cfg = await readConfig(root);
     const procs = roster(root, cfg);
     // ONE OF EACH ROLE (stop.ts). The locks are taken after the catalog is read, so a
@@ -331,22 +366,27 @@ if (import.meta.main) {
     const kept = new Map<string, Held>();
     const live = new Map<string, Deno.ChildProcess>();
     let halting = false;
-    let reloading = false;
+    let reconciling = false;
     let finish!: () => void;
     const finished = new Promise<void>((resolve) => (finish = resolve));
-    // the run is over once every process is down — stopped, or refused — and no reload is
+    // the run is over once every process is down — stopped, or refused — and no poke is
     // about to bring one back
     const settle = () => {
-      if (!reloading && [...kept.values()].every((k) => k.down)) finish();
+      if (!reconciling && [...kept.values()].every((k) => k.down)) finish();
     };
 
-    /** Keep one process alive until `off`; true when it refused instead. */
+    /** Keep one process alive until `off`; true when it refused instead. `respawn` runs
+     *  before each spawn after the first: what the new child reads at its start. */
     const keepAlive = async (
       { name, argv: [cmd, ...args] }: Proc,
       off: AbortSignal,
+      respawn: () => Promise<void>,
     ): Promise<boolean> => {
       let failures = 0;
+      let first = true;
       while (!off.aborted) {
+        if (!first) await respawn().catch(() => {});
+        first = false;
         const started = Date.now();
         const child = new Deno.Command(cmd, {
           args,
@@ -389,16 +429,22 @@ if (import.meta.main) {
       return false;
     };
 
-    const launch = (proc: Proc, cfg: OrgConfig) => {
+    /** What each process reads only at its start, by name, off the org as it stands. */
+    const readsOf = async (procs: Proc[], cfg: OrgConfig) =>
+      new Map(
+        await Promise.all(
+          procs.map(async (p) => [p.name, startOnly(p.name, cfg, await specOf(p))] as const),
+        ),
+      );
+
+    const launch = (proc: Proc, reads: Record<string, string>) => {
       const off = new AbortController();
-      const held: Held = {
-        reads: reads(proc.name, cfg),
-        refused: false,
-        down: false,
-        off,
-        loop: Promise.resolve(),
+      const held: Held = { reads, refused: false, down: false, off, loop: Promise.resolve() };
+      // a child respawned reads the store as it stands then
+      const respawn = async () => {
+        held.reads = (await readsOf([proc], await readConfig(root))).get(proc.name)!;
       };
-      held.loop = keepAlive(proc, off.signal).then((refused) => {
+      held.loop = keepAlive(proc, off.signal, respawn).then((refused) => {
         held.refused = refused;
         held.down = true;
         settle();
@@ -427,24 +473,28 @@ if (import.meta.main) {
       clearTimeout(hammer);
     };
 
-    const stop = () => {
+    /** End the run: a stop asks main with SIGINT, ending what the agents' commands left
+     *  running; a restart (`liquen restart`, SIGHUP) asks it with SIGTERM, which leaves
+     *  that for the next main to adopt. */
+    let restarting = false;
+    const stop = (restart = false) => {
       if (halting) return;
       halting = true;
-      lines.say(SUPERVISOR, `stopping ${live.size} process(es)`);
-      for (const name of kept.keys()) void retire(name, true);
+      restarting = restart;
+      lines.say(SUPERVISOR, `${restart ? "restarting" : "stopping"} ${live.size} process(es)`);
+      for (const name of kept.keys()) void retire(name, !restart);
     };
 
-    /** Bring the run in line with the file as it reads now, restarting `named` besides;
-     *  what moved. One reload at a time, each on the file as it reads when its turn comes.
-     *  A file that cannot be taken, or a name the run does not have, is refused — thrown
-     *  to the asker, said in the run's lines — and the run goes on as it was. */
-    let reloads = Promise.resolve();
-    const reload = (named: string[]): Promise<Moves> => {
-      const turn = reloads.then(async () => {
+    /** Bring the run in line with the store as it stands, restarting `named` besides;
+     *  what moved. One at a time, each on the store as it reads when its turn comes. A
+     *  name the run does not have is refused, thrown to the asker and said in the run's
+     *  lines, and the run goes on as it was. */
+    let turns = Promise.resolve();
+    const reconcile = (named: string[]): Promise<Moves> => {
+      const turn = turns.then(async () => {
         if (halting) throw new Error("the run is stopping");
-        reloading = true;
+        reconciling = true;
         try {
-          await applied(root);
           const cfg = await readConfig(root);
           const next = roster(root, cfg);
           const stray = named.filter((name) => !next.some((p) => p.name === name));
@@ -454,69 +504,66 @@ if (import.meta.main) {
                 next.map((p) => p.name).join(" · "),
             );
           }
-          const moves = plan(kept, next, cfg, named);
+          const reads = await readsOf(next, cfg);
+          const moves = plan(kept, next, reads, named);
           await Promise.all(
             [...moves.stop, ...moves.restart.map((p) => p.name)].map((name) => retire(name)),
           );
           for (const name of moves.stop) kept.delete(name);
           if (halting) throw new Error("the run is stopping");
-          for (const proc of [...moves.restart, ...moves.start]) launch(proc, cfg);
+          for (const proc of [...moves.restart, ...moves.start]) {
+            launch(proc, reads.get(proc.name)!);
+          }
           const made: Moves = {
             stop: moves.stop,
             restart: moves.restart.map((p) => p.name),
             start: moves.start.map((p) => p.name),
+            owed: moves.owed,
           };
-          // a main that runs on reconciles each agent from its row; one that restarted
-          // does so at its boot
-          if (!made.restart.includes(MAIN) && !made.start.includes(MAIN)) {
-            const said = await poke(root).catch((err) =>
-              err instanceof Error ? err.message : String(err)
-            );
-            if (said !== null) made.agents = said;
-          }
-          lines.say(
-            SUPERVISOR,
-            `config.yaml applied — ${moved(made)}${made.agents ? ` · ${made.agents}` : ""}`,
-          );
+          lines.say(SUPERVISOR, `in line with the store: ${moved(made)}`);
+          for (const line of owedLines(made.owed)) lines.say(SUPERVISOR, line);
           return made;
         } catch (err) {
           const why = err instanceof Error ? err.message : String(err);
-          lines.say(SUPERVISOR, `config.yaml not applied — ${why}; running on as it was`, {
+          lines.say(SUPERVISOR, `not brought in line: ${why}; running on as it was`, {
             failure: true,
           });
           throw err;
         } finally {
-          reloading = false;
+          reconciling = false;
           settle();
         }
       });
-      reloads = turn.then(() => {}, () => {});
+      turns = turn.then(() => {}, () => {});
       return turn;
     };
 
-    // the run's socket: a reload is asked here and answered with what it moved
+    // the run's socket: a poke is asked here and answered with what it moved
     const asked = await serveSocket(runSocket(root), async (req) => {
       let named: string[];
       try {
         const body = req.method === "POST" ? await req.json() : {};
         named = Array.isArray(body.restart) ? body.restart.map(String) : [];
       } catch {
-        return new Response("a reload is a POST of { restart: string[] }", { status: 400 });
+        return new Response("a poke is a POST of { restart?: string[] }", { status: 400 });
       }
       try {
-        return Response.json(await reload(named));
+        return Response.json(await reconcile(named));
       } catch (err) {
         return new Response(err instanceof Error ? err.message : String(err), { status: 409 });
       }
     });
 
-    Deno.addSignalListener("SIGTERM", stop);
-    Deno.addSignalListener("SIGINT", stop);
+    Deno.addSignalListener("SIGTERM", () => stop());
+    Deno.addSignalListener("SIGINT", () => stop());
+    Deno.addSignalListener("SIGHUP", () => stop(true));
 
     lines.say(SUPERVISOR, `${procs.map((p) => p.name).join(" · ")} — root ${root}`);
-    for (const proc of procs) launch(proc, cfg);
+    const reads = await readsOf(procs, cfg);
+    for (const proc of procs) launch(proc, reads.get(proc.name)!);
     await finished;
     await asked.shutdown();
+    if (restarting) lines.say(SUPERVISOR, "down for a restart");
     // every process is down and none was asked to be — each one refused
     if (!halting) {
       const refused = [...kept].filter(([, k]) => k.refused).map(([name]) => name);

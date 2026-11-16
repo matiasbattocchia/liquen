@@ -100,7 +100,7 @@ Deno.test("a model key comes back out by its vault key", async () => {
     const said = await removeConnection("ai:google:ana", {
       store: { connections: () => Promise.resolve([]), deleteConnections: () => Promise.resolve() },
       creds,
-      undeclare: () => Promise.resolve(false),
+      disable: () => Promise.resolve(false),
       services: ["token", "ai"],
     });
     assertEquals(said, ["ai:google:ana is out of the vault"]);

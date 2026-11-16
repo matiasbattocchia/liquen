@@ -1037,7 +1037,7 @@ export async function installExecGround(
   dir: string,
   agentId: string,
   env?: () => Promise<Record<string, string>>,
-  defaultWaitMs?: number, // the system.bashWaitMs knob, funneled by main
+  defaultWaitMs?: () => number | undefined, // system.bashWaitMs, asked as a shell opens
   openBubble?: () => Promise<Bubble>,
 ): Promise<ExecGround> {
   const workspace = `${dir}/agents/${agentId}`;
@@ -1072,7 +1072,7 @@ export async function installExecGround(
           bash: bashTool({
             workspace,
             binPath,
-            defaultWaitMs,
+            defaultWaitMs: defaultWaitMs?.(),
             jobs,
             state,
             ...(env ? { env } : {}),

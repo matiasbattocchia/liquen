@@ -4,25 +4,25 @@
  * A grant writes the MAP (connections, memberships, the vault); the `connections.<name>`
  * scope of the store's configuration is what says a PROCESS should run — `liquen start`
  * spawns one child per scope. So the two halves land together: the door that just earned
- * the grant declares the connection in the store, and says so. A running org is reloaded
- * on the spot (reload.ts), so what the door wrote runs without a restart.
+ * the grant declares the connection in the store, and says so. The running org is poked on
+ * the spot (reload.ts), so the process the door declared starts.
  */
 
-import type { ConnectorSpec } from "../config.ts";
+import { type ConnectorSpec, disabled, isDisabled } from "../config.ts";
 import { readConfig } from "../org.ts";
 import { declareConnection } from "../roster.ts";
 import { openStore } from "../store/mod.ts";
 import type { Json } from "../types.ts";
 import { ingestUp } from "./serve.ts";
 import { socketOf } from "../edge.ts";
-import { reloaded } from "../reload.ts";
+import { reconciled } from "../reload.ts";
 
-/** Declare the service — `decided` is what the door earned — reload the running org, and
+/** Declare the service — `decided` is what the door earned — poke the running org, and
  *  report what the store now holds. A connection already declared is left as found. The
- *  reload also gives a process that refused another go: what it refused over
- *  (an app not yet in the vault) may be what the door just stored. `restart` names the
- *  processes to restart whatever the store says of them — the connection itself, when the
- *  door stored something its process reads once at boot. */
+ *  poke also gives a process that refused another go: what it refused over (an app not
+ *  yet in the vault) may be what the door just stored. `restart` names the processes to
+ *  restart whatever the store says of them — the connection itself, when the door stored
+ *  something its process reads once at its start. */
 export async function declared(
   root: string,
   spec: ConnectorSpec,
@@ -36,7 +36,7 @@ export async function declared(
   } finally {
     await log.close();
   }
-  const who = await reloaded(root, restart);
+  const who = await reconciled(root, restart);
   console.error(
     added
       ? `  declared connections.${spec.name} ${JSON.stringify(decided)} — ${who}`
@@ -88,7 +88,9 @@ export async function requireIngest(
   decided: Record<string, unknown> = {},
   waitMs: number = INGEST_WAIT_MS,
 ): Promise<void> {
-  const listed = spec.name in (await readConfig(root)).connections;
+  const { connections } = await readConfig(root);
+  if (isDisabled({ connections }, spec.name)) throw disabled(spec.name);
+  const listed = spec.name in connections;
   if (!listed || !(await ingestUp(root, spec.name))) await declared(root, spec, decided);
   await waitIngest(root, spec.name, waitMs);
 }

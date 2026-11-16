@@ -301,13 +301,14 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     "../../store/media.ts"
   );
   const { isStored } = await import("../../store/storage.ts");
-  const { whatsappConfig } = await import("./config.ts");
+  const { SPEC } = await import("./config.ts");
+  const { liveKnobs } = await import("../../org.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const store = await openStore(root);
   const log = await store.log();
   const creds = await store.vault();
-  const { bridgeUrl: base } = await whatsappConfig(root);
+  const knobs = await liveKnobs<{ bridgeUrl: string }>(root, SPEC, log);
   const token = Deno.env.get("WA_BRIDGE_TOKEN") ?? "";
 
   // The bytes leave by being FETCHED: a signed, expiring path rides `media_url`, the
@@ -319,7 +320,9 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     return signMediaPath(f.file.uri, await mediaSecret(creds));
   };
 
-  const send = bridgeSend(base, token);
+  // each send posts to the bridge's address as the org states it then
+  const send: WASend = async (record, media) =>
+    await bridgeSend((await knobs()).bridgeUrl, token)(record, media);
 
   const { logDirectory } = await import("../mentions.ts");
   const stop = createWhatsAppDispatch({
@@ -335,13 +338,18 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     onError: (e, err) =>
       console.error(`[dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
   });
-  console.error(`[dispatch] watching ${dir}/log → ${base}/dispatch`);
+  console.error(`[dispatch] watching ${dir}/log → ${(await knobs()).bridgeUrl}/dispatch`);
 
-  // the bridge's absence, which it cannot say itself: written on its sessions' rows
+  // the bridge's absence, which it cannot say itself: written on its sessions' rows. Each
+  // probe asks the bridge at its address as the org states it then
   const { bridgeStatus, createBridgeProbe, PROBE_MS } = await import("./probe.ts");
   let quiet = false; // a bridge that stays away is said once, and once when it is back
+  let base = (await knobs()).bridgeUrl;
   const probe = createBridgeProbe({
-    status: bridgeStatus(base, token),
+    status: async (address) => {
+      base = (await knobs()).bridgeUrl;
+      return await bridgeStatus(base, token)(address);
+    },
     store: log,
     onError: (err) => {
       if (!quiet) console.error(`[dispatch] bridge not answering at ${base}:`, err);

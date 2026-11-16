@@ -65,10 +65,12 @@ Write the positive property. If the rejected design is genuinely worth recording
 ## Configuration
 
 Knobs live in the catalog (`src/config.ts`) or as named constants in source. An org's
-values are rows of its store: `config.yaml` declares the ones a repo pins, applied at
-boot and by `liquen reload`, and `liquen agent`, `liquen connect` and the connectors write
-the rest. No command writes the file. The environment carries only secrets. An unknown
-key or section in an org's `config.yaml` is a boot error, so the catalog and every org's
+values are rows of its store, the one source every process reads, on each use.
+`config.yaml` is applied to the store at start and by `liquen reload`, three-way: an edit
+to the file lands, a command's write survives, and a key both changed is a conflict the
+store wins and the apply says. `liquen agent`, `liquen connect` and the connectors write
+any key. No command writes the file. The environment carries only secrets. An unknown key
+or section in an org's `config.yaml` is a boot error, so the catalog and every org's
 `config.yaml` change together.
 
 ## One path, no side doors

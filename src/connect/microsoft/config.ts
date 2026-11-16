@@ -93,6 +93,9 @@ export const SPEC: ConnectorSpec = {
       check: checkStrings,
     },
   ],
+  // each surface listened to is a poll or a push of its own, made as the process starts,
+  // and Teams subscribes at the public address it starts with, or not at all without one
+  start: ["connections.microsoft.listen", "edge.publicUrl"],
 };
 
 /** Read `connections.microsoft` as the org's store holds it, the room knobs beside. */

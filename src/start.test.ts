@@ -1,8 +1,17 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { backoffMs, comesBack, failing, type Kept, pause, plan, reads, roster } from "./start.ts";
+import {
+  backoffMs,
+  comesBack,
+  failing,
+  type Kept,
+  pause,
+  plan,
+  roster,
+  specOf,
+  startOnly,
+} from "./start.ts";
 import { REFUSAL } from "./entry.ts";
-import { type OrgConfig, starterConfig } from "./config.ts";
-import { DEFAULT_BRIDGE_URL } from "./connect/whatsapp/config.ts";
+import { type ConnectorSpec, type OrgConfig, starterConfig } from "./config.ts";
 
 Deno.test("failing: a failure and the indented trace under it, and nothing else", () => {
   const lines: [string, boolean][] = [
@@ -79,76 +88,93 @@ function catalog(over: Partial<OrgConfig> = {}): OrgConfig {
   return { ...starterConfig(), ...over };
 }
 
-Deno.test("reads: each process restarts on its own part of the file and nothing else", () => {
-  const base = catalog({ connections: { slack: {}, whatsapp: {} } });
+Deno.test("roster: a disabled connection runs nothing", () => {
+  const tmp = Deno.makeTempDirSync();
+  try {
+    const closed = { publicUrl: null, port: 8787, tunnel: null };
+    const procs = roster(tmp, {
+      connections: { slack: {}, whatsapp: { enabled: false } },
+      edge: closed,
+    });
+    assertEquals(procs.map((p) => p.name), ["main", "slack", "edge"]);
+  } finally {
+    Deno.removeSync(tmp, { recursive: true });
+  }
+});
+
+Deno.test("startOnly: what a process reads only at its start, and nothing it reads on each use", async () => {
+  const base = catalog({ connections: { google: {}, slack: {} } });
+  const procs = roster(Deno.makeTempDirSync(), base);
+  const google = await specOf(procs.find((p) => p.name === "google")!);
+  const slack = await specOf(procs.find((p) => p.name === "slack")!);
+  const specs: Record<string, ConnectorSpec | undefined> = { google, slack };
   const changed = (cfg: OrgConfig) =>
-    ["main", "slack", "whatsapp", "edge", "tunnel"].filter((n) => reads(n, base) !== reads(n, cfg));
-  // a connection's own section touches that connection alone
-  assertEquals(changed(catalog({ connections: { slack: { botScopes: [] }, whatsapp: {} } })), [
-    "slack",
-  ]);
-  // the bridge's address is main's too: it speaks to the bridge itself
-  assertEquals(
-    changed(catalog({ connections: { slack: {}, whatsapp: { bridgeUrl: "http://b:1" } } })),
-    ["main", "whatsapp"],
-  );
-  // declaring WhatsApp leaves main be: the address it resolves is the default either way
-  const bare = catalog({ connections: { slack: {} } });
-  const declared = catalog({
-    connections: { slack: {}, whatsapp: { bridgeUrl: DEFAULT_BRIDGE_URL } },
-  });
-  assertEquals(reads("main", declared), reads("main", bare));
-  assertEquals(reads("main", base), reads("main", bare));
-  // the roster and every agent's settings restart nobody: main reconciles each agent
-  // from its row while it runs
-  const agents = { ana: { mind: true } } as unknown as OrgConfig["agents"];
-  assertEquals(changed(catalog({ connections: base.connections, agents })), []);
-  const shared = { ...base.shared, agents: { ...base.shared.agents, model: "claude-y" } };
-  assertEquals(changed(catalog({ connections: base.connections, shared })), []);
-  // the org's clock is read once, by every liquen process
+    ["main", "google", "slack", "edge", "tunnel"].filter((n) =>
+      JSON.stringify(startOnly(n, base, specs[n])) !== JSON.stringify(startOnly(n, cfg, specs[n]))
+    );
+  // what every process reads on each use moves nobody: the clock, the machinery's knobs,
+  // a connection's knobs, the agents
   const clock = { ...base.shared, timezone: "Asia/Tokyo" };
-  assertEquals(changed(catalog({ connections: base.connections, shared: clock })), [
-    "main",
-    "slack",
-    "whatsapp",
-  ]);
-  // the edge: every connection reads it, main does not
-  const edge = { ...base.edge, publicUrl: "https://acme.example.com" };
-  assertEquals(changed(catalog({ connections: base.connections, edge })), [
-    "slack",
-    "whatsapp",
-    "edge",
-  ]);
-  // a shared section is every liquen process's
+  assertEquals(changed(catalog({ connections: base.connections, shared: clock })), []);
   const system = { ...base.system, bashWaitMs: 1 };
-  assertEquals(changed(catalog({ connections: base.connections, system })), [
+  assertEquals(changed(catalog({ connections: base.connections, system })), []);
+  assertEquals(changed(catalog({ connections: { google: {}, slack: { botScopes: [] } } })), []);
+  // a key a connection's spec reads at its start is that connection's
+  assertEquals(changed(catalog({ connections: { google: { listen: ["mail"] }, slack: {} } })), [
+    "google",
+  ]);
+  // the edge's port is the edge's; its public address moves no process of these
+  assertEquals(
+    changed(catalog({ connections: base.connections, edge: { ...base.edge, port: 1 } })),
+    [
+      "edge",
+    ],
+  );
+  const tunnel = { ...base.edge, tunnel: ["cloudflared"] };
+  assertEquals(changed(catalog({ connections: base.connections, edge: tunnel })), ["tunnel"]);
+  // where the store is, every liquen process but the edge's
+  const deployment = { ...base.deployment, database: "postgres://x" };
+  assertEquals(changed(catalog({ connections: base.connections, deployment })), [
     "main",
+    "google",
     "slack",
-    "whatsapp",
   ]);
 });
 
-Deno.test("plan: what the edit touched restarts, what it declared starts, what it dropped stops", () => {
+Deno.test("plan: what the store declared or enabled starts, what it dropped stops, what a start reads is owed", () => {
   const tmp = Deno.makeTempDirSync();
   try {
+    const reads = (procs: { name: string }[], over: Record<string, Record<string, string>> = {}) =>
+      new Map(procs.map((p) => [p.name, over[p.name] ?? { deployment: "{}" }]));
     const before = catalog({ connections: { slack: {}, google: {} } });
+    const procs = roster(tmp, before);
     const kept = new Map<string, Kept>(
-      roster(tmp, before).map((p) => [p.name, { reads: reads(p.name, before), refused: false }]),
+      [...reads(procs)].map(([name, r]) => [name, { reads: r, refused: false }]),
     );
     // nothing changed: nothing moves
-    assertEquals(plan(kept, roster(tmp, before), before), { stop: [], restart: [], start: [] });
-    // google dropped, whatsapp declared, slack's section edited
-    const after = catalog({ connections: { slack: { botScopes: [] }, whatsapp: {} } });
-    const moves = plan(kept, roster(tmp, after), after);
+    assertEquals(plan(kept, procs, reads(procs)), { stop: [], restart: [], start: [], owed: [] });
+    // google disabled, whatsapp declared, slack's knobs edited: nobody restarts
+    const after = catalog({
+      connections: { slack: { botScopes: [] }, google: { enabled: false }, whatsapp: {} },
+    });
+    const next = roster(tmp, after);
+    const moves = plan(kept, next, reads(next));
     assertEquals(moves.stop, ["google"]);
-    assertEquals(moves.restart.map((p) => p.name), ["slack"]);
+    assertEquals(moves.restart, []);
     assertEquals(moves.start.map((p) => p.name), ["whatsapp"]);
-    // a process that refused gets another go, though the file says the same of it
-    kept.set("google", { reads: reads("google", before), refused: true });
-    assertEquals(plan(kept, roster(tmp, before), before).restart.map((p) => p.name), ["google"]);
-    // a process the reload names restarts whatever the file says of it — once
-    kept.set("google", { reads: reads("google", before), refused: false });
-    const named = plan(kept, roster(tmp, before), before, ["slack", "slack"]);
+    // a key read at the start moved: owed, never restarted
+    const owed = plan(kept, procs, reads(procs, { google: { deployment: "{}", "x.y": "2" } }));
+    assertEquals(owed.owed, []);
+    kept.set("google", { reads: { deployment: "{}", "x.y": "1" }, refused: false });
+    const moved = plan(kept, procs, reads(procs, { google: { deployment: "{}", "x.y": "2" } }));
+    assertEquals(moved.owed, [{ path: "x.y", processes: ["google"] }]);
+    assertEquals(moved.restart, []);
+    // a process that refused gets another go, though the store says the same of it
+    kept.set("google", { reads: { deployment: "{}" }, refused: true });
+    assertEquals(plan(kept, procs, reads(procs)).restart.map((p) => p.name), ["google"]);
+    // a process the poke names restarts, once
+    kept.set("google", { reads: { deployment: "{}" }, refused: false });
+    const named = plan(kept, procs, reads(procs), ["slack", "slack"]);
     assertEquals(named.restart.map((p) => p.name), ["slack"]);
     assertEquals(named.start, []);
   } finally {

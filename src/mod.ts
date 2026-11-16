@@ -21,7 +21,7 @@ export type {
   Wake,
   XiPorts,
 } from "./xi.ts";
-export { start } from "./main.ts";
+export { start } from "./raise.ts";
 export type { Main, MainConfig } from "./main.ts";
 export { openStore, storeAt } from "./store/mod.ts";
 export type { Database, DocStore, Store } from "./store/mod.ts";

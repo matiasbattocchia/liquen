@@ -128,7 +128,7 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
-    const { start } = await import("./main.ts");
+    const { start } = await import("./raise.ts");
     const { scripted, canned } = await import("./testing.ts");
     const root = await Deno.makeTempDir();
     await Deno.writeTextFile(

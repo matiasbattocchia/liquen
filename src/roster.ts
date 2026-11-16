@@ -5,8 +5,8 @@
  * line, and a tool an agent calls all take the same two steps:
  *
  *   1. The store function checks and writes. `upsertAgent`: the name a folder and a Unix
- *      user can be, no key the file declares, every principal a member, the org as it
- *      would stand one boot can run, the provider able to run the model at its effort.
+ *      user can be, every principal a member, the org as it would stand one boot can
+ *      run, the provider able to run the model at its effort.
  *      Then the row and the agent's `config` scope in one transaction, the backlog floor
  *      when the row is new, and its docs seeded beside it, laid where missing, so its
  *      instructions can be written before it runs.
@@ -24,16 +24,15 @@ import {
   AGENT_KEYS,
   AGENT_NAME,
   type AgentDefaults,
-  CONFIG_FILE,
   connectionScope,
   DECLARED,
   declaredPaths,
+  ENABLED,
   type Identity,
   IDENTITY_KEYS,
   isPrincipals,
   nameRule,
   orgOf,
-  pinned,
   readFile,
   settingsOf,
   validateOrg,
@@ -81,17 +80,7 @@ export async function upsertAgent(
   if (change.principals != null && !isPrincipals(change.principals)) {
     throw new Error(`principals must be a list of roster names, or "*"`);
   }
-  // every key has one owner: what the file declares is the file's to change
   const declared = await readFile(root);
-  const owned = declaredPaths(declared);
-  const touched = [
-    ...Object.keys(change.set ?? {}).map((k) => `${scope}.${k}`),
-    ...(change.unset ?? []).map((k) => `${scope}.${k}`),
-    ...Object.keys(change.identity ?? {}).map((k) => `${scope}.identity.${k}`),
-    ...(change.principals !== undefined ? [`${scope}.principals`] : []),
-  ];
-  for (const path of touched) if (owned.has(path)) throw pinned(path);
-
   const roster = (await log.agents()).map(({ runs: _runs, ...row }) => row);
   const had = roster.find((a) => a.agentId === name);
   const row: AgentRow = { ...(had ?? { agentId: name, mind: sessionAddress(name, MIND) }) };
@@ -140,11 +129,9 @@ export async function upsertAgent(
 }
 
 /** Remove an agent, whole: main brings it down, its rows go in one transaction, then its
- *  folder and its Unix user. An agent the file declares is the file's to remove first. */
+ *  folder and its Unix user. One the file declares stays removed while the file says of
+ *  it what it said (`org.ts`). */
 export async function removeAgent(root: string, log: Registry, name: string): Promise<void> {
-  if (declaredPaths(await readFile(root)).has(agentScope(name))) {
-    throw pinned(agentScope(name), "remove it there first");
-  }
   const roster = await log.agents();
   if (!roster.some((a) => a.agentId === name)) throw new Error(`no agent named ${name}`);
   const steered = steeredBy(roster, name);
@@ -235,9 +222,8 @@ export function taken(said: string | null): string {
     : `the running org: ${said}`;
 }
 
-/** Declare a connection in the store: its scope stands, with the knobs given, and
- *  `liquen start` runs its process. One already declared is left as found. Answers
- *  whether it was new. */
+/** Declare a connection in the store: its scope stands, with the knobs given, and the run
+ *  starts its process. One already declared is left as found. Answers whether it was new. */
 export async function declareConnection(
   log: Registry,
   service: string,
@@ -252,20 +238,14 @@ export async function declareConnection(
   return true;
 }
 
-/** Take a connection out of the store, its knobs with it, so `liquen start` runs nothing
- *  for it. Answers whether there was one. One the file declares is the file's to remove. */
-export async function undeclareConnection(
-  root: string,
-  log: Registry,
-  service: string,
-): Promise<boolean> {
+/** Disable a connection: `enabled: false` in its scope, so the run stops its process, and
+ *  its knobs stay for the day it is enabled again. Answers whether it was enabled. */
+export async function disableConnection(log: Registry, service: string): Promise<boolean> {
   const scope = connectionScope(service);
-  if (declaredPaths(await readFile(root)).has(scope)) {
-    throw pinned(scope, `remove it from ${CONFIG_FILE} first`);
-  }
-  const had = (await log.config(scope)).length > 0;
-  await log.unsetConfig(scope);
-  return had;
+  const rows = await log.config(scope);
+  if (rows.length === 0 || rows.some((r) => r.key === ENABLED && r.value === false)) return false;
+  await log.setConfig([{ scope, key: ENABLED, value: false }]);
+  return true;
 }
 
 /** Route a room to an agent, making the agent when it is missing (§4, §9): the steps in

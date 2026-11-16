@@ -43,8 +43,8 @@ Deno.test("the shell speaks through the proxy's pocket, in the org's locale and 
   const sandbox = await openLocalSandbox(dir, {
     store: storeAt({ engine: "sqlite", dir, docs: "filesystem" }),
     agents: ["a1"],
-    locale: "es_AR.UTF-8",
-    timezone: "Asia/Tokyo",
+    locale: () => "es_AR.UTF-8",
+    timezone: () => "Asia/Tokyo",
   });
   try {
     const { exec } = sandbox.forAgent("a1").session("mind");

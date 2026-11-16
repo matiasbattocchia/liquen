@@ -2045,9 +2045,11 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const { runPollIngest } = await import("../poll.ts");
   const { readConfig } = await import("../../org.ts");
   const { ingestAddress } = await import("../../edge.ts");
-  const { microsoftConfig } = await import("./config.ts");
+  const { SPEC } = await import("./config.ts");
+  const { liveKnobs } = await import("../../org.ts");
   const root = findRoot(orgFlag());
   const store = await openStore(root);
+  // read at start (SPEC.start): whether Teams subscribes, and at which address
   const { publicUrl } = (await readConfig(root)).edge;
   const log = await store.log();
   const creds = await store.vault();
@@ -2060,7 +2062,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const accounts = teamsAccounts(() => creds.list(GRANT_PREFIX));
   const marks = createMarks({
     read: (q) => log.read(q),
-    knobs: await microsoftConfig(root),
+    knobs: await liveKnobs(root, SPEC, log),
     self: accounts.of,
   });
   const publish = marked(log.publish, async (drafts) => {

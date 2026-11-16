@@ -32,7 +32,15 @@ import { exitOnStop } from "../stop.ts";
 import { createAccounts, type Opened, RECONCILE_MS } from "./accounts.ts";
 import { createBios } from "./bio.ts";
 import { logOutSession, openTelegram } from "./client.ts";
-import { APP_KEY, cachePath, GRANT_SENDER, historyPath, telegramConfig } from "./config.ts";
+import {
+  APP_KEY,
+  cachePath,
+  GRANT_SENDER,
+  historyPath,
+  SPEC,
+  type TelegramConfig,
+} from "./config.ts";
+import { liveKnobs } from "../../org.ts";
 import { createTelegramDispatch } from "./dispatch.ts";
 import { createTelegramIngest } from "./ingest.ts";
 import { servePort } from "./port.ts";
@@ -76,9 +84,10 @@ export async function runTelegram(): Promise<() => Promise<void>> {
   const log = await store.log();
   const creds = await store.vault();
   const storage = store.storage();
-  const { bios, historyDays, crowd, busy, follow } = await telegramConfig(root);
+  // the room knobs asked per batch, and an account's own as its session opens
+  const knobs = await liveKnobs<TelegramConfig>(root, SPEC, log);
   const read: Reader["read"] = (q) => log.read(q);
-  const publish = marked(log.publish, createMarks({ read, knobs: { crowd, busy, follow } }));
+  const publish = marked(log.publish, createMarks({ read, knobs }));
 
   const app = await creds.get(APP_KEY);
   if (!app?.value.api_id || !app.value.api_hash) {
@@ -97,6 +106,7 @@ export async function runTelegram(): Promise<() => Promise<void>> {
   /** One account's session with its ingest over it. */
   const open = async (account: string, session: string): Promise<Opened> => {
     const fail = (what: string, err: unknown) => said(account, what, err);
+    const { bios, historyDays } = await knobs();
     // events arrive before the ingest exists (the opening's own state line): they wait
     const route: { handle?: (event: TgEvent) => Promise<void> } = {};
     let chain: Promise<void> = Promise.resolve();

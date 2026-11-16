@@ -997,7 +997,7 @@ Deno.test("teams: published through the marks, a crowded channel's line is silen
     ];
     const marks = createMarks({
       read,
-      knobs: { crowd: 2, busy: 40, follow: [] },
+      knobs: () => Promise.resolve({ crowd: 2, busy: 40, follow: [], enabled: true }),
       self: accounts.of,
     });
     const publish = marked(capture, async (drafts) => {

@@ -247,7 +247,10 @@ Deno.test("the marked publish reads a group's facts: a crowded group is silenced
   }) as Appender["publish"];
   // a log holding the day's 41 lines of every room
   const read = (() => Promise.resolve(Array.from({ length: 41 }, () => ({})))) as Reader["read"];
-  const marks = createMarks({ read, knobs: { crowd: 20, busy: 40, follow: [] } });
+  const marks = createMarks({
+    read,
+    knobs: () => Promise.resolve({ crowd: 20, busy: 40, follow: [], enabled: true }),
+  });
   const { handler } = harness({ publish: marked(publish, marks) });
   const group = "120363001234567890@g.us";
   await handler(post(

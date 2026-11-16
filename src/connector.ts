@@ -21,7 +21,7 @@ export type { GrantBroker } from "./proxy/grants.ts";
 export type { Connections } from "./store/connections.ts";
 export { newId } from "./store/id.ts";
 export { checkStrings, findRoot, orgFlag } from "./config.ts";
-export { connectorConfig, readConfig } from "./org.ts";
+export { connectorConfig, liveConfig, liveKnobs, readConfig } from "./org.ts";
 export { ensureRoute, poke, removeAgent, upsertAgent } from "./roster.ts";
 export { checkTokenArgs, connectToken, tokenKey } from "./connect/token/grant.ts";
 export type { TokenArgs, TokenDeps } from "./connect/token/grant.ts";

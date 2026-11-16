@@ -32,17 +32,17 @@ import type { ContactPort } from "../../xi.ts";
 import { httpError } from "../errors.ts";
 import { timedFetch } from "../http.ts";
 
-/** Bind the port to a bridge: `base` is `connections.whatsapp.bridgeUrl`, `token` the
- *  shared `WA_BRIDGE_TOKEN`. */
+/** Bind the port to a bridge: `base` answers `connections.whatsapp.bridgeUrl`, asked on
+ *  each call, `token` the shared `WA_BRIDGE_TOKEN`. */
 export function whatsappContact(
-  base: string,
+  base: () => string,
   token: string,
   fetchApi: typeof fetch = timedFetch,
 ): ContactPort {
   const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
   return {
     write: async ({ connection, address, name, remove }) => {
-      const res = await fetchApi(`${base}/dispatch`, {
+      const res = await fetchApi(`${base()}/dispatch`, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -56,7 +56,7 @@ export function whatsappContact(
       return out.name ? { name: out.name } : {};
     },
     lookup: async ({ connection, query }) => {
-      const url = `${base}/contacts/${encodeURIComponent(connection)}?q=${
+      const url = `${base()}/contacts/${encodeURIComponent(connection)}?q=${
         encodeURIComponent(query)
       }`;
       const res = await fetchApi(url, { headers });
@@ -71,7 +71,7 @@ export function whatsappContact(
     },
     profile: async ({ connection, address }) => {
       const res = await fetchApi(
-        `${base}/profiles/${encodeURIComponent(connection)}/${encodeURIComponent(address)}`,
+        `${base()}/profiles/${encodeURIComponent(connection)}/${encodeURIComponent(address)}`,
         { headers },
       );
       if (!res.ok) throw await httpError(res);

@@ -5,7 +5,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { TextLineStream } from "@std/streams";
-import { start } from "./main.ts";
+import { start } from "./raise.ts";
 import { openLog } from "./store/log.ts";
 import { newId } from "./store/id.ts";
 import type { AgentConfig } from "./xi.ts";
@@ -1386,6 +1386,35 @@ Deno.test({
       assertEquals(await poke(root, { agent: "bo" }), "bo is not running");
       // what it wrote stays in the log
       assertEquals((await said("bo")).length, 3);
+    } finally {
+      await main.stop();
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "a write to the store nobody pokes about is read at the next turn: main reads the org on each use",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { root, dir } = await orgDir({ ana: {} });
+    const { transport } = scripted([reply("uno"), reply("dos"), reply("tres")]);
+    const main = await start({ dir, root, debounceMs: 0 }, { transport });
+    const said = async () =>
+      (await main.log.read({ types: ["message"] }))
+        .filter((e) => e.agent?.id === "ana" && e.agent?.session_id === "mind").length;
+    try {
+      await main.log.publish(principalMsg("mind@ana", "hola"));
+      await waitFor(async () => (await said()) === 1);
+      // a hand edit of the row: no command, no poke
+      await main.log.setConfig([{ scope: "agents.ana", key: "model", value: "claude-hand" }]);
+      await main.log.publish(principalMsg("mind@ana", "¿y ahora?"));
+      await waitFor(async () => (await said()) === 2);
+      await main.log.publish(principalMsg("mind@ana", "¿seguro?"));
+      await waitFor(async () => (await said()) === 3);
+      assertEquals((await main.log.spend({ agentId: "ana" })).at(-1)?.model, "claude-hand");
     } finally {
       await main.stop();
       await Deno.remove(root, { recursive: true });

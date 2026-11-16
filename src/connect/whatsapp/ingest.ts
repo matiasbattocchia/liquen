@@ -958,14 +958,15 @@ export function bridgeTokenOf(env: string | undefined): string {
 export async function runIngest(): Promise<() => Promise<void>> {
   const { openStore } = await import("../../store/mod.ts");
   const { mediaSecret, serveMedia } = await import("../../store/media.ts");
-  const { whatsappConfig } = await import("./config.ts");
+  const { SPEC } = await import("./config.ts");
+  const { liveKnobs } = await import("../../org.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
-  const knobs = await whatsappConfig(root);
   const store = await openStore(root);
   const log = await store.log();
   const creds = await store.vault();
   const storage = store.storage();
+  const knobs = await liveKnobs(root, SPEC, log);
 
   const handler = createWhatsAppWebhook({
     // a group's facts meet the connection's knobs before the batch lands: the crowd rule,

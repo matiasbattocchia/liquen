@@ -13,10 +13,10 @@
  */
 
 import { findRoot, orgFlag } from "../config.ts";
-import { undeclareConnection } from "../roster.ts";
+import { disableConnection } from "../roster.ts";
 import { entry, report } from "../entry.ts";
 import { openStore } from "../store/mod.ts";
-import { moved, reload } from "../reload.ts";
+import { moved, reconcile } from "../reload.ts";
 import { removeConnection } from "./remove.ts";
 
 /** The services that ship with the package — each `src/connect/<name>/` a connect door.
@@ -155,7 +155,7 @@ async function remove(root: string, target: string): Promise<void> {
     const said = await removeConnection(target, {
       store: log,
       creds,
-      undeclare: (service) => undeclareConnection(root, log, service),
+      disable: (service) => disableConnection(log, service),
       services: available(root),
       end: async (row) => {
         if (row.service !== "telegram") return undefined;
@@ -169,8 +169,8 @@ async function remove(root: string, target: string): Promise<void> {
     await creds.close();
     await log.close();
   }
-  // the processes read the vault on every use; a connection no longer declared is one the
-  // running org stops
-  const moves = await reload(root);
+  // the processes read the vault on every use; a connection disabled is one the running
+  // org stops
+  const moves = await reconcile(root);
   if (moves !== null) console.log(`the running org took it up: ${moved(moves)}`);
 }

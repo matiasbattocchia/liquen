@@ -3652,30 +3652,55 @@ addressed from the root it names — the org lives where you run liquen and cwd 
 `--dir <path>` is the one flag every entry point accepts, for an agent that stands in a
 directory its org does not contain (a repo, a task's workdir — `liquen cli` hands the door
 the cwd it attached from). `liquen init` lays it once, the catalog as a commented template;
-from then on humans and repos write it, and no command does. Boot and `liquen reload`
-APPLY it to the store (`applyFile`, org.ts): a key the file declares overwrites the
-store's; a key it leaves out keeps the store's value; an agent it does not declare is
-left alone. Taking a key out of the file stops pinning it and resets nothing. So every
-key has one owner — the file when it declares it, a command otherwise — and a command
-that would change a key the file declares refuses: `agents.dubiku.model is declared in
-config.yaml; edit it there`. In a pod, the repo owns what its file declares and the volume
-owns the rest. The org as it would stand is checked whole before a row is written, so a
-file boot cannot run changes nothing. `deployment` is the one section the store cannot
-hold, since it names where the store is: it is read off the file by every process. A
-phone is taken quoted or bare: YAML reads `+549…` as a number, and the catalog takes a
-number there as its digits, which is all a handle is compared by.
+from then on humans and repos write it, and no command does. Whoever raises main APPLIES
+it to the store first, and main only reads the store: the supervisor at `liquen start`, an
+interface before it raises an ephemeral main (attach.ts), an embedder through the
+package's `start` (raise.ts); and `liquen reload` applies an edit to a running org. The
+apply is THREE-WAY (`applyFile`, org.ts). The store keeps a base, what the file said at
+its last apply (`config_base`), and each leaf the file states is weighed against it and
+against the store. A leaf the file states as the base had it is left alone, so a
+command's write survives; one the file moved and the store did not takes the file's
+value; one both moved apart is a conflict: the store's value stays, and the apply says
+each one with both values and the two ways out, `liquen reload --overwrite`, which takes
+the file's value wherever it differs from the store's, and `liquen config`, whose output
+the file can take to match the store. A conflict keeps its old base, so every apply says
+it until one of those settles it. A leaf with no base compares as absent. Taking a key
+out of the file stops applying it and resets nothing. The roster weighs the same way, each
+entry's leaves under `roster.<name>` in the base, so an agent the file declares and a
+command removed stays removed while the file says of it what it said, and comes back with
+`--overwrite`. Commands write any key, the file's included. The org as it would stand is
+checked whole before a row is written, so a file the org cannot run on changes nothing.
+`deployment` is the one section the store cannot hold, since it names where the store is:
+it is read off the file by every process, at its start. A phone is taken quoted or bare:
+YAML reads `+549…` as a number, and the catalog takes a number there as its digits, which
+is all a handle is compared by.
+
+**Every process reads the store on each use.** A unit of work, a turn, a tick, a
+sign-in, a delivery, a poll, a send, reads the configuration as it starts and holds that
+snapshot until it ends (`liveConfig`, `liveKnobs`, org.ts). A trigger moves one count on
+every write to `config` or `agents`, a hand edit included (`config_version`), so a read
+asks the count and reads the org again only when it moved; on the Supabase tier an
+invocation already builds itself from the store. Main reads this way the machinery's
+knobs, the clock, the policy, the processors, the edge a sign-in's link is made on and the
+WhatsApp bridge's address, and when the count moved it brings every agent in line with
+its row beside the work, never under it. What a process reads only at its start is the
+exception, and short: where the store is, the edge's port, the tunnel's argv, and the keys
+a connector's spec names (`ConnectorSpec.start`: the surfaces Google and Microsoft listen
+to, the address Teams subscribes at). `liquen restart` takes those up, and code.
 
 **Commands write the store, never the file.** `liquen agent <name>` is an upsert: it makes
 the agent or changes it, a flag per setting (`--model`, `--tools '[send, bash]'`, the value
 read as YAML), `--unset <key>` deleting a row so the key inherits again, `--remove`
 taking the agent out whole; with no name it lists every agent — declared or not, running
 or paused, its last turn. `liquen connect` declares the `connections.<name>` scope a grant
-earns, and `--remove` takes it out with the service's last connection. `liquen config`
+earns, and `--remove` of the service's last connection disables it: `enabled: false`, a
+key every connection has, runs nothing for the service and keeps its knobs, accounts and
+secrets, and a sign-in for it, or a port main serves for it, fails saying so. `liquen config`
 prints the store's state as YAML, read-only: a key the store holds is a line, what a
 person copies into the file to pin; a key it does not is a comment with its default. A
 command, a connector and a tool an agent calls make an agent by one path (`roster.ts`):
-the store function checks and writes — the name a folder and a Unix user can be, no key
-the file declares, every principal a member, the org as it would stand one boot can run,
+the store function checks and writes — the name a folder and a Unix user can be, every
+principal a member, the org as it would stand one boot can run,
 the provider able to run the model at its effort — then the row and its `config` scope in
 one transaction, its docs laid beside it. Then the POKE: `POST {agent}` on
 `data/run/main.sock`, which main serves; it reconciles that one agent from its row and
@@ -3714,8 +3739,8 @@ and memberships gone its traffic is visible through no branch of the law, other 
 memberships in shared rooms are their own, and a `mirrors.rooms` entry naming it drops
 out of `aliases` by the join. A name added again is the agent coming back: its mind room
 is `mind@<name>`, the log keeps it, and the new membership grants it whole. An agent the
-file declares is the file's to remove first; out of the file, it is an undeclared agent,
-still running, until the command removes it. An undeclared agent with no turn for 30 days
+file declares and a command removed stays removed, the apply leaving it so while the file
+says of it what it said. An undeclared agent with no turn for 30 days
 (`IDLE_DAYS`, its last `usage` row) is named at boot, one line for all of them.
 
 What the system learns at runtime — grants, discovered handles, verdicts — is rows of the
@@ -3907,27 +3932,32 @@ loudly, the same law as an unknown config key.
   logged once and left down until a reload, because a port already held or a key the file
   got wrong will be held and wrong again a second later. The org keeps running with
   whatever is left, and `liquen start` refuses when nothing is.
-- **The file is applied again on a reload, never by itself.** Boot is a reload at start.
-  `liquen reload` — and every setup door that wrote the store — reads the file, refuses
-  one boot would reject, and asks the supervisor over the run's socket
-  (`data/run/liquen.sock`, src/reload.ts), which applies it to the store and brings the
-  run in line with what the store then holds: each process restarts when the part of the
-  configuration it reads at its start changed (`reads`, src/start.ts — where the store is,
-  the machinery's knobs and the org's clock for every liquen process, the WhatsApp
-  bridge's address for main too, the edge and its own scope for a connection), a
-  connection declared since starts, one no longer declared stops, and one that refused
-  gets another go, since what it refused over may be what the edit changed. The roster
-  and every agent's settings restart nothing: main is poked, and reconciles each agent
-  from its row while the others run on. The request also NAMES processes to restart
-  whatever the store says of them, for what a process reads once at boot from elsewhere —
-  the Slack app door names its connection when it has stored a carrier, which the ingest
-  picks off the vault as it starts. The supervisor answers with what moved, so the door or
-  the command says it. With no run, `liquen reload` applies the file itself, for the next
-  start to find. Nothing watches the file: a half-made edit restarts nothing, and a file
-  the supervisor cannot take leaves the run as it was. So a connection, a grant or an agent is added to an org that stays up; a stop is
-  only ever the operator's own order. What main offers doesn't hang on the file either —
-  every service's rooms and address-book ports stand from boot, reached only through an
-  account the agent holds — and the grants are the vault's, read at each use.
+- **A reload applies the file, and restarts nothing.** `liquen reload` reads the file,
+  refuses one the org cannot run on, applies it three-way, and pokes the run: the
+  supervisor over the run's socket (`data/run/liquen.sock`, src/reload.ts), and main over
+  its own. The supervisor brings its processes in line with the store: a connection
+  declared or enabled since starts, one removed or disabled stops, and one that refused
+  gets another go, since what it refused over may be what changed. Every other process
+  reads the change itself, on its next use. A key a process reads only at its start that
+  changed since it started (`startOnly`, src/start.ts) is owed, and the answer names it
+  with the command that pays it: `edge.port changed: liquen restart edge takes it up`. A
+  command that declares, disables or removes a connection pokes the supervisor the same
+  way, and the poke may NAME processes to restart, for what a process reads once at its
+  start from elsewhere: the Slack app door names its connection when it has stored a
+  carrier, which the ingest picks off the vault as it starts. The supervisor answers with
+  what moved, so the door or the command says it. Nothing watches the file, so a half-made
+  edit changes nothing; a hand edit to the store is read by main and the connectors on
+  their next use, and its connections are run as the next poke finds them. So a
+  connection, a grant or an agent is added to an org that stays up. What main offers
+  doesn't hang on the file either: every service's rooms and address-book ports stand from
+  boot, reached only through an account the agent holds, and the grants are the vault's,
+  read at each use.
+- **A restart is for what only a start takes up.** `liquen restart <process>…` restarts
+  those processes under the running supervisor. Bare, it restarts the whole run: the
+  supervisor is asked with SIGHUP, which stops every child as a restart does, main leaving
+  what the agents' commands run for the next main, and once its lock is free the run starts
+  again detached from the command's own process, so it takes up `.env` too. A stop is only
+  ever the operator's own order.
 - **A role is a lock.** Every process in an org's run takes an exclusive lock on
   `data/run/<role>.pid` for its whole life and writes its pid inside (src/stop.ts):
   `liquen` is the supervisor, `main` is the mind — the tail, the fan-out, the doors —

@@ -33,8 +33,9 @@ export interface GithubWebhookDeps {
   secret?: string;
   /** Connection address on the envelope (the installation/owner). Default `"github"`. */
   connection?: string;
-  /** Event-type allowlist (the `X-GitHub-Event` header). Default: the PR/issue set below. */
-  events?: string[];
+  /** Event-type allowlist (the `X-GitHub-Event` header), asked for each delivery. Default:
+   *  the PR/issue set below. */
+  events?: () => Promise<string[]>;
   now?: () => string; // ts source — injectable for tests
 }
 
@@ -43,7 +44,7 @@ export type WebhookHandler = (req: Request) => Promise<Response>;
 /** Build the ingest handler. Pure over its deps — call once, serve the result anywhere. */
 export function createGithubWebhook(deps: GithubWebhookDeps): WebhookHandler {
   const connection = deps.connection ?? "github";
-  const allow = new Set(deps.events ?? DEFAULT_EVENTS);
+  const allowed = async () => new Set(deps.events ? await deps.events() : DEFAULT_EVENTS);
   const now = deps.now ?? (() => new Date().toISOString());
 
   return async (req) => {
@@ -59,7 +60,7 @@ export function createGithubWebhook(deps: GithubWebhookDeps): WebhookHandler {
     }
     // 2. cheap acks that never touch the log: the setup ping, and out-of-scope events
     if (event === "ping") return text(200, "pong");
-    if (!allow.has(event)) return text(202, `ignored event: ${event}`);
+    if (!(await allowed()).has(event)) return text(202, `ignored event: ${event}`);
 
     let payload: GhPayload;
     try {
@@ -549,17 +550,18 @@ function text(status: number, message: string): Response {
  *  Returns stop: refuse new deliveries, finish the ones in flight, release the handles. */
 export async function runIngest(): Promise<() => Promise<void>> {
   const { openStore } = await import("../../connector.ts");
-  const { githubConfig } = await import("./config.ts");
+  const { SPEC } = await import("./config.ts");
+  const { liveKnobs } = await import("../../org.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const store = await openStore(root);
-  const { events } = await githubConfig(root);
   const creds = await store.vault();
   const secret = (await creds.list("github:app:")).find((a) => a.value.webhook_secret)
     ?.value.webhook_secret;
   await creds.close(); // one read at boot — the ingest holds no vault handle while serving
 
   const log = await store.log();
+  const knobs = await liveKnobs<{ events: string[] }>(root, SPEC, log);
   if (!secret) {
     console.error(
       "[ingest] WARNING: no webhook secret in the vault (`liquen connect github app`) — " +
@@ -571,7 +573,11 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const server = await serveIngest(
     root,
     "github",
-    createGithubWebhook({ publish: log.publish, secret, events }),
+    createGithubWebhook({
+      publish: log.publish,
+      secret,
+      events: async () => (await knobs()).events,
+    }),
   );
   console.error(`[ingest] serving ${server.addr.path} → ${dir}/log`);
   return async () => {

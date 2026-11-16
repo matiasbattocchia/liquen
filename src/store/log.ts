@@ -63,7 +63,13 @@ import {
   RELEASE_SQL,
   sqliteLeases,
 } from "./lock.ts";
-import { AGENTS_DDL, AGENTS_TRIGGER, createRegistry, type Registry } from "./agents.ts";
+import {
+  AGENTS_DDL,
+  AGENTS_TRIGGER,
+  CONFIG_VERSION_TRIGGERS,
+  createRegistry,
+  type Registry,
+} from "./agents.ts";
 import { CREDENTIALS_DDL } from "./credentials.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
 import { type Connections, CONNECTIONS_DDL, createConnections, UNPREFIX } from "./connections.ts";
@@ -557,6 +563,7 @@ export async function openLog(
   if (made && versionOf(db) === 0) setVersion(db, VERSION);
   else migrate(db);
   db.exec(AGENTS_TRIGGER);
+  db.exec(CONFIG_VERSION_TRIGGERS);
   db.exec(ROSTER_VIEWS); // who steers whom, derived: the relations the law joins (§4, §6)
   const connections = createConnections(db); // the gate below reads its table
   const registry = createRegistry(db);

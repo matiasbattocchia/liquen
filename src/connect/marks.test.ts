@@ -3,7 +3,7 @@ import { COUNT_MS, createMarks, type MarkDeps, marked } from "./marks.ts";
 import { silenced } from "../render.ts";
 import type { Draft, Event, MessageEvent } from "../types.ts";
 
-const KNOBS = { crowd: 20, busy: 40, follow: [] as string[] };
+const KNOBS = { crowd: 20, busy: 40, follow: [] as string[], enabled: true };
 
 function line(over: {
   members?: number;
@@ -42,7 +42,7 @@ function harness(lines: number, over: Partial<MarkDeps> = {}, byId: Record<strin
     return Promise.resolve(Array.from({ length: Math.min(lines, q?.limit ?? lines) }, () => ({})));
   }) as unknown as MarkDeps["read"];
   let at = Date.parse("2026-11-14T12:00:00.000Z");
-  const marks = createMarks({ read, knobs: KNOBS, now: () => at, ...over });
+  const marks = createMarks({ read, knobs: () => Promise.resolve(KNOBS), now: () => at, ...over });
   return { marks, reads, tick: (ms: number) => (at += ms) };
 }
 
@@ -65,7 +65,9 @@ Deno.test("marks: a room is crowded when it is big, busy, and not the account's 
 Deno.test("marks: a big room that is calm is read, and one the connection follows too", async () => {
   const calm = harness(40);
   assertEquals((await calm.marks([line({ members: 300 })]))[0].extra, undefined);
-  const followed = harness(400, { knobs: { ...KNOBS, follow: ["-4100"] } });
+  const followed = harness(400, {
+    knobs: () => Promise.resolve({ ...KNOBS, follow: ["-4100"] }),
+  });
   assertEquals((await followed.marks([line({ members: 300 })]))[0].extra, undefined);
 });
 

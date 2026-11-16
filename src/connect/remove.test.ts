@@ -3,8 +3,8 @@ import type { ConnectionRow } from "../store/connections.ts";
 import { removeConnection, type RemoveDeps } from "./remove.ts";
 
 /** The map, the vault and the catalog as plain values, and what each call did to them. */
-function fake(rows: ConnectionRow[], keys: string[], declared: string[]) {
-  const state = { rows: [...rows], keys: [...keys], declared: [...declared] };
+function fake(rows: ConnectionRow[], keys: string[], enabled: string[]) {
+  const state = { rows: [...rows], keys: [...keys], enabled: [...enabled] };
   const deps: RemoveDeps = {
     store: {
       connections: () => Promise.resolve([...state.rows]),
@@ -23,9 +23,9 @@ function fake(rows: ConnectionRow[], keys: string[], declared: string[]) {
         return Promise.resolve(had);
       },
     },
-    undeclare: (service) => {
-      const had = state.declared.includes(service);
-      state.declared = state.declared.filter((s) => s !== service);
+    disable: (service: string) => {
+      const had = state.enabled.includes(service);
+      state.enabled = state.enabled.filter((s) => s !== service);
       return Promise.resolve(had);
     },
     services: ["slack", "google", "token"],
@@ -33,7 +33,7 @@ function fake(rows: ConnectionRow[], keys: string[], declared: string[]) {
   return { state, deps };
 }
 
-Deno.test("a connection goes with its secret, and the service's section with its last one", async () => {
+Deno.test("a connection goes with its secret, and its last one disables the service", async () => {
   const { state, deps } = fake(
     [
       { service: "google", address: "ana@x.io", agentId: "ana", credentialKey: "google:ana@x.io" },
@@ -50,10 +50,14 @@ Deno.test("a connection goes with its secret, and the service's section with its
   );
   assertEquals(state.rows.map((r) => r.service), ["slack"]);
   assertEquals(state.keys, ["slack:T1:org", "media:sign"]);
-  assertEquals(state.declared, ["slack"]);
+  assertEquals(state.enabled, ["slack"]);
+  assertEquals(
+    said.includes("no google connection is left: connections.google is disabled, its knobs kept"),
+    true,
+  );
 });
 
-Deno.test("a secret another live connection authenticates with stays, and so does the section", async () => {
+Deno.test("a secret another live connection authenticates with stays, and the service stays on", async () => {
   const { state, deps } = fake(
     [
       { service: "slack", address: "T1", credentialKey: "slack:T1:org" },
@@ -65,7 +69,7 @@ Deno.test("a secret another live connection authenticates with stays, and so doe
   const said = await removeConnection("slack:T1:bot", deps);
   assertEquals(state.rows.map((r) => r.address), ["T1"]);
   assertEquals(state.keys, ["slack:T1:org"]);
-  assertEquals(state.declared, ["slack"]);
+  assertEquals(state.enabled, ["slack"]);
   assertEquals(said[1], "its secret slack:T1:org stays — slack:T1 uses it too");
 });
 
