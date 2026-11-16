@@ -265,7 +265,7 @@ export function createSignIns(
       }
     })().catch((err) => console.error(`[sign-in] ${service}'s door:`, err));
     closing.add(shut);
-    shut.then(() => closing.delete(shut));
+    void shut.then(() => closing.delete(shut));
   };
 
   const serve = (service: string): Promise<unknown> => {

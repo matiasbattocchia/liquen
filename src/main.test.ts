@@ -1421,3 +1421,40 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: "a tune outlives every store write while its client is attached, and ends with the hang-up",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { root, dir } = await orgDir({ ana: {} });
+    const { transport } = scripted([reply("uno"), reply("dos"), reply("tres")]);
+    const main = await start({ dir, root, debounceMs: 0 }, { transport });
+    const said = async () =>
+      (await main.log.read({ types: ["message"] }))
+        .filter((e) => e.agent?.id === "ana" && e.agent?.session_id === "mind").length;
+    const last = async () => (await main.log.spend({ agentId: "ana" })).at(-1)?.model;
+    try {
+      const client = await door(dir, "ana");
+      assertEquals((await client.request({ op: "tail", model: "claude-tuned" })).ok, true);
+      await main.log.publish(principalMsg("mind@ana", "hola"));
+      await waitFor(async () => (await said()) === 1);
+      assertEquals(await last(), "claude-tuned");
+      // the roster's model moves under the tune: main retunes ana, and the tune stays on top
+      await main.log.setConfig([{ scope: "shared.agents", key: "model", value: "claude-cmd" }]);
+      assertEquals(await poke(root), "ana changed");
+      await main.log.publish(principalMsg("mind@ana", "¿y ahora?"));
+      await waitFor(async () => (await said()) === 2);
+      assertEquals(await last(), "claude-tuned");
+      // the hang-up: the roster's model, as the store now says it
+      client.conn.close();
+      await waitFor(() => main.attachments() === 0);
+      await main.log.publish(principalMsg("mind@ana", "¿seguro?"));
+      await waitFor(async () => (await said()) === 3);
+      assertEquals(await last(), "claude-cmd");
+    } finally {
+      await main.stop();
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
