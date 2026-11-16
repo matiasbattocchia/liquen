@@ -7101,7 +7101,8 @@ The CHANGES batch of 15 Nov, all seven items.
   and Microsoft's `listen`, and the public address Teams subscribes at.
 - **`enabled`.** Every connection has it. False stops the process and keeps the rest;
   a sign-in for it fails, and main's ports for it refuse. Removing a service's last
-  account sets it false instead of deleting the section.
+  account sets it false instead of deleting the section, and `liquen connect` of the
+  service sets it true before the door runs.
 - **The supervisor reconciles.** A poke starts what is declared and enabled, stops what is
   not, retries what refused, and restarts what it is told to. A changed start-only key is
   answered as owed, with the `liquen restart` that takes it up.
@@ -7111,8 +7112,8 @@ The CHANGES batch of 15 Nov, all seven items.
 Open:
 
 - Turning a disabled service back on from the file meets the store's `false` as a
-  conflict, since the file never said it before: it takes `--overwrite`, which takes every
-  other file value too, or a hand edit of the row. No command sets `enabled`.
+  conflict, since the file never said it before: it takes `liquen connect`, or
+  `--overwrite`, which takes every other file value too.
 - Every config write moves the count, and main then retunes every agent, which puts back
   the model and effort an attached interface had tuned, as a reload always did.
 - An org's own connectors keep reading their knobs once, until each moves to `liveKnobs`.

@@ -67,3 +67,43 @@ Deno.test("available = shipped + custom doors, doorless connectors excluded", as
     ]);
   });
 });
+
+Deno.test("liquen connect of a disabled service enables it before the door runs; --help leaves it", async () => {
+  const { openStore } = await import("../store/mod.ts");
+  const { declareConnection, disableConnection } = await import("../roster.ts");
+  const root = await Deno.realPath(await Deno.makeTempDir());
+  const enabled = async () => {
+    const log = await (await openStore(root)).log();
+    try {
+      return (await log.config("connections.acme")).find((r) => r.key === "enabled")?.value;
+    } finally {
+      await log.close();
+    }
+  };
+  const connect = (...args: string[]) =>
+    new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", new URL("./connect.ts", import.meta.url).pathname, ...args],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+  try {
+    await Deno.writeTextFile(`${root}/config.yaml`, "");
+    await Deno.mkdir(`${root}/connectors/acme`, { recursive: true });
+    await Deno.writeTextFile(`${root}/connectors/acme/connect.ts`, "// door");
+    const log = await (await openStore(root)).log();
+    try {
+      await declareConnection(log, "acme", { port: 1234 });
+      await disableConnection(log, "acme");
+    } finally {
+      await log.close();
+    }
+    await connect("acme", "--help", "--dir", root);
+    assertEquals(await enabled(), false);
+    const out = await connect("acme", "--dir", root);
+    assertEquals(out.code, 0, new TextDecoder().decode(out.stderr));
+    assertEquals(await enabled(), true);
+    assert(new TextDecoder().decode(out.stderr).includes("connections.acme.enabled is true"));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

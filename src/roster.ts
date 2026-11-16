@@ -248,6 +248,17 @@ export async function disableConnection(log: Registry, service: string): Promise
   return true;
 }
 
+/** Enable a disabled connection: `enabled: true` in its scope, so the run starts its
+ *  process on the knobs it kept. Answers whether it was disabled. */
+export async function enableConnection(log: Registry, service: string): Promise<boolean> {
+  const scope = connectionScope(service);
+  if (!(await log.config(scope)).some((r) => r.key === ENABLED && r.value === false)) {
+    return false;
+  }
+  await log.setConfig([{ scope, key: ENABLED, value: true }]);
+  return true;
+}
+
 /** Route a room to an agent, making the agent when it is missing (§4, §9): the steps in
  *  the order a room's first line needs. The agent is made from `entry` — its identity and
  *  settings, nobody steering it unless `entry` names someone; the route is one merge of
