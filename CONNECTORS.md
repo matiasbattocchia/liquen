@@ -90,7 +90,8 @@ use, a delivery, a poll or a send, through `liveKnobs(root, SPEC, log)`, which r
 store again only when its config version moved. A key the process can only take up as it
 starts, the shape it takes, goes in the spec's `start` list, and `liquen reload` names a
 change to it with the `liquen restart <name>` that takes it up. Every connection has
-`enabled` beside its own knobs: false runs nothing for it and keeps the rest. Secrets never enter the file — they live in the vault (slack and github keep
+`enabled` beside its own knobs: false runs nothing for it and keeps the rest, and `liquen
+connect <name>` sets it true again. Secrets never enter the file — they live in the vault (slack and github keep
 their app, bot, and grants there) or, for a local bridge, in env (`WA_BRIDGE_TOKEN`).
 
 A connector is reached through the org's edge (DESIGN §9, `src/edge.ts`), and it listens

@@ -13,7 +13,7 @@
  */
 
 import { findRoot, orgFlag } from "../config.ts";
-import { disableConnection } from "../roster.ts";
+import { disableConnection, enableConnection } from "../roster.ts";
 import { entry, report } from "../entry.ts";
 import { openStore } from "../store/mod.ts";
 import { moved, reconcile } from "../reload.ts";
@@ -88,7 +88,7 @@ export function usage(doors: string[]): string {
        liquen connect --remove <service>:<address>
 
   Connect a service to the org. --help on any door. \`liquen status\` is the map of what is
-  connected.
+  connected. A disabled service is enabled again, on the knobs and accounts it kept.
 
   <service>     a door — token is any API's bearer, ai a model provider's key:
                 ${doors.join(" · ")}
@@ -136,6 +136,8 @@ if (import.meta.main) {
       report(err);
       Deno.exit(2); // 2 says "no such door": nothing was spawned
     }
+    const help = words.some((w) => w === "--help" || w === "-h");
+    if (!name.includes("/") && !help) await enable(findRoot(org), name);
     const child = new Deno.Command(Deno.execPath(), {
       args: ["run", "-A", target, ...rest],
       stdin: "inherit",
@@ -144,6 +146,24 @@ if (import.meta.main) {
     }).spawn();
     Deno.exit((await child.status).code);
   });
+}
+
+/** Connecting a disabled service enables it, before its door runs: the door's sign-in and
+ *  ingest then find the service on, and the running org starts its process. */
+async function enable(root: string, service: string): Promise<void> {
+  const log = await (await openStore(root)).log();
+  let was: boolean;
+  try {
+    was = await enableConnection(log, service);
+  } finally {
+    await log.close();
+  }
+  if (!was) return;
+  const moves = await reconcile(root);
+  console.error(
+    `  connections.${service}.enabled is true again` +
+      (moves === null ? "" : `: the running org took it up: ${moved(moves)}`),
+  );
 }
 
 /** `--remove`: the grant undone in the store, then who still holds it. */

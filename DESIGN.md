@@ -3695,7 +3695,8 @@ taking the agent out whole; with no name it lists every agent — declared or no
 or paused, its last turn. `liquen connect` declares the `connections.<name>` scope a grant
 earns, and `--remove` of the service's last connection disables it: `enabled: false`, a
 key every connection has, runs nothing for the service and keeps its knobs, accounts and
-secrets, and a sign-in for it, or a port main serves for it, fails saying so. `liquen config`
+secrets, and a sign-in for it, or a port main serves for it, fails saying so. `liquen
+connect` of a disabled service sets it true again before its door runs. `liquen config`
 prints the store's state as YAML, read-only: a key the store holds is a line, what a
 person copies into the file to pin; a key it does not is a comment with its default. A
 command, a connector and a tool an agent calls make an agent by one path (`roster.ts`):

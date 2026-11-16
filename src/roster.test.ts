@@ -7,6 +7,7 @@ import { assertEquals, assertRejects } from "@std/assert";
 import {
   declareConnection,
   disableConnection,
+  enableConnection,
   ensureRoute,
   idleAgents,
   members,
@@ -187,7 +188,7 @@ Deno.test("poke: with no main running the rows stand, and the answer is null", a
   });
 });
 
-Deno.test("a connection is declared in the store with what its door decided, and disabled with its knobs kept", async () => {
+Deno.test("a connection is declared in the store with what its door decided, disabled with its knobs kept, and enabled again", async () => {
   await withOrg(async (root, log) => {
     assertEquals(await declareConnection(log, "slack"), true);
     assertEquals(await declareConnection(log, "acme", { port: 1234 }), true);
@@ -209,6 +210,14 @@ Deno.test("a connection is declared in the store with what its door decided, and
     assertEquals(enabledIn({ connections }, "slack"), true);
     assertEquals(enabledIn({ connections }, "sonar"), false);
     assertEquals(enabledIn({ connections }, "ghost"), false);
+    // enabled again on the knobs it kept; one never disabled is left as found
+    assertEquals(await enableConnection(log, "acme"), true);
+    assertEquals(await enableConnection(log, "acme"), false);
+    assertEquals(await enableConnection(log, "slack"), false);
+    assertEquals(await enableConnection(log, "ghost"), false);
+    const after = (await readConfig(root, log)).connections;
+    assertEquals(after.acme, { port: 1234, enabled: true });
+    assertEquals(enabledIn({ connections: after }, "acme"), true);
   }, "connections:\n  sonar:\n    rooms: true\n");
 });
 

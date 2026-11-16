@@ -452,7 +452,7 @@ export function enabledIn(cfg: Pick<OrgConfig, "connections">, service: string):
 export function disabled(service: string): Error {
   return new Error(
     `${service} is disabled: connections.${service}.${ENABLED} is false, and its accounts ` +
-      `and knobs are kept; set it true to run ${service} again`,
+      `and knobs are kept; \`liquen connect ${service}\` runs it again`,
   );
 }
 
