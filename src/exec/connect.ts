@@ -6,14 +6,18 @@
  * type it, answered at once and `async`. Whether the sign-in lands comes later, as the
  * call's update, final.
  *
- * What the call may ask is decided here, before any ticket opens:
+ * The services it offers are the ones main's table holds a flow for, so the schema is
+ * built from that list (`connectSpec`). What the call may ask is decided here, before any
+ * ticket opens:
  *
  *   • without `account`, a new account for the caller or for `for`. A grant for another
- *     agent lands only as the account their row names (email, or the phone for WhatsApp),
- *     so the handle is required, and GitHub, whose account carries no handle the row
- *     keeps, takes no `for`. A new shared account is the CLI's (`--shared`).
+ *     agent lands only as the account their row names (email, or the phone for WhatsApp
+ *     and Telegram), so the handle is required, and GitHub, whose account carries no
+ *     handle the row keeps, takes no `for`. A new shared account is the CLI's (`--shared`).
  *   • with `account`, a reconnect of a connection the caller may sign in again: its own,
  *     one `for` owns, or a shared one. The grant keeps the row's owner.
+ *   • a token names itself (`token`), and is the caller's or `for`'s: capability, not
+ *     identity, so there is no handle to match and no connection to reconnect.
  *
  * WhatsApp goes by pairing code alone, since a QR rotates too fast for a chat: the number
  * is the account's for a reconnect, else the phone on the row the grant is for.
@@ -23,32 +27,42 @@ import type { ExecTool } from "../xi.ts";
 import type { Json } from "../types.ts";
 import type { Registry } from "../store/agents.ts";
 import type { Connections } from "../store/connections.ts";
-import {
-  CODE_SERVICES,
-  LINK_SERVICES,
-  type SignInAsk,
-  type SignIns,
-  type Word,
-} from "../connect/signin.ts";
+import type { SignInAsk, SignIns, Word } from "../connect/signin.ts";
+import type { TokenArgs } from "../connect/token/grant.ts";
 import { describeCall } from "../describe.ts";
 
-export const CONNECT_SPEC = {
-  name: "connect",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      service: { type: "string", enum: [...LINK_SERVICES, ...CODE_SERVICES] },
-      account: { type: "string" },
-      for: { type: "string" },
+/** The tool's schema, over the services main can sign in. */
+export function connectSpec(services: string[]) {
+  const strings = { type: "array", items: { type: "string" } };
+  return {
+    name: "connect",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        service: { type: "string", enum: services },
+        account: { type: "string" },
+        for: { type: "string" },
+        token: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            env: { type: "string" },
+            hosts: strings,
+            paths: strings,
+            probe: { type: "string" },
+          },
+          required: ["name", "env", "hosts"],
+        },
+      },
+      required: ["service"],
     },
-    required: ["service"],
-  },
-};
+  };
+}
 
 export interface ConnectDeps {
   agentId: string;
   sessionId: string;
-  signIns: Pick<SignIns, "open">;
+  signIns: Pick<SignIns, "open" | "services">;
   log: Pick<Registry, "agents"> & Pick<Connections, "connections">;
   /** A moment as the agent reads the clock: "15:42" in the org's zone. */
   clock: (ms: number) => string;
@@ -58,14 +72,14 @@ export interface ConnectDeps {
  *  that refuses it. */
 export async function askOf(
   input: Record<string, unknown>,
-  deps: Pick<ConnectDeps, "agentId" | "log">,
+  deps: Pick<ConnectDeps, "agentId" | "log"> & { services: string[] },
 ): Promise<SignInAsk> {
   const service = String(input.service ?? "").trim();
-  if (![...LINK_SERVICES, ...CODE_SERVICES].includes(service)) {
+  if (!deps.services.includes(service)) {
     throw new Error(
       service
         ? `${service} signs in at the terminal: \`liquen connect ${service}\``
-        : `say \`service\`: ${[...LINK_SERVICES, ...CODE_SERVICES].join(", ")}`,
+        : `say \`service\`: ${deps.services.join(", ")}`,
     );
   }
   const named = typeof input.for === "string" ? input.for.trim() : "";
@@ -74,6 +88,14 @@ export async function askOf(
   const row = (await deps.log.agents()).find((a) => a.agentId === target);
   if (!row) throw new Error(`no agent "${target}"`);
   const account = typeof input.account === "string" ? input.account.trim() : "";
+
+  if (service === "token") {
+    if (account) {
+      throw new Error("a token is no connection: ask again under its name, and it is replaced");
+    }
+    return { service, agent: target, token: tokenOf(input.token) };
+  }
+  if (input.token !== undefined) throw new Error("`token` goes with service `token` alone");
 
   if (account) {
     const conn = (await deps.log.connections()).find((c) =>
@@ -97,7 +119,7 @@ export async function askOf(
     if (service === "github") {
       throw new Error("GitHub takes no `for`: its account carries no handle the row keeps");
     }
-    if (service === "whatsapp") {
+    if (service === "whatsapp" || service === "telegram") {
       if (!row.phone) throw new Error(`${target} has no phone on their row to match`);
       ask.phone = row.phone;
     } else {
@@ -116,6 +138,28 @@ export async function askOf(
   return ask;
 }
 
+/** The token a call names, as its fields read: `hosts` and `paths` a list, or one string
+ *  split at commas. What they say is checked when the sign-in opens. */
+function tokenOf(raw: unknown): TokenArgs {
+  if (typeof raw !== "object" || raw === null) {
+    throw new Error("service `token` needs `token`: {name, env, hosts}");
+  }
+  const t = raw as Record<string, unknown>;
+  const text = (v: unknown) => typeof v === "string" ? v.trim() : "";
+  const list = (v: unknown) =>
+    (Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [])
+      .map(text).filter(Boolean);
+  const paths = list(t.paths);
+  const probe = text(t.probe);
+  return {
+    name: text(t.name),
+    env: text(t.env),
+    hosts: list(t.hosts),
+    ...(paths.length ? { paths } : {}),
+    ...(probe ? { probe } : {}),
+  };
+}
+
 /** The first word, as the call's answer. */
 export function answerOf(w: Word, clock: (ms: number) => string): string {
   if ("link" in w) {
@@ -131,10 +175,11 @@ export function answerOf(w: Word, clock: (ms: number) => string): string {
 }
 
 export function connectTool(deps: ConnectDeps): ExecTool {
+  const services = deps.signIns.services;
   return {
-    spec: CONNECT_SPEC,
+    spec: connectSpec(services),
     async execute(input, _signal, _report, call) {
-      const ask = await askOf((input ?? {}) as Record<string, unknown>, deps);
+      const ask = await askOf((input ?? {}) as Record<string, unknown>, { ...deps, services });
       if (call) {
         ask.caller = {
           agentId: deps.agentId,

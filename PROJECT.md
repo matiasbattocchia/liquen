@@ -7117,6 +7117,33 @@ Open:
   `--overwrite`, which takes every other file value too.
 - An org's own connectors keep reading their knobs once, until each moves to `liveKnobs`.
 
+### A sign-in page: Telegram, Mercado Pago and tokens through `connect` (2026-11-16) — LANDED
+
+The CHANGES batch of 16 Nov, all six items.
+
+- **The tool offers what main holds.** The `service` enum is the keys of the flows main
+  hands its table, and the call is checked against the same list; the doc names none.
+- **A page is a link.** `connect/page.ts` draws every form: plain HTML, no script, each
+  value escaped, `no-store`, no referrer, no framing, a policy that loads nothing and posts
+  only to itself. A failure before the judge draws the form again with the ticket open; a
+  refusal from the judge settles it. A flow with `declares: false` lands without declaring.
+- **Mercado Pago** asks for the access token, vouched for by `/users/me` (the user id, and
+  the email a grant for another matches). **Telegram** asks for the number, filled from the
+  row, then the code, then the two-step password; a wrong one is asked again, and the
+  sign-in runs in main's memory, the library loaded only for it. **A token** carries
+  `{name, env, hosts, paths?, probe?}`, checked before the ticket opens and shown on the
+  page before the paste; it is the caller's or `for`'s with no handle to match, and a row
+  another claims the variable over is said in the call's update. Each grant is written by
+  its CLI door's path (`connectMercadopago`, `connectTelegram`, `grantToken`).
+
+Open:
+
+- Nothing here has met a live account or a browser.
+- Telegram's page goes by code alone. A QR would serve a person at a computer; a phone
+  cannot scan its own screen.
+- A restart mid-Telegram begins the page again, the code Telegram sent spent.
+- A shared token, like a new shared account, stays the CLI's.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

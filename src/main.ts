@@ -116,13 +116,23 @@ import {
 } from "./config.ts";
 import { declareConnection, IDLE_DAYS, idleAgents } from "./roster.ts";
 import { reconciled } from "./reload.ts";
-import { createSignIns, ends, type SignInAsk, type SignIns, type Word } from "./connect/signin.ts";
+import {
+  createSignIns,
+  ends,
+  type SignInAsk,
+  type SignInFlow,
+  type SignIns,
+  type Word,
+} from "./connect/signin.ts";
 import { googleSignIn } from "./connect/google/signin.ts";
 import { microsoftSignIn } from "./connect/microsoft/signin.ts";
 import { slackSignIn } from "./connect/slack/signin.ts";
 import { createWhatsappSignIn } from "./connect/whatsapp/signin.ts";
 import { createGithubSignIn } from "./connect/github/signin.ts";
-import { CONNECT_SPEC, connectTool } from "./exec/connect.ts";
+import { createTelegramSignIn } from "./connect/telegram/signin.ts";
+import { createMercadopagoSignIn } from "./connect/mercadopago/signin.ts";
+import { createTokenSignIn } from "./connect/token/signin.ts";
+import { connectSpec, connectTool } from "./exec/connect.ts";
 import { AGENT_SPEC, agentTool } from "./exec/agent.ts";
 import { serveSocket } from "./connect/serve.ts";
 import { classifyFloors, ensureUser, requireTools, sealSystem } from "./users.ts";
@@ -271,6 +281,17 @@ export async function start(
   sayBrought(brought);
   const release = (await packageManifest()).version;
   if (release) await log.setManifest({ release });
+  // the sign-ins main can hold, one flow per service: what the `connect` tool offers
+  const flows: Record<string, SignInFlow> = {
+    google: googleSignIn,
+    microsoft: microsoftSignIn,
+    slack: slackSignIn,
+    whatsapp: createWhatsappSignIn(),
+    github: createGithubSignIn(),
+    telegram: createTelegramSignIn(),
+    mercadopago: createMercadopagoSignIn(),
+    token: createTokenSignIn(),
+  };
   // every builtin tool's words are a doc the org may edit (tooldoc.ts): one that disagrees
   // with its schema stops the start here, named, before any turn reads it
   if (running().length > 0) {
@@ -280,7 +301,7 @@ export async function start(
         ...OWN_TOOLS,
         bashShape(catalog()?.system.bashWaitMs ?? DEFAULT_BASH_WAIT_MS),
         ...Object.values(DOC_TOOLS),
-        { spec: CONNECT_SPEC },
+        { spec: connectSpec(Object.keys(flows)) },
         { spec: AGENT_SPEC },
       ],
       (name) => docs.read(ctx, { scope: "system", kind: "tool", name }),
@@ -317,13 +338,7 @@ export async function start(
           console.error(`[sign-in] declared connections.${service}: ${await reconciled(root)}`);
         }
       },
-    }, {
-      google: googleSignIn,
-      microsoft: microsoftSignIn,
-      slack: slackSignIn,
-      whatsapp: createWhatsappSignIn(),
-      github: createGithubSignIn(),
-    })
+    }, flows)
     : null;
   const signIns: SignIns | null = table && {
     ...table,

@@ -7,7 +7,7 @@
  * `connectToken` the grant. No entry block here, so connector.ts can export it.
  */
 
-import type { CredentialRow, Store } from "../../connector.ts";
+import type { CredentialRow, Credentials, Store } from "../../connector.ts";
 import { hostAllowed, pathAllowed, plainPath } from "../../proxy/grants.ts";
 
 export const TOKEN_PREFIX = "token:";
@@ -182,14 +182,27 @@ export async function connectToken(
       );
     }
   }
-  const pasted = (typeof token === "string" ? token : await token())?.trim();
-  if (!pasted) throw new Error("an empty token — nothing written");
-  if (args.probe) {
-    const { status } = await (deps.probe ?? defaultProbe)(args.probe, pasted);
-    if (status < 200 || status >= 300) {
-      throw new Error(`the token does not open ${args.probe} (HTTP ${status}) — nothing written`);
-    }
+  const pasted = (typeof token === "string" ? token : await token())?.trim() ?? "";
+  const creds = await store.vault();
+  try {
+    return await grantToken(creds, args, pasted, deps);
+  } finally {
+    await creds.close();
   }
+}
+
+/** The token spent on the probe when asked, then written: the grant's last step, whoever
+ *  took the paste. Refuses an empty token and one the probe does not open, writing
+ *  nothing. */
+export async function grantToken(
+  creds: Pick<Credentials, "put" | "list">,
+  args: TokenArgs,
+  pasted: string,
+  deps: TokenDeps = {},
+): Promise<{ key: string; contention?: string }> {
+  pasted = pasted.trim();
+  if (!pasted) throw new Error("an empty token — nothing written");
+  await probeToken(args, pasted, deps);
   const key = tokenKey(args.name, args.agentId);
   const row: CredentialRow = {
     key,
@@ -197,13 +210,22 @@ export async function connectToken(
     ...(args.agentId ? { agentId: args.agentId } : {}),
     extra: { env: args.env, hosts: args.hosts, ...(args.paths ? { paths: args.paths } : {}) },
   };
-  const creds = await store.vault();
-  try {
-    await creds.put(row);
-    const said = contention(await creds.list(""), row);
-    return { key, ...(said ? { contention: said } : {}) };
-  } finally {
-    await creds.close();
+  await creds.put(row);
+  const said = contention(await creds.list(""), row);
+  return { key, ...(said ? { contention: said } : {}) };
+}
+
+/** Spend the token once on the probe, when the args name one: a status outside 2xx
+ *  refuses it. */
+export async function probeToken(
+  args: Pick<TokenArgs, "probe">,
+  pasted: string,
+  deps: TokenDeps = {},
+): Promise<void> {
+  if (!args.probe) return;
+  const { status } = await (deps.probe ?? defaultProbe)(args.probe, pasted);
+  if (status < 200 || status >= 300) {
+    throw new Error(`the token does not open ${args.probe} (HTTP ${status}) — nothing written`);
   }
 }
 

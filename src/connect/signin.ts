@@ -7,11 +7,13 @@
  * and a phone is never linked twice.
  *
  * A link service (Google, Microsoft, Slack) is served on its oauth socket while any of its
- * tickets is open: one door, many sign-ins, each link carrying its ticket alone. A code
- * service (WhatsApp, GitHub) runs its poll here. Either way the handler judges the account
- * the service vouched for against the ticket (`judge`), and the first callback settles
- * it. The outcome is said once: to every call that asked, as the call's update, final,
- * and to every CLI still listening. A ticket past its deadline lapses the same way.
+ * tickets is open: one door, many sign-ins, each link carrying its ticket alone. A page
+ * service (Telegram, Mercado Pago, a pasted token) is a link too, whose door draws the
+ * form the person types the secret into (page.ts). A code service (WhatsApp, GitHub) runs
+ * its poll here. Either way the handler judges the account the service vouched for
+ * against the ticket (`judge`), and the first callback settles it. The outcome is said
+ * once: to every call that asked, as the call's update, final, and to every CLI still
+ * listening. A ticket past its deadline lapses the same way.
  *
  * The tickets outlive main: at boot `resume` lapses what ran out, opens the doors the rest
  * need, and takes the polls up where they were noted.
@@ -29,11 +31,7 @@ import { disabled } from "../config.ts";
 import { socketOf } from "../edge.ts";
 import { MIND } from "../session.ts";
 import { serveSocket } from "./serve.ts";
-
-/** The services whose sign-in is a link to open. */
-export const LINK_SERVICES = ["google", "microsoft", "slack"];
-/** The services whose sign-in is a code the person types at the service. */
-export const CODE_SERVICES = ["whatsapp", "github"];
+import { type TokenArgs, tokenKey } from "./token/grant.ts";
 
 /** How long a link lives. */
 export const SIGN_IN_MS = 15 * 60_000;
@@ -57,6 +55,8 @@ export interface SignInAsk {
   scopes?: string[];
   /** WhatsApp: the number a pairing code is minted for; absent, a QR. */
   pair?: string;
+  /** A pasted token: what it is for, and where it may be spent. */
+  token?: TokenArgs;
   /** The tool call to tell the outcome to. */
   caller?: Caller;
 }
@@ -139,6 +139,8 @@ export interface SignInFlow {
   prepare(ask: SignInAsk, ctx: FlowCtx): Promise<Record<string, unknown>>;
   /** How long the person has. */
   life(ask: SignInAsk): number;
+  /** False for a grant that runs no process (a token), so landing declares nothing. */
+  declares?: false;
   /** A link service's handler, mounted while its tickets are open, and one ticket's link. */
   link?: {
     handler(ctx: FlowCtx, gate: Gate): (req: Request) => Promise<Response>;
@@ -161,11 +163,12 @@ interface Kept {
 const keptOf = (t: TicketRow): Kept => t.extra as Kept;
 
 /** Who signs in, as the key a sign-in is opened under: the account whenever it is known
- *  before the sign-in (a reconnect, a WhatsApp pairing code's number), else whom the grant
- *  is for. */
+ *  before the sign-in (a reconnect, a WhatsApp pairing code's number, a token's vault
+ *  key), else whom the grant is for. */
 export function keyOf(ask: SignInAsk): string {
   if (ask.account) return `account:${same(ask.account)}`;
   if (ask.pair) return `account:${digits(ask.pair)}`;
+  if (ask.token) return `account:${tokenKey(ask.token.name, ask.agent)}`;
   return ask.agent ? `agent:${ask.agent}` : "org";
 }
 
@@ -181,6 +184,8 @@ export function digits(s: string): string {
 
 /** Every sign-in in flight, over the vault. */
 export interface SignIns {
+  /** The services it can sign in: one per flow it was handed. */
+  services: string[];
   /** Open a sign-in, or join the one open under the same key: its first word, the link or
    *  the code. `listen` hears every word, that first one included and the outcome last.
    *  Throws the sentence that refuses it. */
@@ -305,9 +310,11 @@ export function createSignIns(
     async landed(ticket, account, missing) {
       const t = judged.get(ticket);
       if (!t) return;
-      await ctx.declare(t.service).catch((err) =>
-        console.error(`[sign-in] ${t.service} could not be declared:`, err)
-      );
+      if (flows[t.service]?.declares !== false) {
+        await ctx.declare(t.service).catch((err) =>
+          console.error(`[sign-in] ${t.service} could not be declared:`, err)
+        );
+      }
       await tell(t, { landed: account, ...(missing?.length ? { missing } : {}) });
     },
 
@@ -376,6 +383,8 @@ export function createSignIns(
   }, opts.sweepMs ?? SWEEP_MS);
 
   return {
+    services: Object.keys(flows),
+
     async open(ask, listen) {
       const flow = flows[ask.service];
       if (!flow) {

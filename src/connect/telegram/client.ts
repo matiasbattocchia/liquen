@@ -779,6 +779,12 @@ export interface SignInOptions {
   /** The account's two-step password, asked only when it has one. */
   password: () => Promise<string>;
   onQr: (url: string) => void;
+  /** Told when a code or password was wrong, before it is asked again. */
+  invalid?: (kind: "code" | "password") => void;
+  /** Told when Telegram has sent the code; absent, the library says so on stdout. */
+  sent?: () => void;
+  /** Ends the sign-in. */
+  signal?: AbortSignal;
 }
 
 /** Sign an account in on a session of its own and answer the credential: the session
@@ -797,6 +803,9 @@ export async function signIn(opts: SignInOptions): Promise<{ session: string; se
     const me = await client.start({
       ...(opts.phone ? { phone: opts.phone, code: opts.code } : { qrCodeHandler: opts.onQr }),
       password: opts.password,
+      ...(opts.invalid ? { invalidCodeCallback: opts.invalid } : {}),
+      ...(opts.sent ? { codeSentCallback: opts.sent } : {}),
+      ...(opts.signal ? { abortSignal: opts.signal } : {}),
     });
     return { session: await client.exportSession(), self: peerOf(me) };
   } catch (err) {
