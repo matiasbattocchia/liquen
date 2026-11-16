@@ -681,11 +681,20 @@ export async function start(
   // roster's back — the same lifetime the tail's `cwd` has. Checked the way boot checks
   // the roster, so a provider that cannot run the model at that effort refuses the attach,
   // never a turn. The runner's config and transport are read at every invocation, so the
-  // next turn thinks with the new ones; a turn already running finishes as it began.
+  // next turn thinks with the new ones; a turn already running finishes as it began. A
+  // tune is the attachment's alone: held here, never in the store, and laid back over the
+  // row each time the agent is retuned.
+  const tunes = new Map<string, Tune>();
   const tune = async (agentId: string, sessionId: string, t: Tune | undefined) => {
+    const key = sessionAddress(agentId, sessionId);
+    if (!t) tunes.delete(key);
     const p = rows.get(agentId);
     const r = sessionId === MIND ? minds.get(agentId) : await runnerOf(agentId, sessionId);
     if (!p || !r) return;
+    tuneOver(agentId, r, p, t);
+    if (t) tunes.set(key, t);
+  };
+  const tuneOver = (agentId: string, r: Runner, p: AgentRow, t: Tune | undefined) => {
     const stated = configFor(p, MIND); // the roster's word, what the hang-up puts back
     const own = providerFor(agentId);
     const provider = t?.provider ?? own;
@@ -790,6 +799,7 @@ export async function start(
     keepers.delete(agentId);
     stock.delete(agentId);
     for (const key of [...named.keys()].filter(mine)) named.delete(key);
+    for (const key of [...tunes.keys()].filter(mine)) tunes.delete(key);
     for (const key of [...reported.keys(), ...told.keys()].filter(mine)) {
       reported.delete(key);
       told.delete(key);
@@ -816,6 +826,16 @@ export async function start(
         ...(retryDelaysMs ? { retryDelaysMs } : {}),
       };
       r.ports.transport = thinkingThrough(r, providerFor(agentId), stock.get(agentId)!);
+      const key = sessionAddress(agentId, r.config.sessionId);
+      const t = tunes.get(key);
+      if (!t) continue;
+      try {
+        tuneOver(agentId, r, row, t);
+      } catch (err) {
+        // the row moved under the tune to where it cannot run: the session takes the row's
+        tunes.delete(key);
+        console.error(`${key}: its attachment's tune no longer runs, the roster's does:`, err);
+      }
     }
   };
   // one agent brought in line with its row, the others running on: up when it should run
