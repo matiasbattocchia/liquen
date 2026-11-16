@@ -1160,7 +1160,8 @@ Deno.test({
       assertEquals(said.payload?.ref_id, fact.id);
 
       // and nowhere else: the turn ends, and the sender's conversation holds no presence —
-      // only the mirror's surface heard it
+      // only the mirror's surface heard it. The wire line and its mind copy are a turn each,
+      // the second as soon as the first ends, so its line may be there by now too
       await waitFor(async () =>
         (await main.log.read({ types: ["message"] })).some((e) =>
           e.agent !== undefined && e.extra?.delta !== true
@@ -1169,7 +1170,7 @@ Deno.test({
       const spoken = (await main.log.read({ types: ["message"] }))
         .filter((e) => e.extra?.delta === true)
         .map((e) => e.envelope.conversation.address);
-      assertEquals(spoken, ["5491155550109"]);
+      assertEquals([...new Set(spoken)], ["5491155550109"]);
     } finally {
       await main.stop();
       await Deno.remove(dir, { recursive: true });

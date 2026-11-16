@@ -45,13 +45,19 @@
  * for), and it has two failure modes, each with its own defence:
  *
  *   the echo lands EARLY, before the dispatcher's backfill claims the CC (the 小-window) —
- *     fan-in settles (`SETTLE_MS`) and re-reads the origin row; the backfill has absorbed it
- *     by then, and a row that is gone copies nothing.
+ *     an early echo can only be a post in flight, and a dispatcher stamps `posting_at` on
+ *     the row before it posts, so the store says which posts those are. With none in the
+ *     conversation the line is a person's and copies at once; with some, fan-in waits for
+ *     them to land (`POSTING_MS` at most) and re-reads the origin row: the backfill has
+ *     absorbed an echo by then, and a row that is gone copies nothing.
  *   the claim NEVER lands — the dispatcher died between posting and backfilling, or the API
  *     returned no id to stamp (a Slack file share). Then the echo stays a first-class
  *     inbound forever. But an inbound always carries the platform's id, so a CC of the same
  *     words still holding NONE can only be that post: fan-in stamps it (`unclaimed`), which
  *     absorbs the echo exactly as the dispatcher would have, and copies nothing.
+ *
+ * Both read the store, never the mirror's memory: a restart between a post and its echo
+ * changes nothing.
  */
 
 import { aliasOf, type AliasRow } from "../store/connections.ts";
@@ -107,7 +113,8 @@ export interface MirrorDeps {
   subscribe: Subscriber["subscribe"];
   /** → the EventLog: copies and CCs are ordinary published events (§4 frontier rule). */
   publish: Appender["publish"];
-  /** The settle re-read (小-window): is the origin row still there, or absorbed? */
+  /** The echo re-read (小-window): is a post still in flight, is the origin row still
+   *  there, or absorbed? */
   read: Reader["read"];
   /** The open cards, off the store (§9): what a surface's `/y` is read against. */
   gates: Gates["gates"];
@@ -139,9 +146,9 @@ export interface MirrorDeps {
 }
 
 /** Wire the mirror to the log. Returns unsubscribe. Serialized: copies keep log order.
- *  `settleMs` is `SETTLE_MS` — a waited constant, so the value is the seam (§9): a test
- *  passes a smaller one rather than sitting out the real window. */
-export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): () => void {
+ *  `postingMs` is `POSTING_MS` — a waited constant, so the value is the seam (§9): a test
+ *  passes a smaller one rather than sitting out a dead post's bound. */
+export function createMirror(deps: MirrorDeps, postingMs: number = POSTING_MS): () => void {
   const now = deps.now ?? (() => new Date().toISOString());
   let chain: Promise<void> = Promise.resolve();
   const enqueue = (e: Event, work: () => Promise<void>) => {
@@ -188,17 +195,20 @@ export function createMirror(deps: MirrorDeps, settleMs: number = SETTLE_MS): ()
         connection_address,
         conversation.address,
       );
-      if (binding) await fanIn(deps, e as MessageEvent, binding, settleMs, now);
+      if (binding) await fanIn(deps, e as MessageEvent, binding, postingMs, now);
     });
   });
 }
 
 /* ── fan-in: alias surface → the mind ─────────────────────────────────── */
 
-/** The 小-window: how long fan-in waits for a dispatch backfill to absorb an early echo.
- *  It measures one thing — the gap between a post going out and its id being written down —
- *  so it is a property of the code, not of a deployment. */
-const SETTLE_MS = 1_000;
+/** How long a post stays in flight, at most, for fan-in to wait on: a `posting_at` older
+ *  than this is a dispatcher that died mid-post, whose echo the unclaimed-CC guard takes.
+ *  A live post lands well inside it, and fan-in waits only as long as one takes. */
+const POSTING_MS = 5_000;
+
+/** How often fan-in looks again while a post is in flight. */
+const POSTING_POLL_MS = 20;
 
 /** How far back the unclaimed-CC guard looks for an echo's twin. A false-positive bound,
  *  not a latency budget: past it, saying the same words again stops being confusable with
@@ -209,7 +219,7 @@ async function fanIn(
   deps: MirrorDeps,
   e: MessageEvent,
   binding: AliasRow,
-  settleMs: number,
+  postingMs: number,
   now: () => string,
 ): Promise<void> {
   // who signs the copy. The binding says who is on the other side (§4): the row is signed
@@ -226,9 +236,12 @@ async function fanIn(
     : wire && { address: wire.address, name: wire.name ?? wire.address };
   if (!sender) return;
 
-  // settle, then re-read: an early echo of our own CC is absorbed by the dispatcher's
-  // backfill (dropped, merged into the CC) — if the row is gone, there is nothing to copy
-  await new Promise((r) => setTimeout(r, settleMs));
+  // a post in flight here may be this row coming back early: let it land, then re-read. The
+  // dispatcher's backfill absorbs an early echo of our own CC (dropped, merged into the CC)
+  // — if the row is gone, there is nothing to copy. Nothing in flight, nothing to wait for
+  while (await posting(deps, e, postingMs)) {
+    await new Promise((r) => setTimeout(r, POSTING_POLL_MS));
+  }
   const still = await deps.read({
     conversation: e.envelope.conversation.address,
     after: new Date(Date.parse(e.ts) - 1).toISOString(),
@@ -406,6 +419,28 @@ async function quotedOrigin(
     filter: (x) => (x.extra?.via as { external_id?: string } | undefined)?.external_id === quoted,
   });
   return theirs[0]?.id;
+}
+
+/** Is a post of ours in flight in the conversation `e` landed in — written before it, taken
+ *  to the wire by a dispatcher (`posting_at`, stamped before the post goes out, so before
+ *  any echo of it) for the offer it stands at, and not answered yet? Only such a post can
+ *  come back as `e` without the row that sent it holding its id. One that has been in
+ *  flight past `postingMs` is a dispatcher that died mid-post: no longer waited on. */
+async function posting(deps: MirrorDeps, e: MessageEvent, postingMs: number): Promise<boolean> {
+  const since = new Date(Date.now() - postingMs).toISOString();
+  const rows = await deps.read({
+    conversation: e.envelope.conversation.address,
+    types: ["message"],
+    state: "queued",
+    beforeId: e.id,
+    limit: 1,
+    filter: (x) => {
+      const at = x.status?.posting_at;
+      return x.agent !== undefined && x.envelope.external_id === undefined &&
+        at !== undefined && at >= (x.status?.queued_at ?? "") && at > since;
+    },
+  });
+  return rows.length > 0;
 }
 
 /** Our own post, returning unrecognized: a CC on this surface carrying the same words and

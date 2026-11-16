@@ -133,7 +133,8 @@ async function withDispatch(
       },
     }),
     setDelivery: (id, patch) => {
-      patches.push(patch);
+      // what the wire answered; the in-flight stamp before each post is the dispatcher's own
+      if (patch.status?.posting_at === undefined) patches.push(patch);
       return log.setDelivery(id, patch);
     },
     directory: opts.directory,

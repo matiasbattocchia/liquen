@@ -1158,9 +1158,11 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     dispatcher sends.
     Fan-in guards that echo twice, because in an alias conversation an unmerged one reads
     as the principal speaking and cross-broadcasts to the other surfaces, which echo in
-    turn: it settles briefly and re-reads, so an early echo the backfill absorbs copies
-    nothing (the 小-window, one layer up); and since an inbound always carries the
-    platform's id, a CC of the same words still holding NONE is that post returning
+    turn: a dispatcher stamps a row `posting_at` before it posts, so an echo can only be a
+    post the store shows in flight, and fan-in waits for those alone — none, and a person's
+    line copies at once; some, and it lets them land and re-reads, so an early echo the
+    backfill absorbs copies nothing (the 小-window, one layer up); and since an inbound
+    always carries the platform's id, a CC of the same words still holding NONE is that post returning
     unrecognized — the mirror stamps it, absorbing the echo the way the dispatcher would
     have, when a claim never lands (a crash between post and backfill, an API that
     returned no id).
