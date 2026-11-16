@@ -204,6 +204,8 @@ export function createSignIns(
   // tickets the judge settled, for the word that follows it
   const judged = new Map<string, TicketRow>();
   const told = new Set<string>();
+  // doors closing behind their last answer, for `close` to wait out
+  const closing = new Set<Promise<void>>();
 
   const hear = (ticket: string, w: Word) => {
     for (const l of listeners.get(ticket) ?? []) {
@@ -241,15 +243,24 @@ export function createSignIns(
     await idle(t.service);
   };
 
-  /** Close a link service's door when none of its tickets is open. */
+  /** Close a link service's door when none of its tickets is open. The callback that
+   *  settled the last one is still being answered through it, and a shutdown waits for
+   *  every request in flight, so the door closes behind that answer, not before it. The
+   *  socket goes with it unless another sign-in opened the door again meanwhile. */
   const idle = async (service: string) => {
     const door = doors.get(service);
     if (!door) return;
     if ((await creds.tickets()).some((t) => t.service === service)) return;
     doors.delete(service);
     const server = await door.catch(() => undefined);
-    await server?.shutdown();
-    await Deno.remove(socketOf(ctx.root, service, "oauth")).catch(() => {});
+    const shut = (async () => {
+      await server?.shutdown();
+      if (!doors.has(service)) {
+        await Deno.remove(socketOf(ctx.root, service, "oauth")).catch(() => {});
+      }
+    })().catch((err) => console.error(`[sign-in] ${service}'s door:`, err));
+    closing.add(shut);
+    shut.then(() => closing.delete(shut));
   };
 
   const serve = (service: string): Promise<unknown> => {
@@ -460,6 +471,7 @@ export function createSignIns(
         await server?.shutdown();
         await Deno.remove(socketOf(ctx.root, service, "oauth")).catch(() => {});
       }
+      await Promise.all(closing);
     },
   };
 }

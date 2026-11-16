@@ -194,6 +194,39 @@ Deno.test("open: a link sign-in serves its door, and a second ask gets the same 
   }
 });
 
+Deno.test("a callback that settles the last ticket gets its page, and the door closes behind it", async () => {
+  // the door's callback judges and lands its ticket before it answers, as a service's does
+  const flow = linkFlow();
+  flow.link!.handler = (_ctx, gate) => async (req) => {
+    const ticket = new URL(req.url).searchParams.get("ticket")!;
+    await gate.judge(ticket, { address: "ana@example.com" });
+    await gate.landed(ticket, "ana@example.com");
+    return new Response("connected");
+  };
+  const h = await harness({ svc: flow });
+  try {
+    await h.signIns.open({ service: "svc", agent: "ana", caller: caller("u1") });
+    const [t] = await h.creds.tickets();
+    const sock = socketOf(h.root, "svc", "oauth");
+    const client = Deno.createHttpClient({ proxy: { transport: "unix", path: sock } });
+    try {
+      const res = await fetch(`http://x/svc/oauth/callback?ticket=${t.ticket}`, {
+        client,
+        signal: AbortSignal.timeout(5_000),
+      });
+      assertEquals(await res.text(), "connected");
+    } finally {
+      client.close();
+    }
+    assertEquals(updates(h.published).map((u) => u.output), ["signed in: svc ana@example.com"]);
+    // no ticket is open, so the door is gone once that answer is out
+    await h.signIns.close();
+    await assertRejects(() => Deno.stat(sock), Deno.errors.NotFound);
+  } finally {
+    await h.close();
+  }
+});
+
 Deno.test("judge: the account lands once; every caller and listener hears it, final", async () => {
   const seen: { gate?: Gate } = {};
   const h = await harness({ svc: linkFlow(seen) });
