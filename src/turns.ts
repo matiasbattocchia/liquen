@@ -160,6 +160,7 @@ export function openerOf(e: Event, ref: SessionRef): Opener | undefined {
  */
 export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
   const home = sessionAddress(ref.agentId, ref.id);
+  const held = new Set(events.map((e) => e.id));
   const turns: Turn[] = [];
   const byStep = new Map<string, Turn>();
   let open: Turn | undefined;
@@ -240,10 +241,14 @@ export function turnsOf(events: Event[], ref: SessionRef): Turn[] {
       }
       if (e.type === "tool_result" || e.type === "permission_response") continue; // a stray
       if (!open) {
+        // the horizon is the freshest row the step read; one in another room is fresher than
+        // any news this room holds before it, so it is the opener, named by id for the lookup
         const consumed = typeof e.extra?.consumed === "string" ? e.extra.consumed : undefined;
-        const opener = (consumed !== undefined ? horizon(lastNewsBefore, consumed) : news) ??
-          (consumed !== undefined ? { kind: "unknown" as const, id: consumed } : undefined) ??
-          { kind: "unknown" as const };
+        const opener = consumed === undefined
+          ? news ?? { kind: "unknown" as const }
+          : held.has(consumed)
+          ? horizon(lastNewsBefore, consumed) ?? { kind: "unknown" as const, id: consumed }
+          : { kind: "unknown" as const, id: consumed };
         open = {
           id: step,
           agent: ref.agentId,
