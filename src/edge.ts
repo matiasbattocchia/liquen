@@ -25,7 +25,9 @@
  * the path as it came. Nothing answering on an ingest's socket is a 502 that names it, a
  * service whose process is down; nothing at a door is a 410 that tells the person no
  * sign-in is open, since a door stands only while one is; and a path outside the grammar
- * is a 404. `liquen start` runs the edge as one more child, always, and
+ * is a 404. One more head stands beside the grammar: `/pages/…`, the pages agents publish,
+ * goes to `data/run/pages.sock`, which main serves, with the path as it came
+ * (`pagesSocket`). `liquen start` runs the edge as one more child, always, and
  * `edge.tunnel` beside it when the org runs its own tunnel.
  */
 
@@ -63,6 +65,26 @@ export function socketOf(root: string, service: string, leg: Leg): string {
   return `${root}/data/run/${service}${leg === "oauth" ? "-oauth" : ""}.sock`;
 }
 
+/** The socket main serves the pages on (pages.ts): every path under `/pages/`, handed as
+ *  it came. */
+export function pagesSocket(root: string): string {
+  return `${root}/data/run/pages.sock`;
+}
+
+/** Whether a path is a page's: `/pages/<id>` and everything under it. */
+export function isPagePath(pathname: string): boolean {
+  return pathname.startsWith("/pages/");
+}
+
+/** Where a page opens: under `publicUrl` when the org has one, else on this machine's
+ *  edge. */
+export function pageAddress(
+  edge: Pick<OrgConfig["edge"], "publicUrl" | "port">,
+  id: string,
+): string {
+  return `${edge.publicUrl ?? localBase(edge.port)}/pages/${id}`;
+}
+
 /** A path under the grammar: the service, the leg, and the path the leg is handed. */
 export function routeOf(pathname: string): { service: string; leg: Leg; rest: string } | null {
   const m = /^\/([^/]+)\/(ingest|oauth)(\/.*)?$/.exec(pathname);
@@ -90,9 +112,11 @@ export function createEdge(root: string): (req: Request) => Promise<Response> {
   };
   return async (req) => {
     const url = new URL(req.url);
-    const at = routeOf(url.pathname);
-    if (!at) return text(404, "no such door");
-    const sock = socketOf(root, at.service, at.leg);
+    const page = isPagePath(url.pathname);
+    const at = page ? null : routeOf(url.pathname);
+    if (!page && !at) return text(404, "no such door");
+    const sock = at ? socketOf(root, at.service, at.leg) : pagesSocket(root);
+    const rest = at ? at.rest : url.pathname;
     const headers = new Headers(req.headers);
     headers.set("x-forwarded-host", url.host);
     headers.set("x-forwarded-proto", url.protocol.slice(0, -1));
@@ -101,7 +125,7 @@ export function createEdge(root: string): (req: Request) => Promise<Response> {
     const body = req.method === "GET" || req.method === "HEAD" ? null : await req.arrayBuffer();
     let res: Response;
     try {
-      res = await fetch(`http://localhost${at.rest}${url.search}`, {
+      res = await fetch(`http://localhost${rest}${url.search}`, {
         method: req.method,
         headers,
         body,
@@ -111,10 +135,15 @@ export function createEdge(root: string): (req: Request) => Promise<Response> {
     } catch {
       // a sign-in door stands only while one of its sign-ins is open: a reload of the page
       // that finished one, or a stale link, meets it closed, and the person reads why
-      if (at.leg === "oauth") return text(410, SIGN_IN_CLOSED);
+      if (at?.leg === "oauth") return text(410, SIGN_IN_CLOSED);
       // the path under the org, not the machine's: this answer reaches the internet
       const where = sock.slice(root.length + 1);
-      return text(502, `${at.service}'s ${at.leg} is not listening (${where})`);
+      return text(
+        502,
+        at
+          ? `${at.service}'s ${at.leg} is not listening (${where})`
+          : `pages are not served (${where})`,
+      );
     }
     // the leg's answer as it gave it, a sign-in's redirect included; the framing headers
     // are the connection's own and are rewritten by the one that serves this response

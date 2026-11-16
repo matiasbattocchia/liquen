@@ -61,12 +61,13 @@ export const DEFAULT_MODEL = "claude-sonnet-5";
 export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + tools + text
 // the default deployment's whole offer: the four built-ins plus the exec plane's bash.
 // A name added at runtime (an MCP server's tools) joins the offer by being listed here.
-export const DEFAULT_TOOLS = ["search", "cancel", "bash", "connect"];
+export const DEFAULT_TOOLS = ["search", "cancel", "bash", "connect", "page"];
 export const DEFAULT_RULES: Rule[] = [
   { tool: "send", service: "local", action: "allow" }, // a word to a peer stays in the org
   { tool: "send", action: "ask" }, // dispatch leaves the org, in the principal's name
   { tool: "contact", action: "ask" }, // writes the principal's own address book
   { tool: "connect", action: "ask" }, // hands out a sign-in to an account
+  { tool: "page", action: "ask" }, // shows the org's work to people outside it
   { tool: "agent", action: "ask" }, // makes an agent, which runs and spends
   { tool: "*", action: "allow" },
 ];
@@ -145,6 +146,9 @@ export const TICK_MS = 60_000;
 // same grammar names a function per service on a platform that routes by name, where
 // nothing forwards at all.
 export const DEFAULT_EDGE_PORT = 8787;
+
+/** How long a page lives from its publishing, in days (`pages.days`). */
+export const DEFAULT_PAGE_DAYS = 30;
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 /** What a surface hears of the mind at work, quietest first (§9). */
@@ -238,6 +242,10 @@ export interface OrgConfig {
     port: number;
     /** The tunnel's argv, supervised by `liquen start`; null ⇒ the operator runs one. */
     tunnel: string[] | null;
+  };
+  pages: {
+    /** How long a page lives from its publishing, in days. */
+    days: number;
   };
   /** The roster: every key under `agents` IS an agent, a row of the store (§9). The name
    *  is the agent's id, its folder under `data/agents/`, and its Linux user in the
@@ -522,7 +530,8 @@ const AGENT: Entry[] = [
       'call — "conversation" where it has peers and may open rooms with them, or an ' +
       'account on a wire whose rooms it may change, "contact" where an account keeps an ' +
       'address book the agent may write, and "agent" where it may make agents. "connect" ' +
-      "hands out sign-ins, its own principal's or a member's. With docs: database, read · " +
+      "hands out sign-ins, its own principal's or a member's, and \"page\" publishes a " +
+      "folder for a WhatsApp conversation to open. With docs: database, read · " +
       "write · edit are offered whatever this says: they are the agent's one way to its docs",
   },
   {
@@ -610,6 +619,15 @@ const EDGE: Entry[] = [
   },
 ];
 
+const PAGES: Entry[] = [
+  {
+    key: "days",
+    value: DEFAULT_PAGE_DAYS,
+    doc: "how long a page an agent publishes lives, in days from its publishing; the agent " +
+      "can take it down sooner",
+  },
+];
+
 const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
   deployment: "where the org's parts live — the log and the vault, the docs, the agents' " +
@@ -618,6 +636,7 @@ const SECTION_DOCS: Record<string, string> = {
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
   edge: "the org's one door — the address the world dials, the one port the org binds, " +
     "and the tunnel",
+  pages: "the pages agents publish for a conversation, served at <publicUrl>/pages/<id>",
   agents: "the roster: every key is a member — an agent, its folder and its unix user, or " +
     "a person alone (mind: false)",
   connections: "the connectors' knobs — a subsection per connector, validated by its owner",
@@ -644,6 +663,7 @@ function defaults(): OrgConfig {
     },
     processors: fromEntries(PROCESSORS),
     edge: fromEntries(EDGE),
+    pages: fromEntries(PAGES),
     agents: {},
     connections: {},
   } as unknown as OrgConfig;
@@ -741,6 +761,7 @@ const SCOPES: Record<string, Entry[]> = {
   "shared.connections": CONNECTION,
   processors: PROCESSORS,
   edge: EDGE,
+  pages: PAGES,
 };
 
 /** The scope a connection's knobs live in, and the key its declaration stands by. */
@@ -822,6 +843,7 @@ export function parseDeclared(raw: string, path: string): Declared {
         "processors",
       ),
       ...leavesOf(asObject(found.edge, path, "edge"), EDGE, "edge", path, "edge"),
+      ...leavesOf(asObject(found.pages, path, "pages"), PAGES, "pages", path, "pages"),
     ],
     agents: {},
   };
@@ -1036,7 +1058,7 @@ export function materialize(
     lines.push(`${name}:`);
   };
   const plain = cfg as unknown as Record<string, Record<string, unknown>>;
-  for (const name of ["system", "deployment", "shared", "processors", "edge"]) {
+  for (const name of ["system", "deployment", "shared", "processors", "edge", "pages"]) {
     section(name);
     const entries = name === "deployment" ? DEPLOYMENT : SCOPES[name];
     emit("  ", name, entries, plain[name]);
@@ -1216,6 +1238,12 @@ export function validateOrg(cfg: OrgConfig, path: string): void {
     if (cfg.edge.publicUrl === null) {
       throw new Error(`${path}: edge.tunnel publishes edge.publicUrl, and publicUrl is null`);
     }
+  }
+  if (!(Number.isInteger(cfg.pages.days) && cfg.pages.days > 0)) {
+    throw new Error(
+      `${path}: pages.days must be a positive whole number of days (got ` +
+        `${JSON.stringify(cfg.pages.days)})`,
+    );
   }
   validateAgent(cfg.shared.agents, `${path}: shared.agents`);
 }

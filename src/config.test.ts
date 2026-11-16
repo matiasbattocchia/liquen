@@ -80,7 +80,7 @@ Deno.test("a connection's name is its route on the edge — one the edge cannot 
 Deno.test("the reader only reads: an absent file is the defaults, and stays absent", async () => {
   await withDir(async (root) => {
     const cfg = await readConfig(root);
-    assertEquals(cfg.shared.agents.tools, ["search", "cancel", "bash", "connect"]);
+    assertEquals(cfg.shared.agents.tools, ["search", "cancel", "bash", "connect", "page"]);
     assertEquals(cfg.agents, {});
     await assertRejects(() => Deno.stat(`${root}/config.yaml`), Deno.errors.NotFound);
   });
@@ -189,6 +189,20 @@ Deno.test("org-level validation: timezone, backlogHours, an agent override's eff
       JSON.stringify({ shared: { agents: { tools: "send" } } }),
     );
     await assertRejects(() => readConfig(root), Error, "tools must be an array of tool names");
+  });
+});
+
+Deno.test("pages.days: 30 unless said, and a positive whole number", async () => {
+  await withDir(async (root) => {
+    assertEquals((await readConfig(root)).pages.days, 30);
+    await Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ pages: { days: 7 } }));
+    assertEquals((await readConfig(root)).pages.days, 7);
+    await Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ pages: { days: 0.5 } }));
+    await assertRejects(
+      () => readConfig(root),
+      Error,
+      "pages.days must be a positive whole number",
+    );
   });
 });
 

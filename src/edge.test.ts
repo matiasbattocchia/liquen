@@ -4,12 +4,14 @@ import {
   createEdge,
   ingestAddress,
   localBase,
+  pageAddress,
+  pagesSocket,
   reached,
   routeOf,
   SIGN_IN_CLOSED,
   socketOf,
 } from "./edge.ts";
-import { serveIngest, serveLeg } from "./connect/serve.ts";
+import { serveIngest, serveLeg, serveSocket } from "./connect/serve.ts";
 
 const BASE = "https://acme.example.com";
 
@@ -107,6 +109,38 @@ Deno.test("createEdge: forwards to the sockets with query and body, keeps a redi
   } finally {
     await ingest.shutdown();
     await door.shutdown();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("createEdge: a page's path goes to main's pages socket as it came, and says so when none serves it", async () => {
+  const root = await Deno.makeTempDir();
+  const edge = createEdge(root);
+  try {
+    const down = await edge(new Request(`${BASE}/pages/abc`));
+    assertEquals(down.status, 502);
+    assertStringIncludes(await down.text(), "pages are not served (data/run/pages.sock)");
+
+    const seen: string[] = [];
+    const pages = await serveSocket(pagesSocket(root), (req) => {
+      const url = new URL(req.url);
+      seen.push(url.pathname + url.search);
+      return new Response("a page");
+    });
+    try {
+      const open = await edge(new Request(`${BASE}/pages/abc/k1/app.js?t=x`));
+      assertEquals(await open.text(), "a page");
+      assertEquals(seen, ["/pages/abc/k1/app.js?t=x"]);
+      assertEquals((await edge(new Request(`${BASE}/pages`))).status, 404);
+    } finally {
+      await pages.shutdown();
+    }
+    assertEquals(pageAddress({ publicUrl: BASE, port: 8787 }, "abc"), `${BASE}/pages/abc`);
+    assertEquals(
+      pageAddress({ publicUrl: null, port: 8787 }, "abc"),
+      `${localBase(8787)}/pages/abc`,
+    );
+  } finally {
     await Deno.remove(root, { recursive: true });
   }
 });

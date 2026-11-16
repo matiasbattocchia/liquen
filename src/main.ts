@@ -134,6 +134,10 @@ import { createMercadopagoSignIn } from "./connect/mercadopago/signin.ts";
 import { createTokenSignIn } from "./connect/token/signin.ts";
 import { connectSpec, connectTool } from "./exec/connect.ts";
 import { AGENT_SPEC, agentTool } from "./exec/agent.ts";
+import { PAGE_SPEC, pageTool } from "./exec/page.ts";
+import { createPages, PAGE_SWEEP_MS, sweepPages } from "./pages.ts";
+import { pagesSocket } from "./edge.ts";
+import { bridgeSend } from "./connect/whatsapp/dispatch.ts";
 import { serveSocket } from "./connect/serve.ts";
 import { classifyFloors, ensureUser, requireTools, sealSystem } from "./users.ts";
 
@@ -303,6 +307,7 @@ export async function start(
         ...Object.values(DOC_TOOLS),
         { spec: connectSpec(Object.keys(flows)) },
         { spec: AGENT_SPEC },
+        { spec: PAGE_SPEC },
       ],
       (name) => docs.read(ctx, { scope: "system", kind: "tool", name }),
     );
@@ -564,6 +569,24 @@ export async function start(
         : {}),
       ...(root
         ? { agent: agentTool({ root, log, docs: docs.bed, up: (id) => reconcile(id) }) }
+        : {}),
+      // a page is read from where the session's shell stands, for a room it can read
+      ...(root
+        ? {
+          page: pageTool({
+            agentId,
+            log: scoped(log, policyOf(agentId, sessionId)),
+            files: () => sandbox.forAgent(agentId).session(sessionId).files,
+            creds,
+            storage,
+            edge: () => org.edge,
+            days: () => org.pages.days,
+            day: (ms) =>
+              new Intl.DateTimeFormat("en-CA", {
+                timeZone: catalog()?.shared.timezone ?? undefined,
+              }).format(ms),
+          }),
+        }
         : {}),
     }),
     media,
@@ -935,6 +958,46 @@ export async function start(
     }
   });
   await Deno.chmod(`${dir}/run/main.sock`, 0o600);
+  // the pages agents publish (pages.ts), behind the edge: a group's roster read through
+  // the rooms port, and a code sent through the bridge with no line in the log, so no
+  // agent ever holds one
+  const pages = root
+    ? await serveSocket(
+      pagesSocket(root),
+      createPages({
+        creds,
+        storage,
+        secure: () => org.edge.publicUrl?.startsWith("https://") ?? false,
+        roster: async (page) => {
+          const members = rooms.whatsapp?.members;
+          if (!members) throw new Error("whatsapp reads no roster");
+          return (await members({
+            connection: page.connection,
+            agent: page.agentId,
+            conversation: page.conversation,
+          })).map((s) => s.address);
+        },
+        send: async (page, phone, text) => {
+          if (isDisabled(org, "whatsapp")) throw disabled("whatsapp");
+          await bridgeSend(bridgeUrl(), bridgeToken)({
+            id: crypto.randomUUID(),
+            external_id: "",
+            organization_address: page.connection,
+            conversation_address: phone,
+            content: { version: "1", type: "text", kind: "text", text },
+            status: {},
+          });
+        },
+      }),
+    )
+    : null;
+  const sweepingPages = () =>
+    sweepPages(creds, storage).then(
+      (n) => n && console.error(`[pages] ${n} page(s) past their days, let go`),
+      (err) => console.error("[pages] the sweep failed:", err),
+    );
+  if (root) await sweepingPages();
+  const pageSweeper = root ? setInterval(() => void sweepingPages(), PAGE_SWEEP_MS) : undefined;
   // the sign-ins the last run left open: lapsed, served again, or their polls taken up
   await signIns?.resume().catch((err) => console.error("[sign-in] resume:", err));
 
@@ -1098,12 +1161,14 @@ export async function start(
       stopped = true;
       clearInterval(ticker);
       clearInterval(collector);
+      clearInterval(pageSweeper);
       for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
       settling.clear();
       for (const [agentId, w] of keepers) leaveOwed(owedAt(agentId), w.stop());
       for (const unsub of [...unsubs, ...subs.values()]) unsub();
       await asked.shutdown(); // no change to the roster is taken from here on
       await Deno.remove(`${dir}/run/main.sock`).catch(() => {});
+      await pages?.shutdown();
       await signIns?.close(); // the doors shut; the tickets stay for the next main
       await doors.close(); // stop taking syscalls before the log goes away
       // Bound the settle. A turn wedged on a hung model connection (e.g. a network

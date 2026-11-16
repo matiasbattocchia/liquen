@@ -129,6 +129,25 @@ export function formPage(form: Form, error?: string, status = 200): Response {
   );
 }
 
+/** A page whose one act is a button: `hidden` rides the post. */
+export function buttonPage(
+  title: string,
+  lines: string[],
+  submit: string,
+  hidden: Record<string, string>,
+): Response {
+  const said = lines.map((l) => `<p>${escape(l)}</p>\n`).join("");
+  const kept = Object.entries(hidden).map(([k, v]) =>
+    `<input type="hidden" name="${escape(k)}" value="${escape(v)}">\n`
+  ).join("");
+  return html(
+    title,
+    `${said}<form method="post">\n${kept}<button type="submit">${escape(submit)}</button>\n` +
+      `</form>\n`,
+    200,
+  );
+}
+
 /** How a sign-in ended, as the person reads it. */
 export function endPage(title: string, message: string, ok: boolean, status = 200): Response {
   return html(title, `<p class="${ok ? "good" : "error"}">${escape(message)}</p>\n`, status);
