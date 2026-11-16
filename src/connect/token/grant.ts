@@ -123,32 +123,37 @@ export function tokenKey(name: string, agentId?: string): string {
   return agentId ? `${TOKEN_PREFIX}${name}:${agentId}` : `${TOKEN_PREFIX}${name}`;
 }
 
-/** The sentence `frontedFor` would say about `row` among `rows` (the rule: per var, the
- *  org's row when there is exactly one, else the agent's own when there is exactly one).
- *  undefined when the row is what fronts its var. */
+/** The sentence `frontedFor` would say about `row` among `rows` (the rule: per var, an
+ *  agent's own row when it holds exactly one, else the shared row when there is exactly
+ *  one). undefined when the row fronts its var in every pocket it reaches. */
 export function contention(
   rows: Pick<CredentialRow, "key" | "agentId" | "extra">[],
   row: Pick<CredentialRow, "key" | "agentId" | "extra">,
 ): string | undefined {
   const env = row.extra?.env;
   const peers = rows.filter((r) => r.key !== row.key && r.extra?.env === env);
-  const orgs = peers.filter((r) => !r.agentId);
+  const keys = (rs: typeof rows) => rs.map((r) => r.key).join(", ");
   if (row.agentId) {
-    if (orgs.length === 1) {
-      return `$${env} is the org's ${orgs[0].key} in every pocket — ${row.key} is never fronted`;
-    }
     const own = peers.filter((r) => r.agentId === row.agentId);
-    if (own.length) {
-      return `$${env} is claimed by ${
-        own.map((r) => r.key).join(", ")
-      } too — ${row.agentId} gets neither`;
-    }
-    return undefined;
+    return own.length
+      ? `$${env} is claimed by ${keys(own)} too — ${row.agentId} gets neither`
+      : undefined;
   }
-  if (orgs.length) {
-    return `$${env} is claimed by ${orgs.map((r) => r.key).join(", ")} too — nobody gets either`;
+  const said: string[] = [];
+  const shared = peers.filter((r) => !r.agentId);
+  if (shared.length) {
+    said.push(`$${env} is claimed by ${keys(shared)} too: an agent without its own gets neither`);
   }
-  return undefined;
+  const holders = [...new Set(peers.flatMap((r) => r.agentId ? [r.agentId] : []))];
+  if (holders.length) {
+    const names = holders.length === 1
+      ? holders[0]
+      : `${holders.slice(0, -1).join(", ")} and ${holders.at(-1)}`;
+    said.push(
+      `it misses ${names}, who ${holders.length === 1 ? "holds" : "hold"} their own $${env}`,
+    );
+  }
+  return said.length ? said.join("; ") : undefined;
 }
 
 export interface TokenDeps {

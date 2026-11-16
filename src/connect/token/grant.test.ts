@@ -215,11 +215,22 @@ Deno.test("contention: says what frontedFor will do with the var", () => {
   const ana2 = { key: "token:x:ana", agentId: "ana", extra: { env: "T" } };
   const bo = { key: "token:crm:bo", agentId: "bo", extra: { env: "T" } };
   const other = { key: "token:y", extra: { env: "U" } };
-  assertEquals(contention([org, other, bo], org), undefined);
+  assertEquals(contention([org, other], org), undefined);
   assertEquals(contention([ana, bo, other], ana), undefined);
-  assert(contention([org, org2], org)?.includes("nobody gets either"));
-  assert(contention([org, ana], ana)?.includes("never fronted"));
-  assert(contention([ana, ana2], ana)?.includes("neither"));
+  // an agent's own wins over the shared row, as frontedFor picks it
+  assertEquals(contention([org, ana], ana), undefined);
+  assertEquals(frontedFor([org, ana], "ana").map((r) => r.key), ["token:crm:ana"]);
+  assertEquals(
+    contention([org, org2], org),
+    "$T is claimed by github:org too: an agent without its own gets neither",
+  );
+  assertEquals(contention([org, bo], org), "it misses bo, who holds their own $T");
+  assertEquals(
+    contention([org, org2, ana, ana2, bo], org),
+    "$T is claimed by github:org too: an agent without its own gets neither; " +
+      "it misses ana and bo, who hold their own $T",
+  );
+  assertEquals(contention([ana, ana2], ana), "$T is claimed by token:x:ana too — ana gets neither");
 });
 
 Deno.test("connectToken: names the contention on the row it wrote", async () => {
@@ -231,9 +242,25 @@ Deno.test("connectToken: names the contention on the row it wrote", async () => 
     });
     const { contention } = await connectToken(
       store,
-      parseTokenArgs(["gh", "--env", "GH_TOKEN", "--hosts", "api.github.com", "--agent", "ana"]),
+      parseTokenArgs(["gh", "--env", "GH_TOKEN", "--hosts", "api.github.com"]),
       "t",
     );
     assert(contention?.includes("github:org"), contention);
+  });
+});
+
+Deno.test("connectToken: an agent's own beside the shared row says nothing", async () => {
+  await withVault(async (store, creds) => {
+    await creds.put({
+      key: "github:org",
+      value: { token: "g" },
+      extra: { env: "GH_TOKEN", hosts: [] },
+    });
+    const { contention } = await connectToken(
+      store,
+      parseTokenArgs(["gh", "--env", "GH_TOKEN", "--hosts", "api.github.com", "--agent", "ana"]),
+      "t",
+    );
+    assertEquals(contention, undefined);
   });
 });
