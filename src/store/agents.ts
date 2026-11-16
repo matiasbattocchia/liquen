@@ -16,6 +16,12 @@
  *             sleeps"). A scope that holds no key of its own stands by one row under the
  *             empty key: a connection declared with every knob at its default.
  *
+ * Two more keep the file's apply and its readers honest. `config_base` is what the file
+ * said at its last apply, a row per leaf, which a three-way apply weighs against the file
+ * and the store (`org.ts`). `config_version` is one count that a trigger moves on every
+ * write to `config` or `agents`, a hand edit included, so a process holding the org reads
+ * it again only when the count moved.
+ *
  * An agent's setting resolves `agents.<name>` → `shared.agents` → the catalog's constant
  * when it is read (`config.ts`), so a change to `shared.agents` reaches every agent that
  * does not set the key itself. `mind` is a setting like the rest: `runs` on a row read
@@ -81,6 +87,14 @@ export interface Registry {
   setConfig(rows: ConfigRow[]): Promise<void>;
   /** Delete leaves so they inherit again: the keys named, or the whole scope. */
   unsetConfig(scope: string, keys?: string[]): Promise<void>;
+  /** What the file said at its last apply, a row per leaf: the base an apply weighs the
+   *  file and the store against (`org.ts`). */
+  base(): Promise<ConfigRow[]>;
+  /** Replace the base, whole. */
+  setBase(rows: ConfigRow[]): Promise<void>;
+  /** A count that every write to `config` or `agents` moves, a hand edit included: a
+   *  process holding the org reads it again only when the count moved. */
+  configVersion(): Promise<number>;
   /** When each agent last paid for a model call, by agent id. */
   lastTurns(): Promise<Record<string, string>>;
   /** What the org has taken from releases, by key. */
@@ -108,10 +122,32 @@ CREATE TABLE IF NOT EXISTS config (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (scope, key)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS config_base (
+  scope TEXT NOT NULL,
+  key   TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (scope, key)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS config_version (
+  one INTEGER PRIMARY KEY CHECK (one = 1),
+  n   INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO config_version (one, n) VALUES (1, 0);
 CREATE TABLE IF NOT EXISTS manifest (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 ) WITHOUT ROWID;`;
+
+/** What moves `config_version`: every row written to or deleted from the org's
+ *  configuration, whoever writes it. */
+export const CONFIG_VERSION_TRIGGERS = ["config", "agents"].flatMap((table) =>
+  ["INSERT", "UPDATE", "DELETE"].map((op) =>
+    `CREATE TRIGGER IF NOT EXISTS ${table}_${op.toLowerCase()}_version AFTER ${op} ON ${table}
+BEGIN
+  UPDATE config_version SET n = n + 1;
+END;`
+  )
+).join("\n");
 
 /** The `RESTRICT` a key cannot spell: a principal lives in a JSON array. An agent naming
  *  itself waits on no one, and `"*"` names no one. */
@@ -274,6 +310,26 @@ export function createRegistry(db: DatabaseSync): Registry {
         else for (const key of keys) unsetKey.run(scope, key);
       });
       return Promise.resolve();
+    },
+
+    base(): Promise<ConfigRow[]> {
+      const found = db.prepare("SELECT scope, key, value FROM config_base ORDER BY scope, key")
+        .all() as { scope: string; key: string; value: string }[];
+      return Promise.resolve(found.map((r) => ({ ...r, value: JSON.parse(r.value) as Json })));
+    },
+
+    setBase(list: ConfigRow[]): Promise<void> {
+      tx(() => {
+        db.exec("DELETE FROM config_base");
+        const put = db.prepare("INSERT INTO config_base (scope, key, value) VALUES (?, ?, ?)");
+        for (const r of list) put.run(r.scope, r.key, JSON.stringify(r.value));
+      });
+      return Promise.resolve();
+    },
+
+    configVersion(): Promise<number> {
+      const row = db.prepare("SELECT n FROM config_version").get() as { n: number };
+      return Promise.resolve(Number(row.n));
     },
 
     lastTurns(): Promise<Record<string, string>> {

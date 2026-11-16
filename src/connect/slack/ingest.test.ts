@@ -763,7 +763,7 @@ Deno.test("slack: published through the marks, a crowded channel's line is silen
   const read = (() => Promise.resolve(Array.from({ length: 41 }, () => ({})))) as MarkDeps["read"];
   const marks = createMarks({
     read,
-    knobs: { crowd: 20, busy: 40, follow: [] },
+    knobs: () => Promise.resolve({ crowd: 20, busy: 40, follow: [], enabled: true }),
     self: accounts.of,
   });
   const stored: Draft<MessageEvent>[] = [];

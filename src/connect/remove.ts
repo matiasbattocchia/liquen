@@ -10,9 +10,9 @@
  *                keeps its identity and its readers.
  *   the secret   deleted from the vault — unless another live connection authenticates
  *                with the same one, which keeps it.
- *   the scope    `connections.<service>` leaves the store's configuration once the service
- *                has no live connection left, so `liquen start` spawns nothing for it. One
- *                `config.yaml` declares stays: the file is where it is removed.
+ *   the scope    `connections.<service>` is disabled once the service has no live
+ *                connection left, so the run stops its process; its knobs stay for the
+ *                day it is enabled again.
  *
  * The platform's side is ended where the connector can end it (`end`, before the secret
  * goes: a Telegram account's session). Elsewhere it stays as it is: the app install, the
@@ -40,9 +40,8 @@ const REVOKE_AT: Record<string, string> = {
 export interface RemoveDeps {
   store: Pick<Connections, "connections" | "deleteConnections">;
   creds: Pick<Credentials, "list" | "delete">;
-  /** Take `connections.<service>` out of the store's configuration; whether it was
-   *  there. Throws, in a sentence, when the file declares it. */
-  undeclare: (service: string) => Promise<boolean>;
+  /** Disable `connections.<service>`, its knobs kept; whether it was enabled. */
+  disable: (service: string) => Promise<boolean>;
   /** The services a door grants under (`available`). A vault key outside them is the
    *  harness's own — the media signing key — and no target. */
   services: string[];
@@ -80,15 +79,11 @@ export async function removeConnection(target: string, deps: RemoveDeps): Promis
       said.push(`its secret ${key} is out of the vault`);
     }
     if (!live.some((r) => r !== row && r.service === row.service)) {
-      try {
-        if (await deps.undeclare(row.service)) {
-          said.push(
-            `no ${row.service} connection is left — connections.${row.service} is no longer declared`,
-          );
-        }
-      } catch (err) {
-        // the file's to remove: its process keeps running until it is
-        said.push(err instanceof Error ? err.message : String(err));
+      if (await deps.disable(row.service)) {
+        said.push(
+          `no ${row.service} connection is left: connections.${row.service} is disabled, ` +
+            "its knobs kept",
+        );
       }
     }
     said.push(

@@ -21,7 +21,7 @@ function bridge(status: number, body: unknown) {
 
 Deno.test("whatsapp contact: one dispatch of type contact, the person as the chat", async () => {
   const { calls, fetchApi } = bridge(200, { status: "sent", name: "Vivian Rossi" });
-  const port = whatsappContact("http://bridge.local", "tok", fetchApi);
+  const port = whatsappContact(() => "http://bridge.local", "tok", fetchApi);
   const out = await port.write!({
     connection: "5491100000000",
     address: "5492605550107",
@@ -39,7 +39,7 @@ Deno.test("whatsapp contact: one dispatch of type contact, the person as the cha
 
 Deno.test("whatsapp contact: a nameless save asks the bridge for the wire's word; a remove carries none", async () => {
   const { calls, fetchApi } = bridge(200, { status: "sent", name: "vivi 🌸" });
-  const port = whatsappContact("http://bridge.local", "tok", fetchApi);
+  const port = whatsappContact(() => "http://bridge.local", "tok", fetchApi);
   assertEquals(
     await port.write!({ connection: "549", address: "5492605550107" }),
     { name: "vivi 🌸" },
@@ -47,7 +47,7 @@ Deno.test("whatsapp contact: a nameless save asks the bridge for the wire's word
   assertEquals(calls[0].body.contact, { name: "", remove: false });
   const { calls: c2, fetchApi: f2 } = bridge(200, { status: "sent", name: "" });
   assertEquals(
-    await whatsappContact("http://b", "t", f2).write!({
+    await whatsappContact(() => "http://b", "t", f2).write!({
       connection: "549",
       address: "5492605550107",
       remove: true,
@@ -62,7 +62,7 @@ Deno.test("whatsapp contact: the bridge's refusal is the call's failure, class a
     422,
     "120363@g.us is not a person — only a direct chat has an address-book entry",
   );
-  const port = whatsappContact("http://bridge.local", "tok", fetchApi);
+  const port = whatsappContact(() => "http://bridge.local", "tok", fetchApi);
   const err = await assertRejects(() => port.write!({ connection: "549", address: "120363@g.us" }));
   assertEquals(err instanceof DispatchError && err.code, 422);
   assertEquals(String((err as Error).message).includes("not a person"), true);
@@ -70,7 +70,7 @@ Deno.test("whatsapp contact: the bridge's refusal is the call's failure, class a
 
 Deno.test("whatsapp contact: a profile asks the bridge whether the number has an account, and its name", async () => {
   const { calls, fetchApi } = bridge(200, { on_whatsapp: true, name: "Clinica Andina" });
-  const port = whatsappContact("http://bridge.local", "tok", fetchApi);
+  const port = whatsappContact(() => "http://bridge.local", "tok", fetchApi);
   assertEquals(await port.profile!({ connection: "5491100000000", address: "5492615550103" }), {
     exists: true,
     name: "Clinica Andina",
@@ -78,7 +78,7 @@ Deno.test("whatsapp contact: a profile asks the bridge whether the number has an
   assertEquals(calls[0].url, "http://bridge.local/profiles/5491100000000/5492615550103");
   const { fetchApi: none } = bridge(200, { on_whatsapp: false });
   assertEquals(
-    await whatsappContact("http://bridge.local", "tok", none).profile!({
+    await whatsappContact(() => "http://bridge.local", "tok", none).profile!({
       connection: "5491100000000",
       address: "5492615550104",
     }),
@@ -93,7 +93,7 @@ Deno.test("whatsapp contact: a lookup reads the account's book, and a nameless e
       { address: "5491155512345" }, // no name: known to the wire, not saved in the book
     ],
   });
-  const port = whatsappContact("http://bridge.local", "tok", fetchApi);
+  const port = whatsappContact(() => "http://bridge.local", "tok", fetchApi);
   assertEquals(await port.lookup!({ connection: "5491100000000", query: "veró nica" }), [
     { name: "Verónica Sesto", address: "5492615550105" },
   ]);
@@ -107,7 +107,7 @@ Deno.test("whatsapp contact: a lookup reads the account's book, and a nameless e
 
 Deno.test("whatsapp contact: a book that refuses fails the lookup, class and all", async () => {
   const { fetchApi } = bridge(404, "unknown session");
-  const port = whatsappContact("http://bridge.local", "tok", fetchApi);
+  const port = whatsappContact(() => "http://bridge.local", "tok", fetchApi);
   const err = await assertRejects(() => port.lookup!({ connection: "549", query: "ana" }));
   assertEquals(err instanceof DispatchError && err.code, 404);
 });

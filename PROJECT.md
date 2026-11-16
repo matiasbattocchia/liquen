@@ -7080,6 +7080,43 @@ Open:
   main's table.
 - An org whose `config.yaml` pins `tools` offers `connect` only once it is added there.
 
+### Reload applies the file, and every process reads the store (2026-11-15) — LANDED
+
+The CHANGES batch of 15 Nov, all seven items.
+
+- **The three-way apply.** `config_base` keeps what the file said at its last apply, and
+  `applyFile` weighs each leaf three ways: the file unchanged leaves a command's write
+  alone, the file moved takes the file's value, both moved apart keeps the store's and says
+  so, with `--overwrite` and `liquen config` as the ways out. The roster weighs under
+  `roster.<name>`, so a file-declared agent a command removed stays removed. `liquen
+  agent` and the tools no longer refuse a key the file declares.
+- **Whoever raises main applies.** The supervisor at boot, `attach` before an ephemeral
+  main, an embedder through `raise.ts`. Main never applies.
+- **Read on each use.** `config_version`, moved by a trigger on `config` and `agents`,
+  lets `liveConfig` and `liveKnobs` read again only when something changed. Main refreshes
+  at each turn, tick and sign-in and reconciles every agent when the count moved; the
+  sandbox asks the locale and clock per command and the bash wait per shell; the mirror and
+  the transcriber ask per line. The connectors read their knobs per batch, delivery, send,
+  probe or account opening. A spec's `start` names what only a start takes up: Google's
+  and Microsoft's `listen`, and the public address Teams subscribes at.
+- **`enabled`.** Every connection has it. False stops the process and keeps the rest;
+  a sign-in for it fails, and main's ports for it refuse. Removing a service's last
+  account sets it false instead of deleting the section.
+- **The supervisor reconciles.** A poke starts what is declared and enabled, stops what is
+  not, retries what refused, and restarts what it is told to. A changed start-only key is
+  answered as owed, with the `liquen restart` that takes it up.
+- **`liquen restart`.** Named processes restart under the supervisor. Bare, SIGHUP stops
+  the run as a restart does, and the command starts it again detached, on its own `.env`.
+
+Open:
+
+- Turning a disabled service back on from the file meets the store's `false` as a
+  conflict, since the file never said it before: it takes `--overwrite`, which takes every
+  other file value too, or a hand edit of the row. No command sets `enabled`.
+- Every config write moves the count, and main then retunes every agent, which puts back
+  the model and effort an attached interface had tuned, as a reload always did.
+- An org's own connectors keep reading their knobs once, until each moves to `liveKnobs`.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

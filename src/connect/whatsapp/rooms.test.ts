@@ -36,7 +36,7 @@ function bridge(routes: Record<string, Route>) {
 
 Deno.test("whatsapp rooms: open — one person unnamed is their own chat, no call made", async () => {
   const { calls, fetch } = bridge({});
-  const port = whatsappRooms("http://b", "tok", fetch);
+  const port = whatsappRooms(() => "http://b", "tok", fetch);
   assertEquals(
     await port.open!({ ...actor, members: ["5492605550107", OWN], kind: "direct" }),
     { address: "5492605550107", kind: "direct" },
@@ -46,7 +46,7 @@ Deno.test("whatsapp rooms: open — one person unnamed is their own chat, no cal
 
 Deno.test("whatsapp rooms: open — a bare list of two, and a `#channel`, are refused with the way in", async () => {
   const { calls, fetch } = bridge({});
-  const port = whatsappRooms("http://b", "tok", fetch);
+  const port = whatsappRooms(() => "http://b", "tok", fetch);
   const list = await assertRejects(
     () => port.open!({ ...actor, members: ["5491", "5492"], kind: "direct" }),
     DispatchError,
@@ -70,7 +70,7 @@ Deno.test("whatsapp rooms: open — a named list makes a group on the session, n
       members: [{ address: OWN, admin: true }, { address: "5491" }],
     },
   });
-  const port = whatsappRooms("http://bridge.local", "tok", fetch);
+  const port = whatsappRooms(() => "http://bridge.local", "tok", fetch);
   assertEquals(
     await port.open!({ ...actor, members: ["5491", "5492"], name: "Q3 launch", kind: "group" }),
     { address: GROUP, kind: "group", name: "Q3 launch" },
@@ -87,7 +87,7 @@ Deno.test("whatsapp rooms: members — the roster, named where the bridge names 
       members: [{ address: OWN, name: "Ana", admin: true }, { address: "5491" }],
     },
   });
-  const port = whatsappRooms("http://b", "tok", fetch);
+  const port = whatsappRooms(() => "http://b", "tok", fetch);
   assertEquals(await port.members!({ ...actor, conversation: GROUP }), [
     { address: OWN, name: "Ana" },
     { address: "5491" },
@@ -101,7 +101,7 @@ Deno.test("whatsapp rooms: add, remove, rename and leave are one call each on th
     [`PATCH /groups/${OWN}/${GROUP}`]: {},
     [`DELETE /groups/${OWN}/${GROUP}`]: {},
   });
-  const port = whatsappRooms("http://b", "tok", fetch);
+  const port = whatsappRooms(() => "http://b", "tok", fetch);
   const at = { ...actor, conversation: GROUP };
   await port.add!({ ...at, members: ["5491", "5492"] });
   await port.remove!({ ...at, members: ["5491"] });
@@ -127,7 +127,7 @@ Deno.test("whatsapp rooms: the bridge's refusal is the call's failure, class and
       new Response("session not connected", { status: 503 }),
     [`GET /groups/${OWN}/${GROUP}`]: () => new Response("", { status: 502 }),
   });
-  const port = whatsappRooms("http://b", "tok", fetch);
+  const port = whatsappRooms(() => "http://b", "tok", fetch);
   const at = { ...actor, conversation: GROUP };
   const add = await assertRejects(
     () => port.add!({ ...at, members: ["5491"] }),

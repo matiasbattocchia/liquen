@@ -1768,7 +1768,8 @@ export function httpSigningSecrets(apps: { value: Record<string, string> }[]): s
 export async function runIngest(): Promise<() => Promise<void>> {
   const { openStore } = await import("../../store/mod.ts");
   const { SOCKET_PREFIX } = await import("./connect.ts");
-  const { slackConfig } = await import("./config.ts");
+  const { SPEC } = await import("./config.ts");
+  const { liveKnobs } = await import("../../org.ts");
   const { kindOf, saveMedia } = await import("../../store/media.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
@@ -1832,7 +1833,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const accounts = slackAccounts(() => log.connections());
   const marks = createMarks({
     read: (q) => log.read(q),
-    knobs: await slackConfig(root),
+    knobs: await liveKnobs(root, SPEC, log),
     self: accounts.of,
   });
 

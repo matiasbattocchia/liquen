@@ -278,6 +278,29 @@ export interface ConnectorSpec {
     /** Boot validation: a complaint ("must be …") or null when the value is fine. */
     check?: (v: unknown) => string | null;
   })[];
+  /** The paths its process reads only at its start, its own keys or the org's
+   *  (`connections.google.listen`, `edge.publicUrl`): the shape the process takes. Every
+   *  other knob it reads on each use. A change to one is taken up by `liquen restart`,
+   *  and `liquen reload` says so. */
+  start?: string[];
+}
+
+/** The value at a dotted path of the org (`edge.port`, `connections.google.listen`):
+ *  the resolved value for a connection's knob, its spec's default when the store holds
+ *  none. */
+export function valueAt(cfg: OrgConfig, path: string, spec?: ConnectorSpec): unknown {
+  const [section, ...rest] = path.split(".");
+  if (section === "connections" && rest.length === 2) {
+    const [service, key] = rest;
+    const own = cfg.connections[service] ?? {};
+    if (key in own) return own[key];
+    return spec?.name === service ? spec.entries.find((e) => e.key === key)?.value : undefined;
+  }
+  let at: unknown = cfg;
+  for (const step of [section, ...rest]) {
+    at = at !== null && typeof at === "object" ? (at as Record<string, unknown>)[step] : undefined;
+  }
+  return at;
 }
 
 const SYSTEM: Entry[] = [
@@ -407,14 +430,45 @@ const CONNECTION: Entry[] = [
 export interface RoomKnobs extends ConnectionDefaults {
   /** The rooms always read, by address, whatever `crowd` and `busy` say. */
   follow: string[];
+  /** Whether the service runs: false keeps its knobs, accounts and secrets, and runs
+   *  nothing for it. */
+  enabled: boolean;
+}
+
+/** The key a connection is switched off by. */
+export const ENABLED = "enabled";
+
+/** Whether `service` is declared and switched off. */
+export function isDisabled(cfg: Pick<OrgConfig, "connections">, service: string): boolean {
+  return cfg.connections[service]?.[ENABLED] === false;
+}
+
+/** Whether the org runs `service`: declared in the store, and not disabled. */
+export function enabledIn(cfg: Pick<OrgConfig, "connections">, service: string): boolean {
+  return service in cfg.connections && !isDisabled(cfg, service);
+}
+
+/** The sentence a sign-in or a port for a disabled service fails with. */
+export function disabled(service: string): Error {
+  return new Error(
+    `${service} is disabled: connections.${service}.${ENABLED} is false, and its accounts ` +
+      `and knobs are kept; set it true to run ${service} again`,
+  );
 }
 
 /** The keys every connection has beside its connector's own: the two above, its own
- *  values over the org's, and the rooms it always reads. */
+ *  values over the org's, the rooms it always reads, and whether it runs at all. */
 function connectionEntries(cfg: OrgConfig): ConnectorSpec["entries"] {
   const count = (v: unknown) =>
     Number.isInteger(v) && (v as number) >= 0 ? null : "must be a whole number, 0 or more";
   return [
+    {
+      key: ENABLED,
+      value: true,
+      doc: "whether the service runs: false runs nothing for it and keeps its accounts, " +
+        "secrets and knobs",
+      check: (v: unknown) => typeof v === "boolean" ? null : "must be true or false",
+    },
     ...CONNECTION.map((e) => ({
       ...e,
       value: cfg.shared.connections[e.key as keyof ConnectionDefaults],
@@ -840,10 +894,9 @@ export async function readFile(root: string): Promise<Declared> {
   return parseDeclared(raw, path);
 }
 
-/** The keys the file owns, as paths: `agents.ana` for an agent it declares at all,
+/** The keys the file states, as paths: `agents.ana` for an agent it declares at all,
  *  `agents.ana.model`, `agents.ana.identity.email`, `agents.ana.principals`,
- *  `connections.slack`, `shared.agents.model`. A command that would change one refuses:
- *  the file's word is put back at the next boot. */
+ *  `connections.slack`, `shared.agents.model`. */
 export function declaredPaths(d: Declared): Set<string> {
   const out = new Set<string>();
   for (const { scope, key } of d.leaves) out.add(key === DECLARED ? scope : `${scope}.${key}`);
@@ -853,11 +906,6 @@ export function declaredPaths(d: Declared): Set<string> {
     if (a.principals !== undefined) out.add(`${agentScope(name)}.principals`);
   }
   return out;
-}
-
-/** The refusal a command meets on a key the file owns. */
-export function pinned(path: string, how = "edit it there"): Error {
-  return new Error(`${path} is declared in ${CONFIG_FILE}; ${how}`);
 }
 
 /* ── the store's state, as the org runs on it ────────────────────────────── */

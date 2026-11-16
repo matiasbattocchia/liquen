@@ -132,10 +132,17 @@ export async function running(dir: string): Promise<Map<string, number>> {
 }
 
 /** Signal one role's holder and wait for its lock to come free: SIGTERM, but a main gets
- *  SIGINT, which ends what the agents' commands left running with it (§9). */
-async function end(dir: string, role: string, pid: number, root: string): Promise<void> {
+ *  SIGINT, which ends what the agents' commands left running with it (§9). `signal` says
+ *  otherwise: a restart asks the supervisor with SIGHUP. */
+export async function end(
+  dir: string,
+  role: string,
+  pid: number,
+  root: string,
+  signal: Deno.Signal = role === MAIN ? "SIGINT" : "SIGTERM",
+): Promise<void> {
   try {
-    Deno.kill(pid, role === MAIN ? "SIGINT" : "SIGTERM");
+    Deno.kill(pid, signal);
   } catch (err) {
     // it let go between the probe and the signal: asked and gone is what was wanted
     if (!(err instanceof Deno.errors.NotFound)) throw err;

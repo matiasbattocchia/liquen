@@ -1,6 +1,6 @@
 /**
- * org: the file applied to the store (§9) — a key it declares overwrites, a key it leaves
- * out keeps the store's value, an agent it does not name is left alone.
+ * org: the file applied to the store (§9), three-way: a command's write survives, the file's
+ * edit lands, both apart is a conflict the store wins, and an agent it does not name is left alone.
  */
 
 import { assertEquals, assertRejects } from "@std/assert";
@@ -22,23 +22,96 @@ async function withOrg(fn: (root: string, log: Log) => Promise<void>): Promise<v
 
 const write = (root: string, yaml: string) => Deno.writeTextFile(`${root}/config.yaml`, yaml);
 
-Deno.test("applyFile: a declared key overwrites the store's, a key left out keeps it, and taking a key out resets nothing", async () => {
+const model = async (log: Log) =>
+  (await log.config("shared.agents")).find((r) => r.key === "model")?.value;
+
+Deno.test("applyFile: a new key is taken, a key left out keeps the store's, and taking a key out resets nothing", async () => {
   await withOrg(async (root, log) => {
     // what a command set while the org ran
-    await log.setConfig([
-      { scope: "shared.agents", key: "model", value: "claude-runtime" },
-      { scope: "shared.agents", key: "effort", value: "high" },
-    ]);
+    await log.setConfig([{ scope: "shared.agents", key: "effort", value: "high" }]);
     await write(root, "shared:\n  timezone: Europe/Madrid\n  agents:\n    model: claude-file\n");
-    const org = await applyFile(root, log);
+    const { org, conflicts } = await applyFile(root, log);
+    assertEquals(conflicts, []);
     assertEquals(org.shared.agents.model, "claude-file"); // declared: the file's
     assertEquals(org.shared.agents.effort, "high"); // left out: the store's
     assertEquals(org.shared.agents.maxTokens, 64_000); // set nowhere: the catalog's
     assertEquals(org.shared.timezone, "Europe/Madrid");
-    // the key leaves the file: it stops being pinned, and stays as it was
+    // the key leaves the file: it stops being applied, and stays as it was
     await write(root, "shared:\n  timezone: Europe/Madrid\n");
-    assertEquals((await applyFile(root, log)).shared.agents.model, "claude-file");
-    assertEquals(await readConfig(root, log), await applyFile(root, log)); // idempotent
+    assertEquals((await applyFile(root, log)).org.shared.agents.model, "claude-file");
+    assertEquals(await readConfig(root, log), (await applyFile(root, log)).org); // idempotent
+  });
+});
+
+Deno.test("applyFile: three ways: a command's write survives, the file's edit lands, and both apart is a conflict the store wins", async () => {
+  await withOrg(async (root, log) => {
+    await write(root, "shared:\n  agents:\n    model: claude-a\n");
+    await applyFile(root, log);
+    // a command moves the key; the file, unchanged, leaves it alone
+    await log.setConfig([{ scope: "shared.agents", key: "model", value: "claude-cmd" }]);
+    assertEquals((await applyFile(root, log)).conflicts, []);
+    assertEquals(await model(log), "claude-cmd");
+    // the file moves it too: the store's value stays, and the conflict is said each apply
+    await write(root, "shared:\n  agents:\n    model: claude-b\n");
+    const conflict = [{ path: "shared.agents.model", file: "claude-b", store: "claude-cmd" }];
+    assertEquals((await applyFile(root, log)).conflicts, conflict);
+    assertEquals((await applyFile(root, log)).conflicts, conflict);
+    assertEquals(await model(log), "claude-cmd");
+    // overwrite takes the file's
+    assertEquals((await applyFile(root, log, { overwrite: true })).conflicts, []);
+    assertEquals(await model(log), "claude-b");
+    // the file moves, the store has not: taken
+    await write(root, "shared:\n  agents:\n    model: claude-c\n");
+    assertEquals((await applyFile(root, log)).conflicts, []);
+    assertEquals(await model(log), "claude-c");
+    // a file made to match the store settles a conflict: nothing is left to say
+    await log.setConfig([{ scope: "shared.agents", key: "model", value: "claude-cmd" }]);
+    await write(root, "shared:\n  agents:\n    model: claude-d\n");
+    assertEquals((await applyFile(root, log)).conflicts.length, 1);
+    await write(root, "shared:\n  agents:\n    model: claude-cmd\n");
+    assertEquals((await applyFile(root, log)).conflicts, []);
+    assertEquals((await log.base()).find((r) => r.key === "model")?.value, "claude-cmd");
+  });
+});
+
+Deno.test("applyFile: a key with no base, the store and the file agreeing, only records it", async () => {
+  await withOrg(async (root, log) => {
+    await log.setConfig([{ scope: "shared.agents", key: "model", value: "claude-same" }]);
+    await log.setConfig([{ scope: "shared", key: "locale", value: "es" }]);
+    await write(root, "shared:\n  locale: en\n  agents:\n    model: claude-same\n");
+    const at = await log.configVersion();
+    const { conflicts } = await applyFile(root, log);
+    // the key the store set apart from the file, with no base to weigh, is a conflict
+    assertEquals(conflicts, [{ path: "shared.locale", file: "en", store: "es" }]);
+    assertEquals(await log.configVersion(), at); // nothing written to the config
+    assertEquals(await log.base(), [
+      { scope: "shared.agents", key: "model", value: "claude-same" },
+    ]);
+  });
+});
+
+Deno.test("applyFile: an agent the file declares and a command removed stays removed until overwrite", async () => {
+  await withOrg(async (root, log) => {
+    await write(root, "agents:\n  ana:\n    identity:\n      name: Ana\n    effort: low\n");
+    await applyFile(root, log);
+    await log.dropAgent("ana");
+    assertEquals((await applyFile(root, log)).conflicts, []);
+    assertEquals(await log.agents(), []);
+    // the file moves a key of hers: a conflict with her absence, and nothing written
+    await write(
+      root,
+      "agents:\n  ana:\n    identity:\n      name: Ana\n    effort: high\n    model: claude-x\n",
+    );
+    const { conflicts } = await applyFile(root, log);
+    assertEquals(conflicts.map((c) => c.path).sort(), ["agents.ana.effort", "agents.ana.model"]);
+    assertEquals(await log.config(), []);
+    // overwrite makes her again, as the file says
+    await applyFile(root, log, { overwrite: true });
+    assertEquals((await log.agents()).map((a) => [a.agentId, a.name]), [["ana", "Ana"]]);
+    assertEquals((await log.config("agents.ana")).map((r) => [r.key, r.value]), [
+      ["effort", "high"],
+      ["model", "claude-x"],
+    ]);
   });
 });
 
@@ -50,7 +123,10 @@ Deno.test("applyFile: the agents it declares are made or changed key by key; one
       name: "Made by a command",
       since: "2026-01-01T00:00:00.000Z",
       settings: { model: "claude-own" },
-    }, {
+    }]);
+    await write(root, "agents:\n  ana:\n    identity:\n      email: old@org.example\n");
+    await applyFile(root, log);
+    await log.putAgents([{
       agentId: "ana",
       mind: "mind@ana",
       name: "Ana",
@@ -68,7 +144,7 @@ Deno.test("applyFile: the agents it declares are made or changed key by key; one
       "agents:\n  ana:\n    identity:\n      email: ana@org.example\n    effort: low\n  bo:\n    principals: '*'\n",
     );
     const now = Date.parse("2026-11-13T12:00:00.000Z");
-    const org = await applyFile(root, log, now);
+    const { org } = await applyFile(root, log, { now });
     assertEquals(await log.agents(), [
       {
         agentId: "ana",
@@ -90,7 +166,7 @@ Deno.test("applyFile: the agents it declares are made or changed key by key; one
     assertEquals(org.agents.runtime.model, "claude-own");
     assertEquals(org.agents.ana.effort, "low");
     // a later boot moves no floor
-    await applyFile(root, log, now + 86_400_000);
+    await applyFile(root, log, { now: now + 86_400_000 });
     assertEquals((await log.agents())[1].since, "2026-11-12T12:00:00.000Z");
   });
 });
@@ -113,7 +189,7 @@ Deno.test("applyFile: the org as it would stand is checked whole, and a file boo
 Deno.test("a connection the file declares stands in the store with its knobs; a connector reads them over its defaults", async () => {
   await withOrg(async (root, log) => {
     await write(root, "connections:\n  acme:\n    port: 4321\n  bare: {}\n");
-    const org = await applyFile(root, log);
+    const { org } = await applyFile(root, log);
     assertEquals(org.connections, { acme: { port: 4321 }, bare: {} });
     const spec = {
       name: "acme",
@@ -127,6 +203,7 @@ Deno.test("a connection the file declares stands in the store with its knobs; a 
     assertEquals(await connectorConfig<Record<string, unknown>>(root, spec, log), {
       port: 4321,
       host: "localhost",
+      enabled: true,
       crowd: 20,
       busy: 40,
       follow: [],

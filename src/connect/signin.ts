@@ -25,6 +25,7 @@ import type { Registry } from "../store/agents.ts";
 import type { CallRef } from "../xi.ts";
 import type { Json } from "../types.ts";
 import { updateDraft } from "../late.ts";
+import { disabled } from "../config.ts";
 import { socketOf } from "../edge.ts";
 import { MIND } from "../session.ts";
 import { serveSocket } from "./serve.ts";
@@ -121,9 +122,13 @@ export interface FlowCtx {
   root: string;
   creds: Credentials;
   log: SignInLog;
+  /** The org's edge as it stands when a flow reads it. */
   edge: { publicUrl: string | null; port: number };
-  /** Declare the service when it is new, with the knobs it starts with, and reload the
-   *  running org. */
+  /** Whether a service is on: false for one declared and disabled, whose sign-in fails.
+   *  Absent, every service is. */
+  enabled?(service: string): boolean;
+  /** Declare the service when it is new, with the knobs it starts with, and have the
+   *  running org start it. */
   declare(service: string, knobs?: Record<string, Json>): Promise<void>;
 }
 
@@ -367,6 +372,7 @@ export function createSignIns(
           `${ask.service} signs in at the terminal: \`liquen connect ${ask.service}\``,
         );
       }
+      if (ctx.enabled?.(ask.service) === false) throw disabled(ask.service);
       if (ask.agent && !(await log.agents()).some((a) => a.agentId === ask.agent)) {
         throw new Error(`no agent "${ask.agent}": a grant binds to an agent on the roster`);
       }

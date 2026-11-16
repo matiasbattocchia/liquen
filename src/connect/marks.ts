@@ -28,8 +28,8 @@ const DAY_MS = 24 * 60 * 60_000;
 
 export interface MarkDeps {
   read: Reader["read"];
-  /** The connection's room knobs (`crowd`, `busy`, `follow`), as its connector read them. */
-  knobs: RoomKnobs;
+  /** The connection's room knobs (`crowd`, `busy`, `follow`), asked once per batch. */
+  knobs: () => Promise<RoomKnobs>;
   /** The addresses the account goes by on its wire. Absent: the connection's own address,
    *  which is the account's on WhatsApp and Telegram. */
   self?: (connection: string) => string[];
@@ -45,7 +45,7 @@ export function createMarks(deps: MarkDeps): (drafts: Line[]) => Promise<Line[]>
   const counts = new Map<string, { at: number; lines: number }>();
 
   /** The lines a room took in the last day, this one excluded. */
-  const linesOf = async (d: Line): Promise<number> => {
+  const linesOf = async (d: Line, knobs: RoomKnobs): Promise<number> => {
     const { service, connection_address: connection, conversation } = d.envelope;
     const key = `${service} ${connection} ${conversation.address}`;
     const held = counts.get(key);
@@ -60,19 +60,19 @@ export function createMarks(deps: MarkDeps): (drafts: Line[]) => Promise<Line[]>
       conversation: conversation.address,
       types: ["message"],
       after: new Date(at - DAY_MS).toISOString(),
-      limit: deps.knobs.busy + 1,
+      limit: knobs.busy + 1,
     });
     counts.set(key, { at, lines: rows.length + 1 });
     return rows.length;
   };
 
-  const crowded = async (d: Line): Promise<boolean> => {
+  const crowded = async (d: Line, knobs: RoomKnobs): Promise<boolean> => {
     const c = d.envelope.conversation;
-    if (c.members === undefined || c.members <= deps.knobs.crowd || c.admin === true) {
+    if (c.members === undefined || c.members <= knobs.crowd || c.admin === true) {
       return false;
     }
-    if (deps.knobs.follow.includes(c.address)) return false;
-    return (await linesOf(d)) > deps.knobs.busy;
+    if (knobs.follow.includes(c.address)) return false;
+    return (await linesOf(d, knobs)) > knobs.busy;
   };
 
   const addressed = async (d: Line): Promise<boolean> => {
@@ -89,6 +89,7 @@ export function createMarks(deps: MarkDeps): (drafts: Line[]) => Promise<Line[]>
   };
 
   return async (drafts) => {
+    const knobs = await deps.knobs();
     for (const d of drafts) {
       const c = d.envelope.conversation;
       const facts = c && (c.members !== undefined || c.admin !== undefined);
@@ -99,7 +100,7 @@ export function createMarks(deps: MarkDeps): (drafts: Line[]) => Promise<Line[]>
       const x = d.extra ?? {};
       const settled = x.backfill === true || x.archived === true;
       const marks: Record<string, true> = {};
-      if (!settled && await crowded(d)) marks.crowded = true;
+      if (!settled && await crowded(d, knobs)) marks.crowded = true;
       if (!settled && (x.muted === true || marks.crowded) && await addressed(d)) {
         marks.addressed = true;
       }

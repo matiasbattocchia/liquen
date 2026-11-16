@@ -58,6 +58,8 @@ export const SPEC: ConnectorSpec = {
       check: checkStrings,
     },
   ],
+  // each surface listened to is a poll of its own, made as the process starts
+  start: ["connections.google.listen"],
 };
 
 /** Read `connections.google` as the org's store holds it. */

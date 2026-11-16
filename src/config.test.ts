@@ -24,7 +24,7 @@ async function readConfig(root: string): Promise<OrgConfig> {
   await Deno.remove(`${root}/data`, { recursive: true }).catch(() => {});
   const log = await (await openStore(root)).log();
   try {
-    return await applyFile(root, log);
+    return (await applyFile(root, log)).org;
   } finally {
     await log.close();
   }
@@ -202,6 +202,7 @@ Deno.test("a connector reads its subsection over its defaults; nothing is writte
     assertEquals(cfg as Record<string, unknown>, {
       port: 1234,
       things: ["a"],
+      enabled: true,
       crowd: 20,
       busy: 40,
       follow: [],

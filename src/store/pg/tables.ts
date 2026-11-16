@@ -184,6 +184,29 @@ export function pgRegistry(sql: Sql): Registry {
         }
       });
     },
+    async base(): Promise<ConfigRow[]> {
+      const found = await rows<{ scope: string; key: string; value: string }>(
+        sql,
+        "SELECT scope, key, value FROM config_base ORDER BY scope, key",
+      );
+      return found.map((r) => ({ ...r, value: JSON.parse(r.value) as Json }));
+    },
+    async setBase(list: ConfigRow[]): Promise<void> {
+      await sql.begin(async (tx) => {
+        await count(tx, "DELETE FROM config_base");
+        for (const r of list) {
+          await count(
+            tx,
+            "INSERT INTO config_base (scope, key, value) VALUES ($1::text, $2::text, $3::jsonb)",
+            [r.scope, r.key, JSON.stringify(r.value)],
+          );
+        }
+      });
+    },
+    async configVersion(): Promise<number> {
+      const [row] = await rows<{ n: string | number }>(sql, "SELECT n FROM config_version");
+      return Number(row.n);
+    },
     async lastTurns(): Promise<Record<string, string>> {
       const found = await rows<{ agent_id: string; last: string }>(
         sql,

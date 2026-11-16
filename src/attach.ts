@@ -10,7 +10,8 @@
 import { TextLineStream } from "@std/streams";
 import { userInfo } from "node:os";
 import { EFFORTS, findRoot, PROVIDERS } from "./config.ts";
-import { readConfig } from "./org.ts";
+import { conflictLines, readConfig } from "./org.ts";
+import { applied } from "./reload.ts";
 import type { Status, Tune } from "./door.ts";
 import type { Delta, Effort, Event, PermissionVerdict } from "./types.ts";
 import type { UsageRow } from "./store/log.ts";
@@ -113,6 +114,8 @@ export async function attach(
       );
     }
   }
+  // whoever raises main applies the file first, and main reads the store (§9)
+  for (const line of conflictLines(await applied(a.root))) console.error(line);
   const daemon = new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", new URL("./main.ts", import.meta.url).href, "--ephemeral"],
     cwd: a.root,

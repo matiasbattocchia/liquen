@@ -55,7 +55,12 @@ function codeFlow(ends: PromiseWithResolvers<(gate: Gate, ticket: string) => Pro
 
 async function harness(
   flows: Record<string, SignInFlow>,
-  opts: { connections?: ConnectionRow[]; unended?: ToolUseEvent[]; now?: () => number } = {},
+  opts: {
+    connections?: ConnectionRow[];
+    unended?: ToolUseEvent[];
+    now?: () => number;
+    enabled?: (service: string) => boolean;
+  } = {},
 ) {
   const root = await Deno.makeTempDir();
   await membersAt(`${root}/data`, "ana", "bo");
@@ -66,6 +71,7 @@ async function harness(
     root,
     creds,
     edge: { publicUrl: null, port: 8787 },
+    ...(opts.enabled ? { enabled: opts.enabled } : {}),
     declare: (service) => {
       declared.push(service);
       return Promise.resolve();
@@ -129,6 +135,30 @@ Deno.test("keyOf: the account when known before the sign-in, else whom the grant
     "account:549110000",
   );
   assertEquals(keyOf({ service: "whatsapp", account: "549110000" }), "account:549110000");
+});
+
+Deno.test("open: a sign-in for a disabled service fails, saying so, and opens nothing", async () => {
+  let prepared = false;
+  const h = await harness({
+    svc: {
+      life: () => 60_000,
+      prepare: () => {
+        prepared = true;
+        return Promise.resolve({});
+      },
+    },
+  }, { enabled: (service) => service !== "svc" });
+  try {
+    await assertRejects(
+      () => h.signIns.open({ service: "svc", agent: "ana" }),
+      Error,
+      "svc is disabled: connections.svc.enabled is false",
+    );
+    assertEquals(prepared, false);
+    assertEquals(await h.creds.tickets(), []);
+  } finally {
+    await h.close();
+  }
 });
 
 Deno.test("open: a link sign-in serves its door, and a second ask gets the same link back", async () => {

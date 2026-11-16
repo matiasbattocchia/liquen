@@ -210,6 +210,28 @@ CREATE TABLE IF NOT EXISTS config (
   updated_at ${T} NOT NULL,
   PRIMARY KEY (scope, key)
 );
+CREATE TABLE IF NOT EXISTS config_base (
+  scope ${T} NOT NULL,
+  key   ${T} NOT NULL,
+  value jsonb NOT NULL,
+  PRIMARY KEY (scope, key)
+);
+CREATE TABLE IF NOT EXISTS config_version (
+  one integer PRIMARY KEY CHECK (one = 1),
+  n   bigint NOT NULL
+);
+INSERT INTO config_version (one, n) VALUES (1, 0) ON CONFLICT DO NOTHING;
+
+-- every statement that writes the org's configuration moves the count, whoever writes it
+CREATE OR REPLACE FUNCTION config_moved() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+  UPDATE config_version SET n = n + 1;
+  RETURN NULL;
+END $f$;
+CREATE OR REPLACE TRIGGER config_moved AFTER INSERT OR UPDATE OR DELETE ON config
+  FOR EACH STATEMENT EXECUTE FUNCTION config_moved();
+CREATE OR REPLACE TRIGGER agents_moved AFTER INSERT OR UPDATE OR DELETE ON agents
+  FOR EACH STATEMENT EXECUTE FUNCTION config_moved();
 
 -- the RESTRICT a key cannot spell: a principal lives in a JSON array. An agent naming
 -- itself waits on no one, and "*" names no one

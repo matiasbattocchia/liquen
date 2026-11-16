@@ -29,16 +29,16 @@ interface Seat {
   admin?: boolean;
 }
 
-/** Bind the port to a bridge: `base` is `connections.whatsapp.bridgeUrl`, `token` the
- *  shared `WA_BRIDGE_TOKEN`. */
+/** Bind the port to a bridge: `base` answers `connections.whatsapp.bridgeUrl`, asked on
+ *  each call, `token` the shared `WA_BRIDGE_TOKEN`. */
 export function whatsappRooms(
-  base: string,
+  base: () => string,
   token: string,
   fetchApi: typeof fetch = timedFetch,
 ): RoomsPort {
   const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
   const call = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
-    const res = await fetchApi(`${base}${path}`, { ...init, headers });
+    const res = await fetchApi(`${base()}${path}`, { ...init, headers });
     if (!res.ok) throw await httpError(res);
     return await res.json() as T;
   };

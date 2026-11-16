@@ -49,7 +49,7 @@ async function withMirror(
     gates: (scope) => log.gates(scope),
     aliases: () => log.aliases(),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
-    locale,
+    locale: () => locale,
     presence: () => presence,
     asked: () => asked,
   }, settleMs);

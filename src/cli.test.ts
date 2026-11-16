@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { start } from "./main.ts";
+import { start } from "./raise.ts";
 import { canned, scripted } from "./testing.ts";
 
 Deno.test({
