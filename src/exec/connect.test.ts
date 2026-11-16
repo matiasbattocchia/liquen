@@ -21,7 +21,9 @@ const log = {
   agents: () => Promise.resolve(AGENTS),
   connections: () => Promise.resolve(CONNECTIONS),
 };
-const ask = (input: Record<string, unknown>, agentId = "matias") => askOf(input, { agentId, log });
+const SERVICES = ["google", "whatsapp", "github", "telegram", "mercadopago", "token"];
+const ask = (input: Record<string, unknown>, agentId = "matias") =>
+  askOf(input, { agentId, log, services: SERVICES });
 
 Deno.test("askOf: a new account is the caller's own, and checks nothing", async () => {
   assertEquals(await ask({ service: "google" }), { service: "google", agent: "matias" });
@@ -84,10 +86,51 @@ Deno.test("askOf: a reconnect is a connection the caller may sign in, keeping it
   );
 });
 
-Deno.test("askOf: WhatsApp needs a phone; a service that signs in elsewhere is named", async () => {
+Deno.test("askOf: WhatsApp needs a phone; a service with no flow is named at the terminal", async () => {
   await assertRejects(() => ask({ service: "whatsapp" }, "bo"), Error, "no phone");
-  await assertRejects(() => ask({ service: "telegram" }), Error, "`liquen connect telegram`");
-  await assertRejects(() => ask({}), Error, "say `service`");
+  await assertRejects(() => ask({ service: "ai" }), Error, "`liquen connect ai`");
+  await assertRejects(() => ask({}), Error, `say \`service\`: ${SERVICES.join(", ")}`);
+});
+
+Deno.test("askOf: Telegram for another matches their phone; Mercado Pago their email", async () => {
+  assertEquals(await ask({ service: "telegram", for: "ana" }), {
+    service: "telegram",
+    agent: "ana",
+    phone: "+5492610000002",
+  });
+  assertEquals(await ask({ service: "mercadopago", for: "ana" }), {
+    service: "mercadopago",
+    agent: "ana",
+    email: "ana@example.com",
+  });
+  await assertRejects(() => ask({ service: "telegram", for: "bo" }), Error, "no phone");
+});
+
+Deno.test("askOf: a token names itself, is the caller's or for's, and matches no handle", async () => {
+  const token = { name: "crm", env: "CRM_TOKEN", hosts: "api.crm.example, *.crm.example" };
+  assertEquals(await ask({ service: "token", token }), {
+    service: "token",
+    agent: "matias",
+    token: { name: "crm", env: "CRM_TOKEN", hosts: ["api.crm.example", "*.crm.example"] },
+  });
+  // bo's row holds no handle, and a token needs none
+  assertEquals(await ask({ service: "token", for: "bo", token: { ...token, paths: ["/v1/"] } }), {
+    service: "token",
+    agent: "bo",
+    token: {
+      name: "crm",
+      env: "CRM_TOKEN",
+      hosts: ["api.crm.example", "*.crm.example"],
+      paths: ["/v1/"],
+    },
+  });
+  await assertRejects(() => ask({ service: "token" }), Error, "needs `token`");
+  await assertRejects(
+    () => ask({ service: "token", account: "crm", token }),
+    Error,
+    "a token is no connection",
+  );
+  await assertRejects(() => ask({ service: "google", token }), Error, "service `token` alone");
 });
 
 Deno.test("connect: the first word is the answer, async, and the call waits on the ticket", async () => {
@@ -98,6 +141,7 @@ Deno.test("connect: the first word is the answer, async, and the call waits on t
     log,
     clock: () => "15:42",
     signIns: {
+      services: ["google", "slack"],
       open: (a) => {
         asked.push(a);
         return Promise.resolve({
@@ -119,6 +163,14 @@ Deno.test("connect: the first word is the answer, async, and the call waits on t
   assertStringIncludes(out.output, "good until 15:42, and it opens only in a browser");
   assertEquals(asked[0].caller?.use, { id: "use-1", turn_id: "turn-1" });
   assertEquals(asked[0].caller?.agentId, "matias");
+  // the schema offers what main's table holds a flow for, and nothing else
+  const props = tool.spec.input_schema.properties as Record<string, { enum?: string[] }>;
+  assertEquals(props.service.enum, ["google", "slack"]);
+  await assertRejects(
+    () => tool.execute({ service: "github" }, new AbortController().signal),
+    Error,
+    "`liquen connect github`",
+  );
 });
 
 Deno.test("answerOf: a code says where it is typed", () => {

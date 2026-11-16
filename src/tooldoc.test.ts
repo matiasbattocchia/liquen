@@ -12,7 +12,7 @@ import { bashShape } from "./exec/bash.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
 import { openFileDocs } from "./store/docs.ts";
 import { bringSystemDocs, onFiles } from "./store/seed.ts";
-import { CONNECT_SPEC } from "./exec/connect.ts";
+import { connectSpec } from "./exec/connect.ts";
 import { AGENT_SPEC } from "./exec/agent.ts";
 
 const PIN: ToolShape = {
@@ -166,7 +166,7 @@ Deno.test("the seeded docs word every builtin tool, the numbers filled from code
       ...OWN_TOOLS,
       bashShape(120_000),
       ...Object.values(DOC_TOOLS),
-      { spec: CONNECT_SPEC },
+      { spec: connectSpec(["google", "token"]) },
       { spec: AGENT_SPEC },
     ];
     await checkToolDocs(shapes, read);

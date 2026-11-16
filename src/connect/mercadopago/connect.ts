@@ -52,10 +52,16 @@ export interface MercadopagoDoorDeps {
    *  absent when the org has no public door, and nothing notifies. */
   ingest?: string;
   /** `GET /users/me` with the pasted token — injectable; default hits the API. */
-  whoami?: (
-    token: string,
-  ) => Promise<{ id?: number | string; nickname?: string; message?: string }>;
+  whoami?: (token: string) => Promise<Me>;
   now?: () => string;
+}
+
+/** What `GET /users/me` answers: the account, or why the token was refused. */
+export interface Me {
+  id?: number | string;
+  nickname?: string;
+  email?: string;
+  message?: string;
 }
 
 /** Verify the token, write the grant and the map, notify the log. Throws, writing nothing,
@@ -68,7 +74,7 @@ export async function connectMercadopago(
   const now = deps.now ?? (() => new Date().toISOString());
   token = token.trim();
   if (!token) throw new Error("an empty token — nothing written");
-  const me = await (deps.whoami ?? defaultWhoami)(token);
+  const me = await (deps.whoami ?? mercadopagoWhoami)(token);
   if (me.id === undefined) throw new Error(`GET /users/me: ${me.message ?? "no user id"}`);
   const account: Account = { id: String(me.id), ...(me.nickname ? { nickname: me.nickname } : {}) };
 
@@ -126,9 +132,8 @@ export async function connectMercadopago(
   return { account, ...(said ? { contention: said } : {}) };
 }
 
-async function defaultWhoami(
-  token: string,
-): Promise<{ id?: number | string; nickname?: string; message?: string }> {
+/** The account a token opens, as Mercado Pago says it. */
+export async function mercadopagoWhoami(token: string): Promise<Me> {
   const res = await fetch("https://api.mercadopago.com/users/me", {
     headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(30_000),

@@ -135,6 +135,27 @@ Deno.test("keyOf: the account when known before the sign-in, else whom the grant
     "account:549110000",
   );
   assertEquals(keyOf({ service: "whatsapp", account: "549110000" }), "account:549110000");
+  // a token knows its vault key: one sign-in per token, each agent's its own
+  const crm = { name: "crm", env: "CRM_TOKEN", hosts: ["api.crm.example"] };
+  assertEquals(keyOf({ service: "token", agent: "ana", token: crm }), "account:token:crm:ana");
+});
+
+Deno.test("landed: a flow that runs no process declares nothing; every other declares its service", async () => {
+  const seen: { gate?: Gate } = {};
+  const h = await harness({ svc: linkFlow(seen), quiet: { ...linkFlow(), declares: false } });
+  try {
+    assertEquals(h.signIns.services, ["svc", "quiet"]);
+    for (const service of ["svc", "quiet"]) {
+      await h.signIns.open({ service, agent: "ana" });
+      const [t] = (await h.creds.tickets()).filter((t) => t.service === service);
+      // one gate serves every door: the one the first handler was handed
+      await seen.gate!.judge(t.ticket, { address: "ana@example.com" });
+      await seen.gate!.landed(t.ticket, "ana@example.com");
+    }
+    assertEquals(h.declared, ["svc"]);
+  } finally {
+    await h.close();
+  }
 });
 
 Deno.test("open: a sign-in for a disabled service fails, saying so, and opens nothing", async () => {
