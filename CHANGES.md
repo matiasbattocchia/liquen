@@ -2,7 +2,7 @@
 
 Decided 17 Nov 2026, for Postgres: the database and short-lived functions, with no process
 that must stay up. Any writer may insert into `events`, and triggers make the row right.
-The seven below are settled. What is still open closes the file.
+The eight below are settled. What is still open closes the file.
 
 1. A `wakes` table holds every look a session is owed.
 2. A look's life runs between `wakes` and `locks`.
@@ -14,6 +14,7 @@ The seven below are settled. What is still open closes the file.
    thing.
 7. A session has one timer, its wake, and `decide` names the moment to ask again. No look
    comes by the minute.
+8. Every model call is a step, tried and metered one way, under one name.
 
 ## 1. The wakes table
 
@@ -202,14 +203,23 @@ What the door is asked about:
   there has waited `TYPING_HOLD_MS`;
 - the night: when `sleepHours` ends on the agent's clock;
 - the digest: `digestMinutes` after the agent last looked;
-- the cache's hour: `WARM_MS` after the session's last call.
+- the cache's hour: `WARM_MS` after the session's last think or ping.
 
 What follows:
 
 - **`warm` is a verdict.** With nothing else owed and the cache's hour near its end, xi
   renders the window and sends it with `max_tokens: 0`. The request places no anchor, so
-  every byte it sends is the log's, and the next turn reads it back. `WARM_PINGS` bounds
-  the run between two turns.
+  every byte it sends is the log's, and the next turn reads it back. Only a mind is kept
+  warm, on a provider whose cache a read renews.
+- **A ping writes a `keepalive` row.** It sits in the mind's room and says what the ping
+  read, or the error that ended it. xi sets it aside from the window as it does a
+  decision, so no rule, render or tool meets one, and it arms no wake. The log holds the
+  run, so a restart keeps it.
+- **A run ends when there is nothing to keep.** Each ping that read the cache names the
+  next, `WARM_MS` on. The run stops at night, after a ping that failed, and after a ping
+  that read nothing. The next turn starts a new one. No count bounds a run: DESIGN §10
+  keeps the bound by price as an optimization, a run ending once keeping the cache has
+  cost as much as letting it lapse.
 - **The end settles the wake.** xi asks `decide` about the window it leaves, after an
   `ignore` and after work alike. Something still owed keeps the wake, due now: the
   checkpoint an over-budget window needs after a turn's own error is one. A moment named
@@ -225,6 +235,28 @@ What follows:
 - **The suite holds the two together.** A case steps `decide` through time across each
   rule that reads the clock: the verdict turns no sooner than the moment it named.
 
+## 8. Model calls
+
+A model call is a step, whatever it is for. `mu` shapes the request, nu's ladder tries it,
+and the meter counts it under its kind.
+
+| Call | Verdict | Meter kind | Row |
+|---|---|---|---|
+| A turn's step | `think` | `think` | `thinking`, `message`, `tool_use` |
+| A compaction | `compact` | `compact` | `summary` |
+| The judge | none, it runs before `decide` | `decision` | `decision` |
+| The keeper's ping | `warm` | `keepalive` | `keepalive` |
+
+- **The names follow the table.** The meter kind `checkpoint` becomes `compact`, and the
+  `light` row becomes a `decision` row.
+- **nu hands the step out.** The judge and the ping take the call nu gives its compaction
+  (`StepCall`), so each is tried as a think is: the client's fast retries, then
+  `RETRY_DELAYS_MS`.
+- **`mu` learns one thing.** A step may ask for its answer in a schema. Thinking stays
+  adaptive on every step, and the judge states only its `decision.effort`.
+- **What each keeps.** The judge keeps its slice, its instruction and the shape of its
+  answer. The ping keeps `max_tokens: 0`.
+
 ## Open
 
 None of these is part of the batch until it is settled.
@@ -232,5 +264,5 @@ None of these is part of the batch until it is settled.
 - **The keeper's render.** Whether a window rendered again reads the cache the session's
   last call wrote. `render.ts` says the request only ever grows, and no test holds a
   second render to a live cache.
-- **The keeper's count.** `WARM_PINGS` needs the session's calls since its last turn. A
-  `usage` row names the agent and the turn, and no session.
+- **The hour's start.** Which row says when a step's call was sent. The cache's hour runs
+  from there, and a long answer is stamped minutes later.
