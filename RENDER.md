@@ -93,6 +93,8 @@ goes with its words. Each skill the system describes is one file under
 | Verdicts `allow` `deny` `lapsed` `withdrawn` | ✗ | |
 | `scope="…"` | ✗ | |
 | `waiting — N approvals:` `· … — asked 14:02 · id …` | ✗ | `cancel.md` |
+| A gated call is the question: make it, and let the card ask | ✓ | Conduct |
+| A request carried to its end | ✓ | Conduct |
 | Approval cards are already seen | ✓ | Conduct |
 
 ## Async calls · `instructions/40-async.md`
