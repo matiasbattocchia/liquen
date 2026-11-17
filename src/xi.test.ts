@@ -1689,10 +1689,10 @@ Deno.test("unansweredOn: our reaction on their last line closes the room — the
   ]);
 });
 
-Deno.test("unansweredOn: a transcript rides `add` and carries no sender — it never closes a room", () => {
+Deno.test("unansweredOn: a transcript rides `add` — it never closes a room, whatever sender it wears", () => {
   const audio = line("111", T(1), { name: "Ana", kind: "direct" });
-  // the derived words of THEIR voice note: action `add`, and no sender at all, so the
-  // account-echo rule would read it as ours — the part is what tells them apart
+  // the derived words of THEIR voice note: action `add`, here with no sender at all, which
+  // the account-echo rule would read as ours — the part is what tells them apart
   const transcript = {
     ...line("111", T(2), {
       name: "Ana",
@@ -1854,32 +1854,40 @@ Deno.test("judgeable: the principal's own words are never judged, a voice note's
   const rooms = (events: Event[]) =>
     judgeable(events, SESSION, LIT, NOON, []).map((r) => r.news.map((e) => e.id));
   assertEquals(rooms([looked(1), typed]), []);
-  // a note, and the words the transcriber gives it later: a row with no sender of its own
-  const note = (who: Partial<Event>, external: string) =>
-    ev("message", {
-      ...who,
-      ts: at(2),
-      envelope: { ...env("slack:C1"), external_id: external },
-      parts: [{
-        type: "file",
-        kind: "audio",
-        file: { uri: "storage://media/a", mime_type: "audio/ogg" },
-      }],
-    } as Partial<Event>);
-  const transcript = (external: string) =>
-    ev(
-      "message",
-      {
-        conv: "slack:C1",
-        ts: at(0),
-        payload: { action: "add", ref_external_id: external },
-        parts: [{ type: "text", kind: "transcript", text: "ahí trato de organizar el domingo" }],
-      } as Partial<Event> & { conv?: string },
-    );
-  const mine = note(SELF, "w1");
-  assertEquals(rooms([mine, looked(1), transcript("w1")]), []);
+  assertEquals(rooms([looked(1), ...notes(SELF, "w1")]), []);
   // their note's words are theirs, and judged
-  const theirs = note({}, "w2");
-  const words = transcript("w2");
-  assertEquals(rooms([theirs, looked(1), words]), [[words.id]]);
+  const [, words] = notes({}, "w2");
+  assertEquals(rooms([looked(1), words]), [[words.id]]);
+});
+
+/** A voice note and the words the transcriber gives it later, which wear the note's author:
+ *  the stamp when our side spoke it, nothing of ours when they did. */
+function notes(who: Partial<Event>, external: string): [Event, Event] {
+  const note = ev("message", {
+    ...who,
+    ts: at(2),
+    envelope: { ...env("slack:C1"), external_id: external },
+    parts: [{
+      type: "file",
+      kind: "audio",
+      file: { uri: "storage://media/a", mime_type: "audio/ogg" },
+    }],
+  } as Partial<Event>);
+  const words = ev("message", {
+    ...who,
+    ts: at(0),
+    envelope: { ...env("slack:C1"), external_id: `transcript:${external}` },
+    payload: { action: "add", ref_external_id: external },
+    parts: [{ type: "text", kind: "transcript", text: "ahí trato de organizar el domingo" }],
+  } as Partial<Event>);
+  return [note, words];
+}
+
+Deno.test("attention: the words of the principal's own voice note never wake, a look past it or not", () => {
+  // the note landed before the last look; its words land after it
+  const [mine, mineWords] = notes(SELF, "w1");
+  assertEquals(decide([mine, looked(1), mineWords], SESSION, WAKE, NOON), "ignore");
+  // the same for THEIR note: the words are the first legible copy, and wake now
+  const [theirs, theirWords] = notes({}, "w2");
+  assertEquals(decide([theirs, looked(1), theirWords], SESSION, WAKE, NOON), "think");
 });

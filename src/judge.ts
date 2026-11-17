@@ -117,8 +117,8 @@ export function sliceOf(
       body.push("— new, to judge —");
       ruled = true;
     }
-    // a transcript is its note's words: it speaks as the note's author, the harness having
-    // written the row itself
+    // a transcript is its note's words: it speaks as the note's author, read off the note
+    // the window holds, which a transcript carrying no author of its own needs
     const note = noteOf(e, events);
     const who = speakerOf(note ?? e, seat) + (note ? " (voice note, transcribed)" : "");
     body.push(`${hhmm(e.ts, zone)} ${who}: ${textOf(e) || wordless(e)}`);

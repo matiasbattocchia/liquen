@@ -7339,10 +7339,15 @@ Its first live quarter hour on new judged two rooms nine times, all yellow or re
 no think. Four of the calls were about matias's own words: his "hola" and hearts to Sol,
 and the transcripts of two voice notes of his to Gasti. A transcript row has no sender, so
 the room read it as "someone", and the judge took his note for Gasti's. Since then the
-principal's own words, a note's transcript included, are not judged, and a transcript
-speaks in the slice as its note's author, found through the note it names as render finds
-it. The row itself stays the harness's: an `agent` stamp on it would make it an outbound
-row the dispatcher sends.
+principal's own words, a note's transcript included, are not judged.
+
+The same gap woke a think on the transcript of his own note to Franco: the rule that wakes
+on words for a note already looked at never asked whose note it was. Each reader that asked
+who spoke had to find the note first, and one that did not was a bug. So the transcriber
+now copies the note's `agent` and `sender` onto the transcript, and every reader asks the
+row. It stays an inbound row: its wire id (`transcript:<note id>`) keeps it from ever being
+an offer (`offerOf`), and fan-in's guard skips only rows with an agent and no wire id. The
+judge's slice still finds a row's author through its note when the row names none.
 
 new runs it from its next start: `decision.enabled: true`, `digestMinutes: 60`,
 `engagedMinutes: 10` in its `config.yaml`. vibes and turtle keep it off.
