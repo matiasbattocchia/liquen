@@ -2,11 +2,12 @@
 
 Decided 17 Nov 2026, for Postgres: the database and short-lived functions, with no process
 that must stay up. Any writer may insert into `events`, and triggers make the row right.
-The three below are settled. What is still open closes the file.
+The four below are settled. What is still open closes the file.
 
 1. A `wakes` table holds every look a session is owed.
 2. A look's life runs between `wakes` and `locks`.
 3. `locks` keeps its contract, and gives a wake its status.
+4. The trigger on `events` arms a wake through the law and the class gate.
 
 ## 1. The wakes table
 
@@ -97,11 +98,39 @@ What follows:
 - **The cancel mark stays on the lock.** A `control` row marks a running turn and arms no
   wake, since it never starts one.
 
+## 4. The trigger on events
+
+The trigger answers two questions for each row: which sessions may see it, and whether it
+can mean work for them.
+
+- **The law has one source.** The schema builds a SQL function from the text `policyFor`
+  gives the reads, as it builds `object_readable`. The trigger calls it, and a row-level
+  policy may call it too.
+- **Who is asked.** The mind of every agent whose row says it runs, under the law. A named
+  session by its room: the members a local address spells, or the memberships of a group.
+  A paused agent gets no wake.
+- **The class gate lives in the trigger.** A wake carries no payload, so xi has no row to
+  refuse at its door, and a wake armed for nothing would cost a lease and a window read.
+  The gate is `relevant` in SQL:
+  - a `message` passes unless it is silenced or holds only `room` parts;
+  - a `tool_use` or a `tool_result` passes when it is the session's own and no script
+    made it;
+  - a `permission_response`, an `alarm` and a `summary` pass;
+  - an `error` passes in the session's own room, when it says the request was too long or
+    that a checkpoint's try failed;
+  - any other row is dropped.
+- **Two languages, one answer.** The suite runs its cases through `relevant` and through
+  the SQL, as it does for `fold` and `docs_edit`. The pattern for a request too long is
+  built from `TOO_LONG` (`compact.ts`).
+- **Inserts only.** A merge into a known row is an update, and wakes nobody.
+- **The debounce.** The trigger reads `system.debounceMs` from the `config` table. It
+  delays a mind's wake for a row that is not the session's own. A named session's wake is
+  due at once.
+
 ## Open
 
 None of these is part of the batch until it is settled.
 
-- **The trigger's SQL.** The law per agent and `relevant`, restated for Postgres.
 - **SQLite.** Whether it follows with triggers of its own, or main drains `wakes` in a
   loop.
 - **The minute's look.** Retiring it needs a look that defers to say when to ask again.
