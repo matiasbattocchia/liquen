@@ -117,7 +117,11 @@ export function sliceOf(
       body.push("— new, to judge —");
       ruled = true;
     }
-    body.push(`${hhmm(e.ts, zone)} ${speakerOf(e, seat)}: ${textOf(e) || "[no text]"}`);
+    // a transcript is its note's words: it speaks as the note's author, the harness having
+    // written the row itself
+    const note = noteOf(e, events);
+    const who = speakerOf(note ?? e, seat) + (note ? " (voice note, transcribed)" : "");
+    body.push(`${hhmm(e.ts, zone)} ${who}: ${textOf(e) || wordless(e)}`);
   }
   return [...head, "", "Lines, oldest first:", ...body].join("\n");
 }
@@ -128,6 +132,28 @@ function speakerOf(e: MessageEvent, seat: Seat): string {
   if (ownComplex(e, seat)) return "principal";
   const s = e.envelope.sender;
   return s?.name ?? s?.address ?? "someone";
+}
+
+/** A line with no words: the kind of what it carried (`[audio]`, `[image]`), or that it
+ *  carried nothing readable. */
+function wordless(e: MessageEvent): string {
+  const file = e.parts.find((p) => p.type === "file");
+  return file ? `[${file.kind}]` : "[no text]";
+}
+
+/** The note a transcript gives words to: the message its `ref_external_id` names on the
+ *  wire, or its `ref_id` names in the log. Nothing for any other row, or for a transcript
+ *  whose note the window no longer holds. */
+export function noteOf(e: Event, events: Event[]): MessageEvent | undefined {
+  if (e.type !== "message" || e.payload?.action !== "add") return undefined;
+  if (!e.parts.some((p) => p.type === "text" && p.kind === "transcript")) return undefined;
+  const ref = e.payload.ref_external_id;
+  const id = e.payload.ref_id;
+  return events.find((n): n is MessageEvent =>
+    n.type === "message" &&
+    ((typeof ref === "string" && ref !== "" && n.envelope.external_id === ref) ||
+      (id !== undefined && n.id === id))
+  );
 }
 
 /** Who holds the floor: the last line our side said there, the agent's or the principal's. */

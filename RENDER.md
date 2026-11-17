@@ -184,7 +184,8 @@ from the mind's window, which never draws the `light` it writes.
 | `Today:` and the calendar's lines, or `Today: nothing on the calendar.` | ✓ | The anchor's `today` and `tomorrow` lines |
 | `What the assistant keeps about the principal…`, then `[<doc name>]` and its body | ✓ | The system prompt's second block: the agent's instructions, memories and always-loaded profiles |
 | `About this room [<doc name>]:` and its body | ✓ | A profile whose `conversations` name the room |
-| `HH:MM <who>: <text>`, `who` being `agent`, `principal` or the sender's name | ✓ | The room's last 20 lines |
+| `HH:MM <who>: <text>`, `who` being `agent`, `principal` or the sender's name | ✓ | The room's last 20 lines; a line with no words says what it carried (`[audio]`, `[image]`) |
+| `HH:MM <who> (voice note, transcribed): <words>` | ✗ | A transcript, speaking as its note's author |
 | `— new, to judge —` | ✓ | Above the first line the mind has not read |
 
 ## Recall

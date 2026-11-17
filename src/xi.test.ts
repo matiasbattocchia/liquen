@@ -1839,3 +1839,47 @@ Deno.test("judgeable: the rooms whose words no light covers — none when off, a
   );
   assertEquals(rooms([looked(1), reaction], LIT), []);
 });
+
+Deno.test("judgeable: the principal's own words are never judged, a voice note's transcript included", () => {
+  // the principal typed into a world room from their phone: our complex, no turn
+  const typed = ev(
+    "message",
+    {
+      ...SELF,
+      conv: "slack:C1",
+      ts: at(0),
+      parts: [{ type: "text", kind: "text", text: "hola" }],
+    } as Partial<Event> & { conv?: string },
+  );
+  const rooms = (events: Event[]) =>
+    judgeable(events, SESSION, LIT, NOON, []).map((r) => r.news.map((e) => e.id));
+  assertEquals(rooms([looked(1), typed]), []);
+  // a note, and the words the transcriber gives it later: a row with no sender of its own
+  const note = (who: Partial<Event>, external: string) =>
+    ev("message", {
+      ...who,
+      ts: at(2),
+      envelope: { ...env("slack:C1"), external_id: external },
+      parts: [{
+        type: "file",
+        kind: "audio",
+        file: { uri: "storage://media/a", mime_type: "audio/ogg" },
+      }],
+    } as Partial<Event>);
+  const transcript = (external: string) =>
+    ev(
+      "message",
+      {
+        conv: "slack:C1",
+        ts: at(0),
+        payload: { action: "add", ref_external_id: external },
+        parts: [{ type: "text", kind: "transcript", text: "ahí trato de organizar el domingo" }],
+      } as Partial<Event> & { conv?: string },
+    );
+  const mine = note(SELF, "w1");
+  assertEquals(rooms([mine, looked(1), transcript("w1")]), []);
+  // their note's words are theirs, and judged
+  const theirs = note({}, "w2");
+  const words = transcript("w2");
+  assertEquals(rooms([theirs, looked(1), words]), [[words.id]]);
+});

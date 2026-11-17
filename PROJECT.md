@@ -7319,6 +7319,15 @@ green, "nos hablamos" after the agent's own goodbye red, and a request for a quo
 With matias's own docs, Carlos Rossi asking about the property records came back yellow,
 its reason naming him as a friend from his profile.
 
+Its first live quarter hour on new judged two rooms nine times, all yellow or red, and woke
+no think. Four of the calls were about matias's own words: his "hola" and hearts to Sol,
+and the transcripts of two voice notes of his to Gasti. A transcript row has no sender, so
+the room read it as "someone", and the judge took his note for Gasti's. Since then the
+principal's own words, a note's transcript included, are not judged, and a transcript
+speaks in the slice as its note's author, found through the note it names as render finds
+it. The row itself stays the harness's: an `agent` stamp on it would make it an outbound
+row the dispatcher sends.
+
 new runs it from its next start: `decision.enabled: true`, `digestMinutes: 60`,
 `engagedMinutes: 10` in its `config.yaml`. vibes and turtle keep it off.
 
