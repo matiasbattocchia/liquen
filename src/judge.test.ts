@@ -1,8 +1,9 @@
 import { assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
-import { answerOf, judge, lightOf, type Seat, sliceOf } from "./judge.ts";
+import { aboutOf, answerOf, judge, lightOf, type Seat, sliceOf, standingOf } from "./judge.ts";
 import type { ModelTransport } from "./mu.ts";
 import type { Event } from "./types.ts";
+import type { DocEntry, DocHeader } from "./store/docs.ts";
 
 const SEAT: Seat = { agentId: "a1", id: "mind", conversation: "mind@a1" };
 const NOW = Date.parse("2026-11-17T15:00:00Z");
@@ -64,11 +65,21 @@ Deno.test("judge: one structured call, metered as a decision; a failure judges n
     { model: "claude-haiku-5-5", effort: "low" },
     "sort the news",
     "Room: …",
+    undefined,
+    "the principal's word",
   );
   assertEquals(j, { color: "green", reason: "lo esperan abajo" });
   assertEquals(asked[0].kind, "decision");
   assertEquals(asked[0].params.model, "claude-haiku-5-5");
-  assertEquals(asked[0].params.system, "sort the news");
+  // the instruction, then the standing word, the system closing on the cache mark
+  assertEquals(asked[0].params.system, [
+    { type: "text", text: "sort the news" },
+    { type: "text", text: "the principal's word", cache_control: { type: "ephemeral" } },
+  ]);
+  await judge(answering('{"reason":"r","color":"red"}'), { model: "m", effort: null }, "i", "s");
+  assertEquals(asked[1].params.system, [
+    { type: "text", text: "i", cache_control: { type: "ephemeral" } },
+  ]);
   const config =
     (asked[0].params as { output_config?: { effort?: string; format?: { type: string } } })
       .output_config;
@@ -82,6 +93,64 @@ Deno.test("judge: one structured call, metered as a decision; a failure judges n
   } finally {
     console.error = error;
   }
+});
+
+/** A doc as `list` hands it over: its header, and its body when it loads. */
+const doc = (
+  scope: DocHeader["scope"],
+  name: string,
+  load: DocHeader["load"],
+  body: string | undefined,
+  conversations?: DocHeader["conversations"],
+): DocEntry => ({
+  header: {
+    scope,
+    kind: name === "instructions" ? "instruction" : "memory",
+    name,
+    load,
+    handle: `${scope}/${name}`,
+    ...(conversations ? { conversations } : {}),
+  },
+  ...(body !== undefined ? { body } : {}),
+});
+
+Deno.test("standingOf and aboutOf: the principal's word, and what the agent keeps about the room", () => {
+  const carlos = doc(
+    "agent",
+    "profiles/carlos",
+    "conditional",
+    "Se quejó de que no le responden.",
+    [
+      { service: "whatsapp", address: "5492612339930" },
+    ],
+  );
+  const docs = [
+    doc("agent", "instructions", "always", "Lo de Leo se lo paso a dubiku."),
+    doc("agent", "memories", "always", "- Lu en Córdoba."),
+    doc("agent", "profiles/matias", "always", "Nada sale a las 8: nada."),
+    doc("agent", "playas-serranas", "always", "Las playas de San Luis."), // says nothing of who
+    doc("agent", "pagos-mensuales", "lazy", undefined),
+    doc("system", "instructions/10-core", "always", "the harness's words"),
+    carlos,
+    doc("agent", "profiles/ana", "conditional", undefined, [
+      { service: "whatsapp", address: "5492610000001" },
+    ]),
+  ];
+  const standing = standingOf(docs);
+  assertStringIncludes(standing, "[instructions]\nLo de Leo se lo paso a dubiku.");
+  assertStringIncludes(standing, "[memories]\n- Lu en Córdoba.");
+  assertStringIncludes(standing, "[profiles/matias]\nNada sale a las 8");
+  assertEquals(standing.includes("playas"), false);
+  assertEquals(standing.includes("harness"), false);
+  assertEquals(standingOf([]), "");
+  assertEquals(aboutOf(docs, { service: "whatsapp", address: "5492612339930" }), [carlos]);
+  assertEquals(aboutOf(docs, { service: "slack", address: "5492612339930" }), []);
+  // the slice carries it, ahead of the lines
+  const slice = sliceOf([line("hola", 0)], "5491133", new Set(), SEAT, [], "UTC", NOW, [carlos]);
+  assertStringIncludes(
+    slice,
+    "About this room [profiles/carlos]:\nSe quejó de que no le responden.",
+  );
 });
 
 Deno.test("lightOf: a light in the mind's room, covering the room up to what the judge read", () => {

@@ -4652,6 +4652,8 @@ async function judging(
       config: AgentConfig;
       judged: () => number;
       thought: () => number;
+      asked: Parameters<ModelTransport>[0][];
+      docs: string;
     },
   ) => Promise<void>,
 ) {
@@ -4659,8 +4661,10 @@ async function judging(
   const log = await orgLog(dir);
   await log.upsertConnections([WA]);
   let judged = 0;
-  const decision: ModelTransport = () => {
+  const asked: Parameters<ModelTransport>[0][] = [];
+  const decision: ModelTransport = (params) => {
     judged++;
+    asked.push(params);
     return Promise.resolve(
       canned([{ kind: "assistant", text: `{"reason":"r","color":"${color}"}` }]),
     );
@@ -4673,7 +4677,15 @@ async function judging(
   };
   const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, decision };
   try {
-    await f({ log, ports, config, judged: () => judged, thought: calls });
+    await f({
+      log,
+      ports,
+      config,
+      judged: () => judged,
+      thought: calls,
+      asked,
+      docs: `${dir}/docs`,
+    });
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
@@ -4693,6 +4705,32 @@ Deno.test("decision: a green room is judged once and wakes the mind; its light i
     // the turn closed over the news: the next look judges nothing and has nothing to do
     assertEquals(await xi(config, ports), "ignore");
     assertEquals(judged(), 1);
+  });
+});
+
+Deno.test("decision: the judge reads the principal's word and the room's own profile, not another room's", async () => {
+  await judging("yellow", async ({ log, ports, config, asked, docs }) => {
+    await Deno.mkdir(`${docs}/agents/a1/profiles`, { recursive: true });
+    await Deno.writeTextFile(
+      `${docs}/agents/a1/instructions.md`,
+      "---\nkind: instruction\nload: always\n---\n- A Facu se le contesta al toque.\n",
+    );
+    const profile = (who: string, address: string, body: string) =>
+      Deno.writeTextFile(
+        `${docs}/agents/a1/profiles/${who}.md`,
+        `---\nkind: memory\ndescription: ${who}\nload: conditional\n` +
+          `conversations: [whatsapp:${address}]\n---\n${body}\n`,
+      );
+    await profile("facu", "5491133", "Facu, amigo de la facultad.");
+    await profile("ana", "5491144", "Ana, del gimnasio.");
+    await log.publish(lookedNow());
+    await log.publish(worldMsg("5491133", "¿y?"));
+    await xi(config, ports);
+    const system = JSON.stringify(asked[0].system);
+    assertStringIncludes(system, "A Facu se le contesta al toque.");
+    const room = String(asked[0].messages[0].content);
+    assertStringIncludes(room, "About this room [profiles/facu]:\nFacu, amigo de la facultad.");
+    assertEquals(room.includes("gimnasio"), false);
   });
 });
 
