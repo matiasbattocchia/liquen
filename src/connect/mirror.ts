@@ -669,8 +669,10 @@ async function ccParts(
       : same([{ type: "text", kind: "text", text: `\`[${w.unload}]\`` }]);
   }
   if (e.type === "alarm") {
-    // a reminder of the agent's own lines, handed back: what the turn after it acts on
-    const note = (e as AlarmEvent).parts[0]?.text ?? "";
+    // a reminder of the agent's own lines, handed back: what the turn after it acts on, in
+    // the words a person reads, without the doc it stands in
+    const said = (e.extra?.reminder as { said?: unknown } | undefined)?.said;
+    const note = typeof said === "string" ? said : (e as AlarmEvent).parts[0]?.text ?? "";
     return same([{ type: "text", kind: "text", text: `\`[${w.system}]\` ⏰ ${note}` }]);
   }
   if (e.type === "control") {
