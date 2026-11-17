@@ -45,37 +45,39 @@ Deno.test("sliceOf: the room's lines with the news set off, who spoke on our sid
   assertMatch(slice, /14:54 agent: hasta luego\n— new, to judge —\n.*14:59 Facu: nos hablamos$/);
 });
 
-Deno.test("sliceOf: a transcript speaks as its note's author, and a note without words says its kind", () => {
+Deno.test("sliceOf: a transcript speaks as the author it wears, and a note without words says its kind", () => {
+  const room = {
+    service: "whatsapp",
+    connection_address: "549110",
+    conversation: { address: "5491133", name: "Gasti", kind: "direct" },
+    sender: { address: "5491133", name: "Gasti" },
+  };
+  const ours = { agent: { id: "a1", session_id: "mind" } } as Partial<Event>;
   const audio = (over: Partial<Event>, external: string) =>
     line("", 3, {
       ...over,
-      envelope: {
-        service: "whatsapp",
-        connection_address: "549110",
-        conversation: { address: "5491133", name: "Gasti", kind: "direct" },
-        sender: { address: "5491133", name: "Gasti" },
-        external_id: external,
-      },
+      envelope: { ...room, external_id: external },
       parts: [{
         type: "file",
         kind: "audio",
         file: { uri: "storage://media/a", mime_type: "audio/ogg" },
       }],
     } as Partial<Event>);
-  const words = (external: string, text: string) =>
+  // the transcriber's row: the note's author, a wire id of its own
+  const words = (over: Partial<Event>, external: string, text: string) =>
     line(text, 1, {
-      envelope: {
-        service: "whatsapp",
-        connection_address: "549110",
-        conversation: { address: "5491133", name: "Gasti", kind: "direct" },
-      },
+      ...over,
+      envelope: { ...room, external_id: `transcript:${external}` },
       payload: { action: "add", ref_external_id: external },
       parts: [{ type: "text", kind: "transcript", text }],
     } as Partial<Event>);
-  const mine = audio({ agent: { id: "a1", session_id: "mind" } } as Partial<Event>, "w1");
-  const theirs = audio({}, "w2");
   const slice = sliceOf(
-    [mine, theirs, words("w1", "organizo el domingo"), words("w2", "dale, en lo de Lílian")],
+    [
+      audio(ours, "w1"),
+      audio({}, "w2"),
+      words(ours, "w1", "organizo el domingo"),
+      words({}, "w2", "dale, en lo de Lílian"),
+    ],
     "5491133",
     new Set(),
     SEAT,

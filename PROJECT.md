@@ -7346,8 +7346,8 @@ on words for a note already looked at never asked whose note it was. Each reader
 who spoke had to find the note first, and one that did not was a bug. So the transcriber
 now copies the note's `agent` and `sender` onto the transcript, and every reader asks the
 row. It stays an inbound row: its wire id (`transcript:<note id>`) keeps it from ever being
-an offer (`offerOf`), and fan-in's guard skips only rows with an agent and no wire id. The
-judge's slice still finds a row's author through its note when the row names none.
+an offer (`offerOf`), and fan-in's guard skips only rows with an agent and no wire id. A
+transcript stored before carries no author and reads as nobody's: legacy stays legacy.
 
 new runs it from its next start: `decision.enabled: true`, `digestMinutes: 60`,
 `engagedMinutes: 10` in its `config.yaml`. vibes and turtle keep it off.
