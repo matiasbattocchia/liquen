@@ -117,16 +117,19 @@ async function transcribe(
   const parts = await heard(deps, audio.file.uri) ??
     await partsOf(deps.storage, await hear(deps, command, audio.file.uri));
   if (!parts) return; // a silent clip, or bytes gone: no words to add
-  const { service, connection_address, conversation, external_id } = e.envelope;
+  const { service, connection_address, conversation, external_id, sender } = e.envelope;
   await deps.publish({
     ts: now(),
     type: "message",
-    // no sender and no agent: the harness derived it — which is also what keeps it off the
-    // wire (dispatch wants `agent` + no external_id) and out of fan-in's absorb guard (§4)
+    // the note's author, as the note names them: the words are that note's, so every reader
+    // that asks who spoke asks the row itself. The wire id of its own keeps it an inbound
+    // row: never an offer, so no dispatcher takes it, and fan-in carries it as any line (§4)
+    ...(e.agent ? { agent: e.agent } : {}),
     envelope: {
       service,
       connection_address,
       conversation,
+      ...(sender ? { sender } : {}),
       external_id: `transcript:${external_id}`,
     },
     payload: { action: "add", ref_external_id: external_id },

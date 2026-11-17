@@ -67,7 +67,7 @@ import {
   TYPING_FRESH_MS,
   TYPING_HOLD_MS,
 } from "./config.ts";
-import { aboutOf, judge, lightOf, noteOf, sliceOf, standingOf } from "./judge.ts";
+import { aboutOf, judge, lightOf, sliceOf, standingOf } from "./judge.ts";
 import {
   cardNames,
   type Describe,
@@ -387,7 +387,7 @@ function attention(
   const lit = wake.decision?.enabled ? colorsOf(events, lights) : undefined;
   for (const conv of new Set(told.map((e) => e.envelope.conversation.address))) {
     const here = told.filter((e) =>
-      e.envelope.conversation.address === conv && !ownComplex(noteOf(e, events) ?? e, session)
+      e.envelope.conversation.address === conv && !ownComplex(e, session)
     );
     if (here.length === 0) continue;
     if (lit && here.some((e) => lit.get(e.id) === "green")) return "think";
@@ -414,7 +414,7 @@ function attention(
   // message on the second chance when the first one was never usable. So the words inherit
   // what the note could not use. A note still unread needs none of this: its words are in
   // the same pile it is, and the digest reads the two together.
-  if (news.some((e) => lateWords(e, events, looked))) return "think";
+  if (news.some((e) => lateWords(e, events, looked, session))) return "think";
   // a MARK — a reaction, a deletion, a room's change — is owed no answer: it rides along
   // when words make the digest due, and alone it never does. Nor does news the judge lit
   // red: it is read when something else opens a turn, and counts toward no pile
@@ -478,15 +478,12 @@ export function judgeable(
   );
   if (wakes) return [];
   const lit = colorsOf(events, lights);
-  // the principal's own words are no news to sort, their voice notes' included: nothing in
-  // them waits on the principal, and the judge reads them with the room anyway
-  const theirs = (e: Event) => {
-    const note = noteOf(e, events);
-    return ownComplex(note ?? e, session);
-  };
+  // the principal's own words are no news to sort, their voice notes' included (a transcript
+  // carries its note's author): nothing in them waits on the principal, and the judge reads
+  // them with the room anyway
   const open = news.filter((e) =>
     e.type === "message" && (spoken(e) || words(e) !== undefined) && !lit.has(e.id) &&
-    !theirs(e)
+    !ownComplex(e, session)
   );
   const rooms = new Map<string, Event[]>();
   for (const e of open) {
@@ -530,10 +527,13 @@ function transcribes(x: Event, note: Event): boolean {
 
 /** A transcript whose note is already BEHIND the last look — the half of rung-inheritance
  *  that wakes (the other half, not double-counting, lives in `digestDue`). A note the window
- *  no longer holds is older than everything in it, so it is behind any look that happened. */
-function lateWords(e: Event, events: Event[], looked: number): boolean {
+ *  no longer holds is older than everything in it, so it is behind any look that happened.
+ *  Words for a note our side spoke carry our side's stamp (the transcript wears its note's
+ *  author), and never wake: the note asked nothing of the agent, so its words do not either. */
+function lateWords(e: Event, events: Event[], looked: number, session: Session): boolean {
   const w = words(e);
   if (!w || looked === -Infinity) return false; // never looked ⇒ nothing is behind the look
+  if (ownComplex(e, session)) return false;
   const note = events.find((n) => n.envelope.external_id === w.ref);
   return note === undefined || Date.parse(note.ts) < looked;
 }
@@ -1899,9 +1899,9 @@ function spoken(e: MessageEvent): boolean {
  *  that acknowledges it, and nobody is ever going to type into that room again; counting
  *  words alone left those rooms standing for the whole uptime, so the block filled with
  *  conversations that were over. `add` is not itself the fact: a voice note's transcript
- *  rides the same action and carries no sender (so it reads as our side), and closing a
- *  room because THEY sent an audio is the silent version of the same bug — the part has to
- *  BE the reaction. `remove` takes an acknowledgment back and answers nothing. */
+ *  rides the same action, and closing a room because THEY sent an audio is the silent
+ *  version of the same bug — the part has to BE the reaction. `remove` takes an
+ *  acknowledgment back and answers nothing. */
 function acked(e: MessageEvent): boolean {
   return e.payload?.action === "add" &&
     (e.parts ?? []).some((p) => p.type === "data" && p.kind === "reaction");

@@ -101,8 +101,22 @@ Deno.test("a voice note gets a transcript add-event", async () => {
     assertEquals(tr.payload?.ref_external_id, "wa:note1"); // → the audio message
     assertEquals(tr.envelope.external_id, "transcript:wa:note1"); // deterministic: exactly-once
     assertEquals(tr.envelope.conversation.address, note.envelope.conversation.address);
-    assertEquals(tr.envelope.sender, undefined); // nobody spoke — the harness derived it
-    assertEquals(tr.agent, undefined); // …which also keeps it off dispatch's predicate (§4)
+    // the note's author speaks the words: sol, and no member of ours
+    assertEquals(tr.envelope.sender, { address: "5495", name: "sol" });
+    assertEquals(tr.agent, undefined);
+  });
+});
+
+Deno.test("the principal's own note: its words carry their stamp, and stay an inbound row", async () => {
+  await withTranscriber("wc -c > /dev/null && echo 'organizo el domingo'", async (t) => {
+    const mine = voiceNote(t.media, { external_id: "wa:mine" });
+    await t.publish({ ...mine, agent: { id: "matias" } });
+    await t.waitFor(async () => (await t.transcripts()).length === 1);
+    const [tr] = await t.transcripts();
+    assertEquals(tr.agent, { id: "matias" });
+    // a wire id of its own: never an offer, so no dispatcher sends it (`offerOf`)
+    assertEquals(tr.envelope.external_id, "transcript:wa:mine");
+    assertEquals(tr.status, undefined);
   });
 });
 
