@@ -75,6 +75,16 @@ Deno.test("seed installs the cascade; list inlines the always-layers and indexes
       }))!,
       "archived",
     );
+    // …and so is the decision model's: read by name when a room is judged (judge.ts)
+    assertEquals(byRef.has("system/decision"), false);
+    assertStringIncludes(
+      (await openFileDocs(root).read({ agent: "alter" }, {
+        scope: "system",
+        kind: "instruction",
+        name: "decision",
+      }))!,
+      "green",
+    );
     // the agent doc is the role alone: who and where is the env line (§5)
     assertStringIncludes(byRef.get("agent/instructions")!.body!, "What this agent is for");
     assertEquals(

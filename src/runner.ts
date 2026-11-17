@@ -110,6 +110,8 @@ export function configOf(row: AgentRow, org: OrgConfig, sessionId: string): Agen
     digestAfterMessages: s.digestAfterMessages,
     digestMinutes: s.digestMinutes,
     sleepHours: s.sleepHours, // null is "never sleeps" (Wake, §2)
+    // the decision model (§2): org-wide, and only the mind's ladder reads it
+    decision: org.decision,
     // the media kinds a processor makes readable — org-wide, one fact for every agent (§5)
     processors: Object.entries(org.processors).filter(([, cmd]) => !!cmd).map(([kind]) => kind),
     // the window (§5): what the agent holds in view is its work's shape
@@ -148,6 +150,8 @@ export function runnerFor(
       ...(host.history ? { history: scoped(host.log, host.history(agentId)) } : {}),
       docs: host.docs,
       transport: thinkingThrough({ warmth }, provider, host.transport(agentId)),
+      // the judge spends through the same meter, past the keeper (§2)
+      ...(sessionId === MIND ? { decision: host.transport(agentId) } : {}),
       ...exec,
       ...(box ? { files: box.files, ambient: box.ambient } : {}),
       ...(box?.bins ? { bins: box.bins } : {}),

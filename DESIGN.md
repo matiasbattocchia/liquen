@@ -156,15 +156,38 @@ decide(window) →
     news where someone is WRITING (`status.typing`), younger than  → held (the rest of the
       `TYPING_HOLD_MS`                                                thought is coming)
     a summons — the mind alias, or a local room                    → think (never waits)
+    a room the decision model lit green (`decision.enabled`)       → think (it cannot wait)
     an engaged conversation — it HOLDS THE FLOOR: our complex's    → think (you don't drop
-      last word there is the agent's, and it is recent               out mid-conversation)
+      last word there is the agent's, and it is recent;               out mid-conversation)
+      with the model on, only a room no light covers yet
     asleep (`sleepHours`)                                          → ignore (the world waits)
     a transcript for a note already LOOKED at                      → think (the words are
                                                                       that note, arriving)
     `digestAfterMessages` unread, across the whole world           → think (check early)
     `digestMinutes` since the agent last LOOKED                    → think (check the phone)
+      (news lit red counts toward neither)
   else                                                             → ignore (quiescence)
 ```
+
+**The decision model** (`decision.enabled`, `decision.model`, `decision.effort`) is a cheap
+call that sorts the world before the ladder weighs it. Under the lease, before `decide`, xi
+judges each world room whose words no light covers yet (`judgeable`), one call per room
+(`judge.ts`). Each call reads the room's last lines with the news set off, who on our side
+spoke last there, and the day's calendar, under `system/decision.md`. It answers with a
+reason and a color, and the answer is a `light` row in the mind's room. Its
+`extra.consumed` is the room's last row the judge read, and it covers the room up to there:
+**green** wakes the mind now, **yellow** waits for the next look, and **red** neither makes
+a digest due nor counts toward one, read whenever something else opens a turn. The floor
+is something the judge reads, so a room whose news is all lit is not woken for by
+engagement; a room the judge has not lit, because the call failed or has not run, falls
+back to the engaged rung, and with the model off the ladder is as it stands above.
+Nothing is judged at night, for a named session, or when a summons, an alarm or an update
+already wakes the mind, since that turn reads every room. Lights are no news and no input:
+xi sets them aside from the window before any rule reads it, so no positional rule,
+render or tool meets one, and `decide` reads them apart. The judge spends through the
+agent's meter (`kind: decision`) on the agent's own provider, past the keeper, whose ping
+a call of another kind would stand down. With the model on, the digest can be long (an
+org sets `digestMinutes` itself): green carries what a short one was there to catch.
 
 **Attention**: the baseline is that every message deserves a reaction, and the ladder above
 is what cools that down — an agent sitting in busy group channels would otherwise spend a
@@ -242,9 +265,9 @@ owed in the log, and main's **tick** — the clock as a poke source, a trigger-l
 a metronome — re-asks the same question until it comes due. The tick is a constant (60s),
 not a knob: it is the RESOLUTION of the intervals above, not one of them, and raising it
 would only make every interval in the catalog mean "give or take a tick". The four knobs
-that ARE the ladder live in the catalog's `agent` section (§9), per-agent overridable; the
-whole policy stays a pure derivation over one window, so a DB-tier `decide` can say the same
-thing.
+that ARE the ladder live in the catalog's `agent` section (§9), per-agent overridable, and
+the decision model in its own org-wide `decision` section; the whole policy stays a pure
+derivation over one window and its lights, so a DB-tier `decide` can say the same thing.
 
 Before any of that runs, a world trigger is **debounced**. People type the way they talk —
 three lines two seconds apart are one thing said — so main arms a `debounceMs` (5s) timer
@@ -824,6 +847,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `delta` | main (presence, §9): the mind has started a kind of work | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
 | `anchor` | nu, with a step's first row, when the state moved since the last (§5) | `mid_conv_system` where its step read it: the sections that moved; crosses to no surface | ignore | parts(text, kind anchor: `now:` and the ambient lines) · payload{turn_id} |
 | `prefix` | nu, with a step's first row, when the live system prefix differs from the last since the checkpoint (§5) | the first since the checkpoint is the request's `system`; each later one a `mid_conv_system` notice where its step read it, the sections that changed; crosses to no surface | ignore | parts(data, kind prefix: {sections: [{key, text, doc?}]}) · payload{turn_id} |
+| `light` | xi, the decision model's judgment of one room (§2), in the mind's room with no `turn_id` | never drawn: xi sets it aside from the window, and only `decide` reads it | ignore | parts(data, kind light: {color, reason, model, room}) · extra{consumed} — the room's last row the judge read |
 
 - **mu emits 3**: `message` (say) + `tool_use` + `thinking`. Everything else is world + runtime.
 - **Only inbound types: `message`, `control`.** Open-set holds: unknown → ignore, safe to add.
@@ -4137,54 +4161,24 @@ HTTP) · **`install.sh` on macOS**, and a CI job that runs it · **checks on a l
 the account alone, whether the org hears its own removal from a group; Slack: which leave
 and archive events reach the bot) · **compaction's refinements** (the principal's
 corrections kept verbatim, a stale checkpoint's age, each denial kept with its draft and
-reason) · **model routing** (a decision model and a second model family, below) · **wire
+reason) · **model routing** (the decision model's other questions and a second model
+family, below) · **wire
 facts that land late** (Teams' kind lookup retried, an `external_id` for conversations) ·
 **a script's call made whole** (the door writes the call's row before it answers, and main
 answers at boot any it finds unanswered, so a crash between the answer and the row leaves
 no sent message without its call; worth it once scripts see real use).
 
-- **A decision model for the questions with known answers**: wake now or wait for the
-  digest, act or stay silent, which tier drafts, which contact a name means. A decision
-  model answers each in one pass, at a fraction of a think. Haiku 5.5 answers through
-  structured output; Jev, from TypeSafe AI, is known so far only through vendor claims,
-  and the shadow log is where the two can be compared. The LLM still writes every draft
-  and every note. By value:
-  - **Wake or not, as a traffic light**: once the debounce settles, each room with news
-    gets one call. It reads the burst, the room's last lines, who holds the floor, today's
-    agenda and the principal's standing word about people and rooms, and it answers with
-    a one-line reason and a light:
-    - **green** wakes the agent now;
-    - **yellow** waits for the next wake or the digest, and counts toward
-      `digestAfterMessages`;
-    - **red** never makes a digest due and is never counted. It is read whenever something
-      else wakes the agent.
-
-    A summons is never judged, and the night holds over every light. The prefix holds
-    what changes least (the instructions, then the principal's word, then the agenda),
-    and the room's lines follow the cache mark.
-  - **Engagement is a signal**: with the model on, holding the floor is something the call
-    reads, not a rung of the ladder. A question put to the agent where it holds the floor
-    is green; "nos hablamos" after its own "hasta luego" is red. With the model off, the
-    engaged rung of §2 decides, on `engagedMinutes`. Once the lights act, the defaults
-    become `digestMinutes: 60` and `engagedMinutes: 10`: green carries what a short digest
-    is there to catch, and the hour is where the spend falls.
-  - **A verdict is an event**, of a type of its own, in both phases. main writes it in the
-    mind room with no `turn_id`, so nothing counts it as the agent's voice. Its payload
-    holds the light, the reason, the model and the room it judged; `extra.consumed` names
-    the last event it read there, and the next call for that room starts past it. Its
-    spend meters in `usage` under a kind of its own. In shadow it is inert at every
-    reader: xi's class gate passes over it, render draws nothing, `search` never returns
-    it, and `decide` skips it in every positional rule. That last one is the hazard: a
-    verdict landing behind a trailing `error` would end the idle that error holds, and
-    the failing think would loop. Live, a green verdict passes the gate, so its arrival
-    is the wake, and `decide` reads the latest verdict for the news past the horizon.
+- **The decision model's other questions.** Wake or wait is answered (§2, the traffic
+  light); act or stay silent, which tier drafts, and which contact a name means are the
+  same shape, one pass at a fraction of a think, and the principal's approvals are labels
+  already on file for them. The LLM still writes every draft and every note. What the
+  light leaves for later:
+  - **The principal's standing word** about people and rooms in the judge's prompt,
+    ahead of the room's lines, where the cache keeps it.
   - **The agenda first, with no model**: a room named in today's agenda counts as engaged
-    for a few hours around its time. The model takes the long tail ("estoy abajo", a
-    delivery at the door).
-  - **Shadow before it acts**: each verdict is set beside what the next think did with
-    that burst (a send, a reply, or `<|SILENCE|>`), which shows what an hour-long digest
-    would have answered late. The principal's approvals are labels already on file for
-    the other questions.
+    for a few hours around its time, and the model takes the long tail.
+  - **Jev**, from TypeSafe AI, a decision model known so far only through vendor claims:
+    the lights on file are the bursts to replay it on beside Haiku.
 - **A second model family through Chat Completions.** DeepSeek V4-Pro runs an agent like
   matias for about a tenth of Opus 5.5, priced on a real week, and trails it by 5 to 20
   points on the benchmarks the two share. Chat Completions is also what OpenRouter, Kimi,

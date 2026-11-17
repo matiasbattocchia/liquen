@@ -46,10 +46,11 @@ Deno.test("configOf: the row's identity and floor, its own settings over the org
     rules: org.shared.agents.rules,
     since: "2026-09-25T00:00:00.000Z",
     timezone: "Asia/Tokyo",
-    engagedMinutes: 15,
+    engagedMinutes: 10,
     digestAfterMessages: 25,
     digestMinutes: 7, // the org's, since ana sets none
     sleepHours: null, // a value: never sleeps
+    decision: { enabled: false, model: "claude-haiku-5-5", effort: "low" }, // the org's
     processors: ["audio"],
     compactAt: 50_000,
     keepRecent: 20_000,

@@ -206,6 +206,32 @@ Deno.test("pages.days: 30 unless said, and a positive whole number", async () =>
   });
 });
 
+Deno.test("decision: off unless said, on Haiku at low effort, and checked", async () => {
+  await withDir(async (root) => {
+    assertEquals((await readConfig(root)).decision, {
+      enabled: false,
+      model: "claude-haiku-5-5",
+      effort: "low",
+    });
+    await Deno.writeTextFile(
+      `${root}/config.yaml`,
+      JSON.stringify({ decision: { enabled: true, effort: null } }),
+    );
+    assertEquals((await readConfig(root)).decision, {
+      enabled: true,
+      model: "claude-haiku-5-5",
+      effort: null,
+    });
+    const refused = async (decision: unknown, says: string) => {
+      await Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ decision }));
+      await assertRejects(() => readConfig(root), Error, says);
+    };
+    await refused({ enabled: "yes" }, "decision.enabled must be true or false");
+    await refused({ effort: "huge" }, 'decision.effort: unknown effort "huge"');
+    await refused({ shadow: true }, 'unknown key "decision.shadow"');
+  });
+});
+
 Deno.test("a connector reads its subsection over its defaults; nothing is written", async () => {
   await withDir(async (root) => {
     await Deno.writeTextFile(

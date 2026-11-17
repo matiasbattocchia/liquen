@@ -402,7 +402,13 @@ export async function start(
   // prepares where its shells run
   const ground = async (row: AgentRow) => {
     const { agentId } = row;
-    checkProvider({ ...configFor(row, MIND), provider: providerFor(agentId) });
+    const config = configFor(row, MIND);
+    checkProvider({ ...config, provider: providerFor(agentId) });
+    // the judge rides the agent's provider, so its model and effort must be that provider's
+    if (config.decision?.enabled) {
+      const { model, effort } = config.decision;
+      checkProvider({ agentId, provider: providerFor(agentId), model, effort });
+    }
     await enlist(agentId);
     await seedAgent(docs.bed, agentId);
     await ensureUser(dir, agentId);
@@ -883,6 +889,7 @@ export async function start(
         ...(retryDelaysMs ? { retryDelaysMs } : {}),
       };
       r.ports.transport = thinkingThrough(r, providerFor(agentId), stock.get(agentId)!);
+      if (r.ports.decision) r.ports.decision = stock.get(agentId)!;
       const key = sessionAddress(agentId, r.config.sessionId);
       const t = tunes.get(key);
       if (!t) continue;

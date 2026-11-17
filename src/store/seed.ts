@@ -156,6 +156,7 @@ const SKILL_INSTRUCTIONS = [
 const SYSTEM_DOCS = [
   ...SKILL_INSTRUCTIONS.map((skill) => `instructions/${skill}`),
   "compaction",
+  "decision",
   ...TOOL_DOCS.map((tool) => `tools/${tool}`),
   "skills/workflows",
   "skills/transcribe-audio",

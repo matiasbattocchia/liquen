@@ -50,6 +50,7 @@ import type {
   Draft,
   Event,
   Json,
+  LightEvent,
   MessageEvent,
   Part,
   PermissionRequestEvent,
@@ -4613,4 +4614,124 @@ Deno.test("a tool's attachment outside the agent's ground is refused, and the re
   } finally {
     await Deno.remove(ground, { recursive: true });
   }
+});
+
+/* ── the decision model (§2): a room judged once, its light deciding the wake ── */
+
+/** A line in a world room, the way a wire lands it. */
+function worldMsg(room: string, text: string): Draft<MessageEvent> {
+  return {
+    ts: new Date().toISOString(),
+    type: "message",
+    envelope: {
+      service: "whatsapp",
+      connection_address: "5491100000000",
+      conversation: { address: room, name: room, kind: "direct" },
+      sender: { address: room, name: "Facu" },
+    },
+    parts: [{ type: "text", kind: "text", text }],
+  };
+}
+
+/** The agent's last look, a minute ago: a closing in its own room, so the digest is not due. */
+function lookedNow(): Draft<MessageEvent> {
+  return {
+    ...principalMsg("<|SILENCE|>"),
+    agent: { id: "a1", session_id: "mind" },
+    payload: { turn_id: "T0" },
+    extra: { silence: true },
+  };
+}
+
+async function judging(
+  color: string,
+  f: (
+    r: {
+      log: Log;
+      ports: XiPorts;
+      config: AgentConfig;
+      judged: () => number;
+      thought: () => number;
+    },
+  ) => Promise<void>,
+) {
+  const dir = await Deno.makeTempDir();
+  const log = await orgLog(dir);
+  await log.upsertConnections([WA]);
+  let judged = 0;
+  const decision: ModelTransport = () => {
+    judged++;
+    return Promise.resolve(
+      canned([{ kind: "assistant", text: `{"reason":"r","color":"${color}"}` }]),
+    );
+  };
+  const { transport, calls } = scripted([]);
+  const config: AgentConfig = {
+    ...CONFIG,
+    digestAfterMessages: 25,
+    decision: { enabled: true, model: "claude-haiku-5-5", effort: "low" },
+  };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, decision };
+  try {
+    await f({ log, ports, config, judged: () => judged, thought: calls });
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+Deno.test("decision: a green room is judged once and wakes the mind; its light is never news", async () => {
+  await judging("green", async ({ log, ports, config, judged, thought }) => {
+    await log.publish(lookedNow());
+    await log.publish(worldMsg("5491133", "estoy abajo"));
+    assertEquals(await xi(config, ports), "think");
+    assertEquals(judged(), 1);
+    assertEquals(thought(), 1);
+    const lights = await log.read({ types: ["light"] });
+    assertEquals(lights.length, 1);
+    assertEquals((lights[0] as LightEvent).parts[0].data.color, "green");
+    // the turn closed over the news: the next look judges nothing and has nothing to do
+    assertEquals(await xi(config, ports), "ignore");
+    assertEquals(judged(), 1);
+  });
+});
+
+Deno.test("decision: a red room is judged once, and the mind stays asleep on it", async () => {
+  await judging("red", async ({ log, ports, config, judged, thought }) => {
+    await log.publish(lookedNow());
+    await log.publish(worldMsg("5491133", "nos hablamos"));
+    assertEquals(await xi(config, ports), "ignore");
+    assertEquals(await xi(config, ports), "ignore");
+    assertEquals(judged(), 1); // the light covers the room: no second call
+    assertEquals(thought(), 0);
+    assertEquals((await log.read({ types: ["light"] })).length, 1);
+  });
+});
+
+Deno.test("decision: a light behind a failed turn keeps the idle — the failure is still the window's last word", async () => {
+  await judging("green", async ({ log, ports, config, judged, thought }) => {
+    const news = await log.publish(worldMsg("5491133", "estoy abajo"));
+    await log.publish({
+      ts: new Date().toISOString(),
+      type: "error",
+      agent: { id: "a1", session_id: "mind" },
+      envelope: principalMsg("").envelope,
+      parts: [{ type: "data", kind: "error", data: { error: "overloaded" } }],
+    } as Draft<Event>);
+    await log.publish({
+      ts: new Date().toISOString(),
+      type: "light",
+      agent: { id: "a1", session_id: "mind" },
+      envelope: principalMsg("").envelope,
+      parts: [{
+        type: "data",
+        kind: "light",
+        data: { color: "green", reason: "r", model: "m", room: "5491133" },
+      }],
+      extra: { consumed: news!.id },
+    } as Draft<Event>);
+    assertEquals(await xi(config, ports), "ignore");
+    assertEquals(judged(), 0);
+    assertEquals(thought(), 0);
+  });
 });
