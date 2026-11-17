@@ -381,6 +381,28 @@ cases("a file the agent attaches is kept in the object store", async (shell, pla
   }
 });
 
+cases("a folder is read whole, its dot-named entries left out", async (shell, place) => {
+  const dataDir = await Deno.makeTempDir();
+  try {
+    await run(shell, {
+      command: "mkdir -p app/lib app/.git && echo '<title>x</title>' > app/index.html && " +
+        "echo 'draw()' > app/lib/chart.js && echo s > app/.env && echo r > app/.git/HEAD",
+    });
+    const files = gatewayFiles(place.gateway, {
+      home: place.workspace,
+      storage: fileStorage(dataDir),
+    });
+    const folder = await files.folder("app", { files: 10, bytes: 1024 });
+    assertEquals([folder.root, folder.path], ["home", "app"]);
+    assertEquals([...folder.files.keys()], ["index.html", "lib/chart.js"]);
+    assertEquals(new TextDecoder().decode(folder.files.get("lib/chart.js")), "draw()\n");
+    await assertRejects(() => files.folder("app", { files: 1, bytes: 1024 }), Error, "more than 1");
+    await assertRejects(() => files.folder(".", { files: 10, bytes: 1024 }), Error, "not either");
+  } finally {
+    await Deno.remove(dataDir, { recursive: true });
+  }
+});
+
 /** A gateway that counts what reaches it, and a clock the case moves by hand. */
 function counted() {
   const inner = localGateway();

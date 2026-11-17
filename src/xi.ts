@@ -86,6 +86,7 @@ import { roomOnly, roomPart } from "./room.ts";
 import { type ToolShape, wordedAll } from "./tooldoc.ts";
 import { bounded } from "./bounds.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
+import type { PagesPort } from "./exec/publish.ts";
 import type { ConversationRow } from "./store/connections.ts";
 import { momentOf } from "./moment.ts";
 import { calendarEntries, dayOf, daySection, docEntries, docName, nextDay } from "./agenda.ts";
@@ -1099,6 +1100,9 @@ export interface XiPorts {
    *  `cause`, who asked for the work (`causeOf`), is what presence reads (§9). */
   onDecision?: (verdict: Decision, cursor: string | undefined, cause?: Cause) => void;
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
+  /** The pages the agent reaches (§9): the anchor's `pages` section, and what `cancel`
+   *  takes down by folder or link. Absent: no pages served. */
+  pages?: PagesPort;
   bins?: () => Promise<BinDir[]>; // the org folder's programs on PATH, for the prefix (§5)
 }
 
@@ -1358,6 +1362,7 @@ async function think(
       config.timezone,
     ),
     ...(await hushedOn(events, config.since, ports.log)),
+    ...(ports.pages ? await ports.pages.standing() : []),
   ];
   // ONE turn per invocation, and `decide` said which: a think, or — nothing owed and the
   // window over budget — the checkpoint, whose summary's insert wakes the next look (§5). A
@@ -1534,6 +1539,7 @@ export async function attachmentsOf(
 /** Without a files port (a test), a reference has nowhere to resolve. */
 const NO_FILES: Files = {
   resolve: (ref) => Promise.reject(new Error(`${ref}: no files to attach here`)),
+  folder: (ref) => Promise.reject(new Error(`${ref}: no files here`)),
 };
 
 /** The anchor's standing lists (§5): what is still in the air — background jobs, surfaces
@@ -3320,9 +3326,12 @@ async function execute(
             `action delete and re ${id}`,
         );
       }
+      // a page the agent reaches, by its folder or its link, as the anchor lists it
+      const down = await ports.pages?.cancel(id);
+      if (down) return down;
       throw new Error(
-        `"${id}" is not an open ask or an unsent message — it was answered, lapsed or went ` +
-          "out, or the id is not one your window and lists name",
+        `"${id}" is not an open ask, an unsent message or a page — it was answered, lapsed ` +
+          "or went out, or the id is not one your window and lists name",
       );
     }
     const call = card.parts[0].data.call;

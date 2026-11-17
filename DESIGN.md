@@ -1324,22 +1324,27 @@ The 3×2 grid, each cell real and distinct:
   ticket's, never the link's. With the `agent` tool beside it, offered only where an
   agent's `tools` names it, one agent provisions another: the agent made with a member's
   email, then a sign-in for it sent to that member.
-  **A page is a folder an agent publishes for a WhatsApp conversation** (`src/pages.ts`,
-  the `page` tool in `src/exec/page.ts`), gated `ask` as a send is. Its files go through
-  the session's files port, so the agent publishes only what it could attach, and are
-  kept under `pages/<id>/` in the object store; its row is in the vault under
-  `page:<id>`, owned by the agent, for `pages.days`. Main serves it behind the edge, in
-  two steps. The door, `/pages/<id>`, admits a visitor whose login belongs to the page:
-  the conversation's own number in a direct chat, a seat on the group's roster as the
-  bridge reads it at that moment. The box, `/pages/<id>/<view>/`, serves the files under
+  **A page is a folder an agent publishes for WhatsApp conversations** (`src/pages.ts`,
+  the `publish` tool in `src/exec/publish.ts`), gated `ask` as a send is. The folder lies
+  below the agent's own or below `shared/`, and the session's files port reads it whole,
+  dot-named entries left out, so the agent publishes only what it could attach. A folder
+  is one page: publishing it again replaces its files under `pages/<id>/` in the object
+  store and keeps its link. Its row is in the vault under `page:<id>`, for `pages.days`
+  from the last publish, owned by the agent that published it last: its view vouches for
+  every conversation on the list, and a group's roster is read through it. Any agent that
+  reaches the folder publishes it again or takes it down with `cancel`, so a page in
+  `shared/` is every agent's, and the anchor's `pages` section lists the live pages each
+  agent reaches. Main serves a page behind the edge, in two steps. The door,
+  `/pages/<id>`, admits a visitor whose login belongs to the page: a direct chat's own
+  number, or a seat on a group's roster as the bridge reads it at that moment. The box, `/pages/<id>/<view>/`, serves the files under
   a view key signed for that page alone, and every file wears the headers that close it
   in: it loads only its own files (`default-src 'self'`) and runs in an origin of its own
   (`sandbox` without `allow-same-origin`), so it reaches neither other pages nor the
   login. The login is a cookie that names a phone, signed with the vault's `pages:sign`
-  key. A direct chat's link carries a token that logs its person in once, posted by a
-  button so a previewer that only fetches spends nothing. Anyone else types their number:
-  main checks it belongs before anything is sent, DMs a code from the page's account
-  through the bridge, with no line in the log, so no agent ever holds a code, and answers
+  key. Each direct chat's link carries a token of its own that logs its person in once,
+  posted by a button so a previewer that only fetches spends nothing. Anyone else types
+  their number: main checks it belongs before anything is sent, DMs a code from the
+  account of the conversation that admits it, through the bridge, with no line in the log, so no agent ever holds a code, and answers
   the same whether or not it sent one.
   **The two Slack doors (`liquen connect slack {app,user}`, `connect/slack/connect.ts`)**: the dashboard's
   "Install to Workspace" button IS an OAuth flow with Slack hosting the redirect, so a
@@ -1905,8 +1910,8 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   `git: <branch> · N uncommitted` when the cwd is a repo), and the **standing lists** — what
   is still in the air: surfaces that are down, background jobs, **today**, the wakes after
   it, open approvals (§9 — pending state, not history: the transcript already closed those
-  calls, so the only honest place for them is the block that restates the state), and the
-  **unanswered conversations**. **Today** and **tomorrow** are each day as a phone's agenda
+  calls, so the only honest place for them is the block that restates the state), the
+  **unanswered conversations**, and the live **pages** the agent reaches (§9). **Today** and **tomorrow** are each day as a phone's agenda
   shows it (`agenda.ts`): the calendar's events the log holds for the day, a series on each
   day its rule takes; each line of every doc the agent reads dated `@` that day, or
   repeating onto it by the `every` that follows its moment (read as the same RRULE a series

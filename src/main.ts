@@ -134,7 +134,7 @@ import { createMercadopagoSignIn } from "./connect/mercadopago/signin.ts";
 import { createTokenSignIn } from "./connect/token/signin.ts";
 import { connectSpec, connectTool } from "./exec/connect.ts";
 import { AGENT_SPEC, agentTool } from "./exec/agent.ts";
-import { PAGE_SPEC, pageTool } from "./exec/page.ts";
+import { pagesPort, PUBLISH_SPEC, publishTool } from "./exec/publish.ts";
 import { createPages, PAGE_SWEEP_MS, sweepPages } from "./pages.ts";
 import { pagesSocket } from "./edge.ts";
 import { bridgeSend } from "./connect/whatsapp/dispatch.ts";
@@ -307,7 +307,7 @@ export async function start(
         ...Object.values(DOC_TOOLS),
         { spec: connectSpec(Object.keys(flows)) },
         { spec: AGENT_SPEC },
-        { spec: PAGE_SPEC },
+        { spec: PUBLISH_SPEC },
       ],
       (name) => docs.read(ctx, { scope: "system", kind: "tool", name }),
     );
@@ -549,6 +549,10 @@ export async function start(
   const owedAt = (agentId: string) => `${dir}/run/${agentId}.keep.json`;
   // the runner (§4): one builder for the mind and every named session, over the store,
   // the row and these ports — the process's own part is the fan-outs and the transports
+  // a page's last day as its agent reads a date, in the org's zone
+  const pageDay = (ms: number) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: catalog()?.shared.timezone ?? undefined })
+      .format(ms);
   const host: Host = {
     log,
     docs,
@@ -570,10 +574,10 @@ export async function start(
       ...(root
         ? { agent: agentTool({ root, log, docs: docs.bed, up: (id) => reconcile(id) }) }
         : {}),
-      // a page is read from where the session's shell stands, for a room it can read
+      // a folder is read from where the session's shell stands, for rooms it can read
       ...(root
         ? {
-          page: pageTool({
+          publish: publishTool({
             agentId,
             log: scoped(log, policyOf(agentId, sessionId)),
             files: () => sandbox.forAgent(agentId).session(sessionId).files,
@@ -581,14 +585,17 @@ export async function start(
             storage,
             edge: () => org.edge,
             days: () => org.pages.days,
-            day: (ms) =>
-              new Intl.DateTimeFormat("en-CA", {
-                timeZone: catalog()?.shared.timezone ?? undefined,
-              }).format(ms),
+            day: pageDay,
           }),
         }
         : {}),
     }),
+    ...(root
+      ? {
+        pages: (agentId) =>
+          pagesPort({ agentId, creds, storage, edge: () => org.edge, day: pageDay }),
+      }
+      : {}),
     media,
     policy: policyOf,
     // the agent's history (§6): what `search` reads, from any of its sessions — the
@@ -968,21 +975,21 @@ export async function start(
         creds,
         storage,
         secure: () => org.edge.publicUrl?.startsWith("https://") ?? false,
-        roster: async (page) => {
+        roster: async (page, group) => {
           const members = rooms.whatsapp?.members;
           if (!members) throw new Error("whatsapp reads no roster");
           return (await members({
-            connection: page.connection,
+            connection: group.connection,
             agent: page.agentId,
-            conversation: page.conversation,
+            conversation: group.address,
           })).map((s) => s.address);
         },
-        send: async (page, phone, text) => {
+        send: async (from, phone, text) => {
           if (isDisabled(org, "whatsapp")) throw disabled("whatsapp");
           await bridgeSend(bridgeUrl(), bridgeToken)({
             id: crypto.randomUUID(),
             external_id: "",
-            organization_address: page.connection,
+            organization_address: from.connection,
             conversation_address: phone,
             content: { version: "1", type: "text", kind: "text", text },
             status: {},

@@ -164,7 +164,18 @@ export function gatewayFiles(
   { home, cwd, storage }: { home: string; cwd?: () => string; storage: Storage },
 ): Files {
   return groundFiles(
-    { real: (path) => Promise.resolve(path), read: (path) => gateway.read(path) },
+    {
+      real: (path) => Promise.resolve(path),
+      read: (path) => gateway.read(path),
+      async list(dir, most) {
+        const { stdout, code } = await gateway.exec(
+          `cd -- ${quote(dir)} && find . -mindepth 1 -name '.*' -prune -o -type f -print ` +
+            `| head -n ${most + 1}`,
+        );
+        if (code !== 0) throw new Deno.errors.NotFound(`${dir}: no such folder`);
+        return stdout.split("\n").filter(Boolean).map((p) => p.replace(/^\.\//, ""));
+      },
+    },
     { home, ...(cwd ? { cwd } : {}), roots: [home] },
     storage,
   );

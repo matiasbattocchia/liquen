@@ -351,14 +351,27 @@ export interface FileScope {
   home: string;
   cwd?: () => string;
   roots: string[];
+  /** The org's shared folder, where this ground has one: a folder below it is published
+   *  as every agent's. */
+  shared?: string;
 }
 
 /** The ground a files adapter reads: where a path really leads (links followed, where the
- *  ground has them; throws `NotFound` when nothing is there) and the bytes it holds, null
- *  when none. */
+ *  ground has them; throws `NotFound` when nothing is there), the bytes it holds, null
+ *  when none, and the files below a folder, by their paths from it, dot-named entries and
+ *  what lies in them left out, `most + 1` of them at most. */
 export interface FileGround {
   real(path: string): Promise<string>;
   read(path: string): Promise<Uint8Array | null>;
+  list(dir: string, most: number): Promise<string[]>;
+}
+
+/** A folder read whole (`Files.folder`): where it lies, as the agent's own (`home`) or the
+ *  org's shared one, its path from there, and its files' bytes by their paths from it. */
+export interface Folder {
+  root: "home" | "shared";
+  path: string;
+  files: Map<string, Uint8Array>;
 }
 
 /** A reference resolved (§9): the part it sends as, and, for a file of the agent's ground,
@@ -377,6 +390,9 @@ export interface Files {
   /** Throws when the reference does not exist (`NotFound`) or points outside what the
    *  agent may attach: the tool_result carries that back as the error it is. */
   resolve(ref: string): Promise<Attached>;
+  /** A folder below the agent's own or the shared one, never either root itself, read
+   *  whole within the caps. Throws when it is elsewhere, missing, or past a cap. */
+  folder(ref: string, most: { files: number; bytes: number }): Promise<Folder>;
 }
 
 /** The files port over a ground, under a scope: a kept object and a link pass through
@@ -417,7 +433,67 @@ export function groundFiles(ground: FileGround, scope: FileScope, storage: Stora
         named: root === scope.home ? rel : posix.join(posix.basename(root), rel),
       };
     },
+    async folder(ref, most) {
+      const asked = posix.resolve(scope.cwd?.() ?? scope.home, pathOf(ref));
+      const abs = await ground.real(asked).catch((err) => {
+        throw err instanceof Deno.errors.NotFound
+          ? new Deno.errors.NotFound(`${ref}: no such folder`)
+          : err;
+      });
+      const below = (root: string) => abs.startsWith(`${root}/`);
+      const root = below(scope.home)
+        ? scope.home
+        : scope.shared && below(scope.shared)
+        ? scope.shared
+        : null;
+      if (!root) {
+        throw new Error(
+          `${ref}: a folder below your own or below shared/, not either one itself`,
+        );
+      }
+      const paths = await ground.list(abs, most.files);
+      if (paths.length > most.files) {
+        throw new Error(`${ref} holds more than ${most.files} files`);
+      }
+      const files = new Map<string, Uint8Array>();
+      let total = 0;
+      for (const path of paths.sort()) {
+        // a link inside may lead anywhere: each file is judged by where it really is
+        const real = await ground.real(posix.join(abs, path));
+        if (!within(root, real)) throw new Error(`${ref}/${path}: leads outside ${ref}'s root`);
+        const bytes = await ground.read(real);
+        if (!bytes) continue;
+        total += bytes.length;
+        if (total > most.bytes) {
+          throw new Error(`${ref} holds more than ${most.bytes / 1024 / 1024} MB`);
+        }
+        files.set(path, bytes);
+      }
+      return {
+        root: root === scope.home ? "home" : "shared",
+        path: posix.relative(root, abs),
+        files,
+      };
+    },
   };
+}
+
+/** The files below a local folder, walked without following links into folders. */
+async function walk(dir: string, most: number): Promise<string[]> {
+  const out: string[] = [];
+  const go = async (rel: string): Promise<void> => {
+    for await (const e of Deno.readDir(rel ? `${dir}/${rel}` : dir)) {
+      if (out.length > most) return;
+      if (e.name.startsWith(".")) continue;
+      const path = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory) await go(path);
+      else if (e.isFile || (await Deno.stat(`${dir}/${path}`).catch(() => null))?.isFile) {
+        out.push(path);
+      }
+    }
+  };
+  await go("");
+  return out;
 }
 
 /** The local ground: this filesystem, symlinks followed. */
@@ -428,6 +504,7 @@ const localGround: FileGround = {
       if (err instanceof Deno.errors.NotFound) return null;
       throw err;
     }),
+  list: walk,
 };
 
 /** The local adapter: this filesystem, under a scope. */

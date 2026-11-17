@@ -156,6 +156,7 @@ export async function openLocalSandbox(
       home,
       cwd: shell.cwd,
       roots: [home, `${dir}/shared`, `${dir}/system`],
+      shared: `${dir}/shared`,
     }, storage);
   };
   return {
@@ -288,6 +289,10 @@ export function openCloudflareSandbox(
           const reading: Gateway = {
             ...gateway,
             read: (path) => lease.on() ? gateway.read(path) : Promise.resolve(null),
+            exec: (script, signal) =>
+              lease.on()
+                ? gateway.exec(script, signal)
+                : Promise.resolve({ stdout: "", stderr: "", code: 1 }),
           };
           const files = gatewayFiles(reading, { home: REMOTE_HOME, cwd: shell.cwd, storage });
           return {

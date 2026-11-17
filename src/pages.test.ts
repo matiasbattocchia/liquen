@@ -9,6 +9,7 @@ import {
   loginValue,
   type Page,
   pagesSecret,
+  type Party,
   readPage,
   sweepPages,
   VIEW_MS,
@@ -20,21 +21,28 @@ const BASE = "https://acme.example.com";
 const ANA = "5491100000001";
 const BRUNO = "5491100000002";
 const STRANGER = "5491100000009";
+const ANAS: Party = { address: ANA, connection: "5491199999999", kind: "direct" };
+const OPS: Party = {
+  address: "120363000000000001@g.us",
+  connection: "5491188888888",
+  kind: "group",
+  name: "Ops",
+};
 
 async function bed(opts: { roster?: () => Promise<string[]> } = {}) {
   const root = await Deno.makeTempDir();
   const creds = await openCredentials(`${root}/data`);
   const storage = fileStorage(`${root}/data`);
   let clock = Date.parse("2026-11-16T12:00:00Z");
-  const sent: { phone: string; text: string }[] = [];
+  const sent: { from: string; phone: string; text: string }[] = [];
   const said: string[] = [];
   const handler = createPages({
     creds,
     storage,
     secure: () => true,
     roster: opts.roster ?? (() => Promise.resolve([ANA, BRUNO])),
-    send: (_page, phone, text) => {
-      sent.push({ phone, text });
+    send: (from, phone, text) => {
+      sent.push({ from: from.connection, phone, text });
       return Promise.resolve();
     },
     say: (line) => said.push(line),
@@ -47,9 +55,9 @@ async function bed(opts: { roster?: () => Promise<string[]> } = {}) {
   const publish = async (page: Partial<Page> & { id: string }) => {
     const full: Page = {
       agentId: "",
-      connection: "5491199999999",
-      conversation: ANA,
-      kind: "direct",
+      folder: `shared/${page.id}`,
+      with: [ANAS],
+      tokens: {},
       title: "Plan",
       files: {
         "index.html": { mime: "text/html; charset=utf-8", size: 1 },
@@ -96,12 +104,12 @@ const cookieOf = (res: Response) => res.headers.get("set-cookie")?.split(";")[0]
 Deno.test("pages: a direct chat's link logs its person in once, by a button, and the box serves the files closed in", async () => {
   const b = await bed();
   try {
-    await b.publish({ id: "p1", token: "tok" });
+    await b.publish({ id: "p1", tokens: { [ANA]: "tok" } });
     const button = await b.ask("/pages/p1?t=tok");
     assertEquals(button.status, 200);
     assertStringIncludes(await button.text(), 'name="t" value="tok"');
     // the fetch spent nothing: the token is still there
-    assertEquals((await readPage(b.creds, "p1"))?.token, "tok");
+    assertEquals((await readPage(b.creds, "p1"))?.tokens, { [ANA]: "tok" });
 
     const enter = await b.post("/pages/p1", { t: "tok" });
     assertEquals(enter.status, 303);
@@ -111,7 +119,7 @@ Deno.test("pages: a direct chat's link logs its person in once, by a button, and
     assertStringIncludes(cookie, "Path=/pages");
     const box = enter.headers.get("location")!;
     assert(box.startsWith("/pages/p1/") && box.endsWith("/"));
-    assertEquals((await readPage(b.creds, "p1"))?.token, undefined);
+    assertEquals((await readPage(b.creds, "p1"))?.tokens, {});
 
     const index = await b.ask(box);
     assertEquals(index.status, 200);
@@ -160,12 +168,7 @@ Deno.test("pages: a view key opens one page for a while, and a forged or stale o
 Deno.test("pages: a group's member gets a code by DM, a stranger gets the same answer and nothing is sent", async () => {
   const b = await bed();
   try {
-    await b.publish({
-      id: "g1",
-      conversation: "120363000000000001@g.us",
-      kind: "group",
-      name: "Ops",
-    });
+    await b.publish({ id: "g1", with: [OPS] });
     const form = await b.ask("/pages/g1");
     assertEquals(form.status, 200);
     assertStringIncludes(await form.text(), "the people of Ops");
@@ -195,10 +198,30 @@ Deno.test("pages: a group's member gets a code by DM, a stranger gets the same a
   }
 });
 
+Deno.test("pages: a page for a chat and a group admits both, each code from the account of the conversation that admits the number", async () => {
+  const b = await bed({ roster: () => Promise.resolve([BRUNO]) });
+  try {
+    await b.publish({ id: "m1", with: [ANAS, OPS], tokens: { [ANA]: "tok" } });
+    assertStringIncludes(await (await b.ask("/pages/m1")).text(), "the people it was shared with");
+    await b.post("/pages/m1", { phone: ANA });
+    await b.post("/pages/m1", { phone: BRUNO });
+    await b.post("/pages/m1", { phone: STRANGER });
+    assertEquals(b.sent.map((s) => [s.phone, s.from]), [
+      [ANA, ANAS.connection],
+      [BRUNO, OPS.connection],
+    ]);
+    const enter = await b.post("/pages/m1", { t: "tok" });
+    assertStringIncludes(enter.headers.get("set-cookie")!, `${LOGIN_COOKIE}=${ANA}.`);
+    assertEquals((await b.post("/pages/m1", { t: "tok" })).status, 400);
+  } finally {
+    await b.close();
+  }
+});
+
 Deno.test("pages: a code takes so many tries, and a number gets one a minute and five an hour", async () => {
   const b = await bed();
   try {
-    await b.publish({ id: "g1", conversation: "120363000000000001@g.us", kind: "group" });
+    await b.publish({ id: "g1", with: [OPS] });
     await b.post("/pages/g1", { phone: BRUNO });
     await b.post("/pages/g1", { phone: BRUNO });
     assertEquals(b.sent.length, 1);
@@ -223,7 +246,7 @@ Deno.test("pages: a login opens a group's page only while its number is on the r
   let roster = [ANA, BRUNO];
   const b = await bed({ roster: () => Promise.resolve(roster) });
   try {
-    await b.publish({ id: "g1", conversation: "120363000000000001@g.us", kind: "group" });
+    await b.publish({ id: "g1", with: [OPS] });
     const secret = await pagesSecret(b.creds);
     const cookie = `${LOGIN_COOKIE}=${await loginValue(secret, BRUNO, b.now() + 3_600_000)}`;
     assertEquals((await b.ask("/pages/g1", { headers: { cookie } })).status, 303);
@@ -242,7 +265,7 @@ Deno.test("pages: a login opens a group's page only while its number is on the r
 Deno.test("pages: a roster that can't be read says to try again, and a page past its days is gone", async () => {
   const b = await bed({ roster: () => Promise.reject(new Error("bridge down")) });
   try {
-    await b.publish({ id: "g1", conversation: "120363000000000001@g.us", kind: "group" });
+    await b.publish({ id: "g1", with: [OPS] });
     const later = await b.post("/pages/g1", { phone: BRUNO });
     assertEquals(later.status, 503);
     assertEquals(b.sent.length, 0);

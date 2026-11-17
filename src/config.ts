@@ -61,13 +61,13 @@ export const DEFAULT_MODEL = "claude-sonnet-5";
 export const DEFAULT_MAX_TOKENS = 64_000; // streaming — room for thinking + tools + text
 // the default deployment's whole offer: the four built-ins plus the exec plane's bash.
 // A name added at runtime (an MCP server's tools) joins the offer by being listed here.
-export const DEFAULT_TOOLS = ["search", "cancel", "bash", "connect", "page"];
+export const DEFAULT_TOOLS = ["search", "cancel", "bash", "connect", "publish"];
 export const DEFAULT_RULES: Rule[] = [
   { tool: "send", service: "local", action: "allow" }, // a word to a peer stays in the org
   { tool: "send", action: "ask" }, // dispatch leaves the org, in the principal's name
   { tool: "contact", action: "ask" }, // writes the principal's own address book
   { tool: "connect", action: "ask" }, // hands out a sign-in to an account
-  { tool: "page", action: "ask" }, // shows the org's work to people outside it
+  { tool: "publish", action: "ask" }, // shows the org's work to people outside it
   { tool: "agent", action: "ask" }, // makes an agent, which runs and spends
   { tool: "*", action: "allow" },
 ];
@@ -530,8 +530,8 @@ const AGENT: Entry[] = [
       'call — "conversation" where it has peers and may open rooms with them, or an ' +
       'account on a wire whose rooms it may change, "contact" where an account keeps an ' +
       'address book the agent may write, and "agent" where it may make agents. "connect" ' +
-      "hands out sign-ins, its own principal's or a member's, and \"page\" publishes a " +
-      "folder for a WhatsApp conversation to open. With docs: database, read · " +
+      "hands out sign-ins, its own principal's or a member's, and \"publish\" makes a " +
+      "folder a page for WhatsApp conversations to open. With docs: database, read · " +
       "write · edit are offered whatever this says: they are the agent's one way to its docs",
   },
   {
@@ -623,8 +623,8 @@ const PAGES: Entry[] = [
   {
     key: "days",
     value: DEFAULT_PAGE_DAYS,
-    doc: "how long a page an agent publishes lives, in days from its publishing; the agent " +
-      "can take it down sooner",
+    doc: "how long a page an agent publishes lives, in days from its last publishing; the " +
+      "agent can take it down sooner",
   },
 ];
 
@@ -636,7 +636,7 @@ const SECTION_DOCS: Record<string, string> = {
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
   edge: "the org's one door — the address the world dials, the one port the org binds, " +
     "and the tunnel",
-  pages: "the pages agents publish for a conversation, served at <publicUrl>/pages/<id>",
+  pages: "the pages agents publish for WhatsApp conversations, served at <publicUrl>/pages/<id>",
   agents: "the roster: every key is a member — an agent, its folder and its unix user, or " +
     "a person alone (mind: false)",
   connections: "the connectors' knobs — a subsection per connector, validated by its owner",

@@ -3252,7 +3252,7 @@ Deno.test("cancel: a message of ours not yet out is withdrawn, never offered aga
     assertStringIncludes(results[2], "was taken back — it never went out");
     assertStringIncludes(
       results[3],
-      "not an open ask or an unsent message",
+      "not an open ask, an unsent message or a page",
     );
   } finally {
     await log.close();
