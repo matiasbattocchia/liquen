@@ -6825,7 +6825,7 @@ Where it differs from `CHANGES.md` as written:
 - A named session's attachment that tuned its model keeps the tune only until the agent
   is next reconciled, which puts the store's settings back.
 
-### Telegram: an account's own session, over MTProto (2026-11-13) — LANDED, not yet run live
+### Telegram: an account's own session, over MTProto (2026-11-13) — LANDED
 
 `src/connect/telegram/` connects a Telegram ACCOUNT, a person's or the org's, through
 mtcute (`jsr:@mtcute/deno`), the MTProto SDK that ships for Deno. The map of it is
@@ -7224,7 +7224,7 @@ Open:
 - `cancel` is gated as `cancel` is, so taking a page down asks nobody.
 - The mock dubiku deployed is still up on its public host.
 
-### Typing in: someone writing holds their conversation (2026-11-16) — LANDED, not yet run live
+### Typing in: someone writing holds their conversation (2026-11-16) — LANDED
 
 On new, Facu del Olmo answered matias's opening in three messages over three minutes. The
 first reached a digest turn, which stayed silent, and so did not interrupt him; the other
@@ -7256,7 +7256,7 @@ Open:
   window's floor shows no typing.
 - Typing out is recorded in DESIGN §13, and so is the conversation as the stamp's home.
 
-### Where matias's spend goes, and logs to see it (2026-11-17) — LANDED, not yet run live
+### Where matias's spend goes, and logs to see it (2026-11-17) — LANDED
 
 matias on Opus 5.5 cost $3.42 a day over 7 to 16 November: 791 calls, read off `usage` at
 the list prices. Half of it, $1.79 a day, is 55 calls that wrote the whole prefix again:
@@ -7285,12 +7285,15 @@ lines backwards from the file's end. What landed:
   diagnostics, `cache-diagnosis-2026-04-07`, on every request), a ping that stood down
   past its hour, and a ping left for the next run or taken up from the last.
 
+Run live on Haiku 5.5 through the transport and the keeper: the API takes `diagnostics`
+under the SDK's `anthropic-version` with the beta header, streamed and at `max_tokens: 0`
+alike; the same prefix twice read back with `diagnostics: null`, and a changed system
+prompt came back `system_changed` and was said as such.
+
 Open:
 
 - The two unexplained misses; the next one is named in the log.
 - The suspend lapses ask for a machine that stays awake while an org runs, or none at all.
-- Whether the API takes `diagnostics` under the SDK's `anthropic-version` with the beta
-  header has not been seen on a live request.
 
 ### What is open (2026-10-20)
 
