@@ -153,6 +153,8 @@ decide(window) →
   trailing harness `error` (the last event in the window)          → ignore (idle-after-error)
   unclosed chain (all uses resolved, no turn output after)         → think (the closing turn)
   unanswered news (non-self msgs beyond the last closing's CONSUMED horizon), down the LADDER:
+    news where someone is WRITING (`status.typing`), younger than  → held (the rest of the
+      `TYPING_HOLD_MS`                                                thought is coming)
     a summons — the mind alias, or a local room                    → think (never waits)
     an engaged conversation — it HOLDS THE FLOOR: our complex's    → think (you don't drop
       last word there is the agent's, and it is recent               out mid-conversation)
@@ -195,6 +197,14 @@ next check, and picks up after a long quiet at once. It checks early when
 `digestAfterMessages` are unread **across the whole world** — the count measures how much has
 arrived, not how much arrived in one room, and there is nothing to exclude from it: what the
 principal says never accumulates, an engaged conversation wakes before it piles, a silenced one is not news.
+A conversation someone is **writing** in holds its news on every rung, the summons and the
+floor included: the rest of the thought is on its way, as a burst's is while the debounce
+waits. The wire says who is writing (`status.typing`, §3), and the hold ends when they stop,
+when their stamp goes `TYPING_FRESH_MS` unrenewed, since a stop is not always said, or
+`TYPING_HOLD_MS` after the oldest news there, so an endless writer still gets an answer.
+The clock poke re-asks. It holds that conversation alone: news elsewhere still wakes the
+agent, and that turn's anchor lists who is writing where (`typing —`, §5), so it answers
+the rest and leaves the one still being written.
 Both weigh words: a reaction or a deletion is a **mark** nobody is owed an answer for, read
 when words make the check due and never making it due alone, and never counted unanswered.
 A room's change is not news at all, on any rung: a join, a rename, an archive, a call, a
@@ -676,6 +686,9 @@ one peripheral for both.
                     // is born `queued` (the store stamps it), and `queued` again is the
                     // sweeper's re-offer
     delivered_at? · read_at?   // scalars in a DM; {participant: ts} maps in groups
+    typing?         // {writer: ts}: when the wire last said each began, the latest overwriting;
+                    // the conversation's state, riding its newest row, one row per writer,
+                    // and gone when they stop (WhatsApp's chat states)
     deleted_at?     // a revoke stamps, never removes — content stays auditable
     attempts? · error? · error_code?   // the re-offer count; the last failure's text and class
   }
@@ -1940,6 +1953,13 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   DMs, a calendar has nowhere), so they are never unanswered; reactions, deletes and
   transcripts are marks on a message, not words. Capped (`UNANSWERED_ROOMS`) with the rest
   counted: the block is paid on every request, and a long standing list is furniture.
+  **Typing** lists each room in the window someone is writing in (`status.typing`, §3, a
+  stamp still fresh and no word of theirs since): `· <name> — <service> <kind>`, and
+  `: <writers>` by the names their rows go by unless the only writer is a direct chat's
+  other side. It is what the hold in §2 does not reach: a turn another room woke reads it,
+  and leaves the room still being written for the next look (`send.md` asks that). The
+  anchor is rewritten on any step whose state moved, so a writer starting mid-turn shows
+  before the next send.
   A surface is down when its
   connector wrote a state other than `connected` on the row (`extra.state`, stamped
   `<state>_at` when the row moves to it, against the row as stored, so a restart never
@@ -4259,6 +4279,19 @@ no sent message without its call; worth it once scripts see real use).
   renewed lease, so one identity never runs two minds. An employer that wants its agent on
   its own servers gets two minds and a narrow, gated channel between them. Log-qualified
   ids serve both roads.
+- **Typing out.** The agent would show it is writing where it holds the floor (§2): main
+  stamps `status.typing` on the newest row it is answering when such a turn starts,
+  renews it about every 15s while the turn runs (WhatsApp drops a composing state after
+  some 25s), and takes it off when the turn ends without a send there or a send waits on
+  the gate, since minutes of "typing…" for an approval read wrong. A digest's turn shows
+  nothing: it is a glance at the phone. The dispatcher carries the stamp as it carries a
+  send, to the bridge's `status` action (`SendChatPresence`, composing and paused), and
+  read receipts could ride the same leg, the contact seeing blue ticks when the agent
+  reads. Teams bots can send typing; Slack apps cannot.
+- **Typing on the conversation.** A writer belongs to a conversation, not to a message: the
+  stamp rides the newest row only because rows are where the log keeps state. A
+  conversations row with a mutable status of its own would hold it whole, reach rooms the
+  window no longer shows, and leave the rows' history untouched.
 - **Requests to the harness as rows of the log.** A process asks main to act (bring an
   agent up, take a reload) by appending a harness event that names what changed, and main,
   which tails the log, acts and writes the outcome onto that row, as a dispatcher writes a

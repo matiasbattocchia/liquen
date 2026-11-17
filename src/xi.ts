@@ -61,6 +61,8 @@ import {
   DEFAULT_RULES,
   DEFAULT_SLEEP_HOURS,
   DEFAULT_TIMEZONE,
+  TYPING_FRESH_MS,
+  TYPING_HOLD_MS,
 } from "./config.ts";
 import {
   cardNames,
@@ -308,6 +310,12 @@ function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
  * is owed an answer for, so it is read when words make the digest due and never makes it
  * due alone.
  *
+ * A conversation someone is WRITING in (`typingIn`) holds its news on every rung: the rest
+ * of the thought is on its way, as a burst's is while the debounce waits. The hold ends
+ * when they stop, when their stamp goes stale, or `TYPING_HOLD_MS` after the oldest news
+ * there, and the clock poke re-asks. News elsewhere still wakes, and that turn's anchor
+ * says who is writing where.
+ *
  * A sign-out (`signedOutOf`) is the world's news told in the harness's voice: it lands in
  * the mind room as an alarm, yet only the night and the digest (rungs 2, 5 and 6) govern
  * it, so the night holds it for the morning.
@@ -326,8 +334,10 @@ function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
 function attention(events: Event[], session: Session, wake: Wake, now: number): Decision {
   // news that is no reason to wake waits for a turn something else opens: a late result its
   // tool marked quiet, and a lapse
-  const news = newsOf(events, session).filter((e) =>
-    !sealed(e, events, wake, now) && !quiet(e) && !lapse(e)
+  const news = unlessWriting(
+    newsOf(events, session).filter((e) => !sealed(e, events, wake, now) && !quiet(e) && !lapse(e)),
+    typingIn(events, now),
+    now,
   );
   if (news.length === 0) return "ignore";
   // a NAMED session is REACTIVE (§4): only its own rooms reach it at all — its window is
@@ -1361,6 +1371,7 @@ async function think(
       new Set(surfaces.map(accountOf)),
       config.timezone,
     ),
+    ...typingOn(events, Date.now()),
     ...(await hushedOn(events, config.since, ports.log)),
     ...(ports.pages ? await ports.pages.standing() : []),
   ];
@@ -1790,6 +1801,81 @@ export function unansweredOn(
       }${named ? " · mentioned" : ""}`;
     }),
     ...(rest > 0 ? [`— ${rest} more`] : []),
+  ];
+}
+
+/** Who is writing where (§2): per conversation in view, the writers whose `status.typing`
+ *  stamp is fresh and whose own word has not landed since it, with the conversation's
+ *  newest row to name it by. Keyed like render's rooms (`roomKey`). */
+export function typingIn(
+  events: Event[],
+  now: number,
+): Map<string, { room: MessageEvent; writers: string[] }> {
+  const stamps = new Map<string, Map<string, number>>(); // room → writer → when
+  const said = new Map<string, number>(); // room + writer → their newest word
+  const rooms = new Map<string, MessageEvent>();
+  for (const e of events) {
+    if (e.type !== "message") continue;
+    const key = roomKey(e);
+    rooms.set(key, e);
+    const from = e.envelope.sender?.address;
+    if (from && spoken(e)) said.set(`${key}\u0000${from}`, Date.parse(e.ts));
+    for (const [writer, at] of Object.entries(e.status?.typing ?? {})) {
+      const when = Date.parse(at);
+      if (!(now - when < TYPING_FRESH_MS)) continue;
+      const room = stamps.get(key) ?? new Map<string, number>();
+      room.set(writer, Math.max(room.get(writer) ?? 0, when));
+      stamps.set(key, room);
+    }
+  }
+  const out = new Map<string, { room: MessageEvent; writers: string[] }>();
+  for (const [key, room] of stamps) {
+    const writers = [...room].filter(([w, when]) => !((said.get(`${key}\u0000${w}`) ?? 0) >= when))
+      .map(([w]) => w);
+    if (writers.length) out.set(key, { room: rooms.get(key)!, writers });
+  }
+  return out;
+}
+
+/** The news no writer holds: a conversation someone is writing in keeps its news back
+ *  until its oldest has waited `TYPING_HOLD_MS`. */
+function unlessWriting<T extends Event>(
+  news: T[],
+  typing: Map<string, unknown>,
+  now: number,
+): T[] {
+  if (typing.size === 0) return news;
+  const oldest = new Map<string, number>();
+  for (const e of news) {
+    const key = roomKey(e);
+    oldest.set(key, Math.min(oldest.get(key) ?? Infinity, Date.parse(e.ts)));
+  }
+  return news.filter((e) => {
+    const key = roomKey(e);
+    return !typing.has(key) || now - oldest.get(key)! >= TYPING_HOLD_MS;
+  });
+}
+
+/** The anchor's typing section (§5): each conversation someone is writing in, by its best
+ *  name, and who when it is not the direct chat's other side. */
+export function typingOn(events: Event[], now: number): string[] {
+  const typing = typingIn(events, now);
+  if (typing.size === 0) return [];
+  const names = roomNames(events);
+  const who = new Map<string, string>(); // writer → the name their rows go by
+  for (const e of events) {
+    const s = e.type === "message" ? e.envelope.sender : undefined;
+    if (s?.address && s.name) who.set(s.address, s.name);
+  }
+  return [
+    `typing — ${typing.size} conversation${typing.size === 1 ? "" : "s"}:`,
+    ...[...typing.values()].map(({ room, writers }) => {
+      const conv = namedRoom(room, names);
+      const where = `${room.envelope.service}${conv.kind ? ` ${conv.kind}` : ""}`;
+      const peer = conv.kind === "direct" && writers.length === 1 && writers[0] === conv.address;
+      const by = peer ? "" : `: ${writers.map((w) => who.get(w) ?? w).join(", ")}`;
+      return `· ${conv.name ?? conv.address} — ${where}${by}`;
+    }),
   ];
 }
 

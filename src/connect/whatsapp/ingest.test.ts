@@ -10,7 +10,7 @@ import {
 } from "./ingest.ts";
 import type { Draft, Event, MessageEvent, RoomPart } from "../../types.ts";
 import { newId } from "../../store/id.ts";
-import type { Appender, Reader } from "../../store/log.ts";
+import { type Appender, openLog, type Reader } from "../../store/log.ts";
 import { createMarks, marked } from "../marks.ts";
 import type { ConnectionRow } from "../../store/connections.ts";
 import { fileStorage } from "../../store/storage.ts";
@@ -1069,6 +1069,73 @@ Deno.test("a receipt maps to a merge-only status draft: state + read_at map", as
   assertEquals(e.status?.state, "read");
   assertEquals("parts" in e, false);
   assertEquals(e.status?.read_at, { "5491177777777": "2026-08-11T12:07:00Z" });
+});
+
+Deno.test("typing rides the conversation's newest row, one row per writer, and a stop takes it off", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await openLog(dir);
+  try {
+    await log.upsertConnections([{ service: "whatsapp", address: batch().organization_address }]);
+    const { handler } = harness({ publish: log.publish.bind(log), read: (q) => log.read(q) });
+    const say = (id: string, sender = "5491177777777") =>
+      handler(post(
+        "/whatsapp-web-webhook",
+        batch({
+          messages: [textMessage({
+            external_id: id,
+            conversation_address: "5491177777777",
+            sender_address: sender,
+          })],
+        }),
+      ));
+    const type = (state: "composing" | "paused", timestamp: string) =>
+      handler(post(
+        "/whatsapp-web-webhook",
+        batch({
+          typing: [{
+            conversation_address: "5491177777777",
+            sender_address: "5491177777777",
+            state,
+            timestamp,
+          }],
+        }),
+      ));
+    const typing = async () =>
+      Object.fromEntries(
+        (await log.read({ conversation: "5491177777777" }))
+          .map((e) => [e.envelope.external_id, e.status?.typing]),
+      );
+    await say("wmw.t.1");
+    await type("composing", "2026-11-16T19:36:00Z");
+    assertEquals(await typing(), {
+      [externalId("wmw.t.1")]: { "5491177777777": "2026-11-16T19:36:00Z" },
+    });
+    await say("wmw.t.2", "5491100000000");
+    await type("composing", "2026-11-16T19:36:10Z");
+    assertEquals(await typing(), {
+      [externalId("wmw.t.1")]: {},
+      [externalId("wmw.t.2")]: { "5491177777777": "2026-11-16T19:36:10Z" },
+    });
+    await type("paused", "2026-11-16T19:36:20Z");
+    assertEquals((await typing())[externalId("wmw.t.2")], {});
+    // a chat with no row yet has nowhere to carry it
+    const { handler: bare, published } = harness({ read: () => Promise.resolve([]) });
+    await bare(post(
+      "/whatsapp-web-webhook",
+      batch({
+        typing: [{
+          conversation_address: "549",
+          sender_address: "549",
+          state: "composing",
+          timestamp: "2026-11-16T19:36:00Z",
+        }],
+      }),
+    ));
+    assertEquals(published, []);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("a history batch stamps extra.backfill; the reply ref rides payload", async () => {

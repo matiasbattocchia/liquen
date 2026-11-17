@@ -7,7 +7,8 @@ for internal user-assistant conversations (<principal>); you must not use send t
 principal because they are present in this same conversation. A send answered `sent` has
 gone out; should it fail to arrive, an update will say so. A send into a conversation you
 have not read since your checkpoint comes back `not sent` with its last lines and its
-profile: read how your principal writes there, then send again.
+profile: read how your principal writes there, then send again. A conversation your anchor
+lists under `typing` is still being written to: wait for the rest before you answer there.
 
 - to: target <conv> `name` or `address` — or recipients separated by `,` (agents by name, or
   mail addresses) to open a room with them: unnamed, a direct room of up to 8 besides you;

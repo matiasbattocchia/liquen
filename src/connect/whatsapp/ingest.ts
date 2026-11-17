@@ -49,7 +49,7 @@
  */
 
 import { SENDER_SAVED } from "../../sender.ts";
-import type { Appender } from "../../store/log.ts";
+import type { Appender, Reader } from "../../store/log.ts";
 import type { Connections, ConnectionState } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
@@ -171,6 +171,17 @@ export interface WABatch {
     sender_address?: string;
     timestamp: string;
   }[];
+  /** A chat's typing state: a writer began (`composing`; `media` "audio" while recording a
+   *  voice note) or stopped (`paused`). It names a chat and a writer, never a message. */
+  typing?: WATyping[];
+}
+
+export interface WATyping {
+  conversation_address: string;
+  sender_address: string;
+  state: "composing" | "paused";
+  media?: string;
+  timestamp: string;
 }
 
 export interface WAPerson {
@@ -263,6 +274,9 @@ export interface WhatsAppWebhookDeps {
   storage?: Storage;
   /** Shared bearer token (the bridge's BRIDGE_TOKEN). Set ⇒ REQUIRED on every route. */
   bridgeToken?: string;
+  /** The conversation's newest rows, where a typing stamp lands. Absent ⇒ typing is
+   *  dropped: it has no row of its own to make. */
+  read?: Reader["read"];
   now?: () => string;
 }
 
@@ -359,6 +373,7 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
       ...(batch.rooms ?? []).map((r) =>
         mapRoom(r, connection, groupNames, pushnames, now, batch.history === true)
       ),
+      ...(deps.read ? await mapTyping(batch.typing ?? [], connection, deps.read, now) : []),
     ].filter((d): d is Draft<MessageEvent> => d !== null);
 
     // the classifier (§3): a sender whose GRANT row names a mind, or whose number is a
@@ -851,6 +866,45 @@ function mapStatus(
   return mergeOnly(connection, s.external_id, now(), { status: st });
 }
 
+/** How many of a conversation's newest rows a typing state reads for the writer's stamp:
+ *  one further back has long gone stale. */
+const TYPING_REACH = 50;
+
+/** Typing states → merges of `status.typing` (§3). A writer's stamp rides the conversation's
+ *  newest row and leaves the row that held it before, so one row holds it; a stop takes it
+ *  off. A batch's last word for a writer is the one that lands. */
+async function mapTyping(
+  typing: WATyping[],
+  connection: string,
+  read: Reader["read"],
+  now: () => string,
+): Promise<Draft<MessageEvent>[]> {
+  const last = new Map<string, WATyping>();
+  for (const t of typing) last.set(`${t.conversation_address}\u0000${t.sender_address}`, t);
+  const drafts: Draft<MessageEvent>[] = [];
+  for (const t of last.values()) {
+    const rows = (await read({
+      service: SERVICE,
+      connection,
+      conversation: t.conversation_address,
+      types: ["message"],
+      limit: TYPING_REACH,
+    })).filter((e) => e.envelope.external_id);
+    const newest = rows.at(-1);
+    if (!newest) continue;
+    const merge = (e: (typeof rows)[number], value: string | null) =>
+      drafts.push(mergeOnly(connection, e.envelope.external_id!.replace(/^whatsapp:/, ""), now(), {
+        status: { typing: { [t.sender_address]: value } } as Lifecycle,
+      }));
+    for (const e of rows) {
+      const held = e.status?.typing?.[t.sender_address] !== undefined;
+      if (held && (t.state === "paused" || e !== newest)) merge(e, null);
+    }
+    if (t.state === "composing") merge(newest, t.timestamp);
+  }
+  return drafts;
+}
+
 /* ── the /media route: multipart bytes → the media store → {uri} ─────────────────── */
 
 async function media(req: Request, deps: WhatsAppWebhookDeps): Promise<Response> {
@@ -974,6 +1028,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
     publish: marked(log.publish, createMarks({ read: (q) => log.read(q), knobs })),
     store: log, // connections live on the Log (§4) — session events write the map
     storage,
+    read: (q) => log.read(q),
     bridgeToken: bridgeTokenOf(Deno.env.get("WA_BRIDGE_TOKEN")),
   });
   const { serveIngest } = await import("../serve.ts");

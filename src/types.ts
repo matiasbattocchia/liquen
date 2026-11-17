@@ -396,6 +396,10 @@ export interface Lifecycle {
   withdrawn_at?: string;
   /** The session that took it back: any that can write to the room, the sender's or not. */
   withdrawn_by?: { id: string; session_id: string };
+  /** Who is writing in the row's conversation, by address: when the wire last said each
+   *  began, the latest overwriting. It rides the conversation's newest row, one row per
+   *  writer, and leaves when they stop; it is the conversation's state, not the row's. */
+  typing?: Record<string, string>;
 }
 
 // Naming rule (§3): `address` = a WIRE address (what the platform calls the thing);

@@ -88,6 +88,12 @@ export const DEFAULT_DIGEST_MINUTES = 15;
 // the world waits until morning and arrives as one digest. What still wakes is what always
 // did — the mind alias, and a conversation the agent is holding the floor in.
 export const DEFAULT_SLEEP_HOURS = "23-8";
+// Someone writing in a conversation holds its news: the rest of the thought is on its way.
+// A stamp stands for `TYPING_FRESH_MS` after the wire said it, since a stop is not always
+// said (the phone drops, the message goes); and the hold lasts at most `TYPING_HOLD_MS`
+// past the conversation's oldest news, so an endless writer still gets an answer.
+export const TYPING_FRESH_MS = 30_000;
+export const TYPING_HOLD_MS = 120_000;
 // presence (§9): what a surface hears of the mind at work
 export const DEFAULT_PRESENCE: PresenceLevel = "waiting";
 // the window (§5): est. tokens of RAW EVENT JSON (`estTokens`, chars/4) and the pictures it

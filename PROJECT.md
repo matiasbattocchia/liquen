@@ -7224,6 +7224,38 @@ Open:
 - `cancel` is gated as `cancel` is, so taking a page down asks nobody.
 - The mock dubiku deployed is still up on its public host.
 
+### Typing in: someone writing holds their conversation (2026-11-16) — LANDED, not yet run live
+
+On new, Facu del Olmo answered matias's opening in three messages over three minutes. The
+first reached a digest turn, which stayed silent, and so did not interrupt him; the other
+two waited for the next digest. Whether the agent waits for the rest was luck of the
+clock: nothing told it he was still writing.
+
+- **The bridge** (`open-bsp-whatsmeow`): `events.ChatPresence` becomes a `typing` entry of
+  the webhook batch (chat, writer, composing or paused, `media` audio while recording, the
+  moment the bridge heard it), each one logged. Presence is left as it was: whatsmeow
+  says WhatsApp sends chat states to clients it deems present, and the log is what shows
+  which reach a session that never declared itself available.
+- **The stamp.** Ingest merges `status.typing[writer]` onto the conversation's newest row
+  and takes the writer's stamp off any older row among its 50 newest; paused takes it
+  off.
+- **The hold.** A conversation with a fresh stamp (`TYPING_FRESH_MS`, 30s) from a writer
+  whose word has not landed since holds its news on every rung, until its oldest news has
+  waited `TYPING_HOLD_MS` (2 min). News elsewhere still wakes.
+- **The anchor.** `typing — N conversations:` lists who is writing where, and `send.md`
+  says to wait for the rest there.
+
+Open:
+
+- Whether WhatsApp delivers chat states to the bridge at all without `SendPresence
+  (available)`: the bridge log says, once it runs. If it does not, going online is a
+  decision of its own (it shows the account online; whether it also keeps the phone's
+  notifications away is unverified).
+- A direct chat's typing may need `SubscribePresence` as well.
+- A stamp lives on a row in the window, so a conversation whose newest row is below the
+  window's floor shows no typing.
+- Typing out is recorded in DESIGN §13, and so is the conversation as the stamp's home.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
