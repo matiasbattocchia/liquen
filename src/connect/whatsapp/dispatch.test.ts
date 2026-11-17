@@ -405,3 +405,34 @@ Deno.test("bridge send: a hung /dispatch call fails inside the fetch's bound", a
   assert(err instanceof DOMException && err.name === "TimeoutError", String(err));
   assert(Date.now() - t0 < 1_000, "ended inside the bound");
 });
+
+Deno.test("an agent's send names when its conversation stops being engaged; the bridge reads it as engaged_until", async () => {
+  const until: (string | undefined)[] = [];
+  const { log } = harness((_record, _media, engagedUntil) => {
+    until.push(engagedUntil);
+    return Promise.resolve("wmw.out.1");
+  }, {
+    engagedMinutes: (id) => Promise.resolve(id === "matias" ? 10 : 0),
+    now: () => Date.parse("2026-11-17T10:00:00Z"),
+  });
+  log.push(outboundMessage());
+  await settle();
+  assertEquals(until, ["2026-11-17T10:10:00.000Z"]);
+
+  const bodies: Record<string, unknown>[] = [];
+  const send = bridgeSend("http://bridge.local", "tok", (_url, init) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return Promise.resolve(Response.json({ external_id: "wmw.out.2" }));
+  });
+  const record: WADispatchRecord = {
+    id: "e1",
+    external_id: "",
+    organization_address: "5491100000000",
+    conversation_address: "5491199999999",
+    content: { version: "1", type: "text", kind: "text", text: "hola" },
+    status: {},
+  };
+  await send(record, undefined, until[0]);
+  await send(record);
+  assertEquals(bodies.map((b) => b.engaged_until), ["2026-11-17T10:10:00.000Z", undefined]);
+});

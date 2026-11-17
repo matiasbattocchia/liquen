@@ -43,7 +43,7 @@ import type {
 import { externalId, SERVICE, type WAContent } from "./ingest.ts";
 import { type Directory, whatsappMentions } from "../mentions.ts";
 import { toWhatsApp } from "../flavor.ts";
-import { findRoot, orgFlag } from "../../config.ts";
+import { findRoot, orgFlag, settingsOf } from "../../config.ts";
 import { timedFetch } from "../http.ts";
 import { entry } from "../../entry.ts";
 
@@ -58,10 +58,13 @@ export interface WADispatchRecord {
 }
 
 /** POST one record to the bridge; returns the created message's wmw id. Throws a
- *  `DispatchError` on failure — `code` carries the bridge's HTTP status. */
+ *  `DispatchError` on failure — `code` carries the bridge's HTTP status. `engagedUntil`
+ *  is when the conversation stops being engaged after this send (RFC 3339): the bridge
+ *  shows the account online until then, the state WhatsApp tells who is typing to. */
 export type WASend = (
   record: WADispatchRecord,
   mediaUrl?: string,
+  engagedUntil?: string,
 ) => Promise<string | undefined>;
 
 /** Mint a bridge-reachable download url for a LOCAL file part (the entry's loopback
@@ -81,6 +84,9 @@ export interface WhatsAppDispatchDeps {
   read: Reader["read"];
   onError?: (event: MessageEvent, err: unknown) => void;
   onSent?: (event: MessageEvent, wmwId: string | undefined) => void;
+  /** How long the sending agent's own word keeps a conversation engaged (§2). */
+  engagedMinutes?: (agentId: string) => Promise<number>;
+  now?: () => number;
 }
 
 /** Wire dispatch to the log — the shared loop (`dispatcher.ts`) over the bridge's
@@ -107,10 +113,16 @@ export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => Promis
           if (claimed.length) c.content.mentions = claimed;
         }
       }
+      const minutes = event.agent && deps.engagedMinutes
+        ? await deps.engagedMinutes(event.agent.id)
+        : undefined;
+      const engagedUntil = minutes === undefined
+        ? undefined
+        : new Date((deps.now ?? Date.now)() + minutes * 60_000).toISOString();
       let first: string | undefined;
       for (const c of contents) {
         const mediaUrl = await urlFor(c.content, deps.mediaUrl);
-        const wmwId = await deps.send(recordOf(event, c.content), mediaUrl);
+        const wmwId = await deps.send(recordOf(event, c.content), mediaUrl, engagedUntil);
         first ??= wmwId;
       }
       // the wire names its own side IN THE SEND RESPONSE (§4): the returned id is
@@ -272,7 +284,7 @@ export function bridgeSend(
   token: string,
   fetchApi: typeof fetch = timedFetch,
 ): WASend {
-  return async (record, mediaUrl) => {
+  return async (record, mediaUrl, engagedUntil) => {
     const res = await fetchApi(`${base}/dispatch`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -280,6 +292,7 @@ export function bridgeSend(
         type: "message",
         record,
         ...(mediaUrl ? { media_url: mediaUrl } : {}),
+        ...(engagedUntil ? { engaged_until: engagedUntil } : {}),
       }),
     });
     if (!res.ok) throw await httpError(res);
@@ -302,7 +315,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   );
   const { isStored } = await import("../../store/storage.ts");
   const { SPEC } = await import("./config.ts");
-  const { liveKnobs } = await import("../../org.ts");
+  const { liveConfig, liveKnobs } = await import("../../org.ts");
   const root = findRoot(orgFlag());
   const dir = `${root}/data`;
   const store = await openStore(root);
@@ -321,8 +334,9 @@ export async function runDispatch(): Promise<() => Promise<void>> {
   };
 
   // each send posts to the bridge's address as the org states it then
-  const send: WASend = async (record, media) =>
-    await bridgeSend((await knobs()).bridgeUrl, token)(record, media);
+  const send: WASend = async (record, media, engagedUntil) =>
+    await bridgeSend((await knobs()).bridgeUrl, token)(record, media, engagedUntil);
+  const org = await liveConfig(root, log);
 
   const { logDirectory } = await import("../mentions.ts");
   const stop = createWhatsAppDispatch({
@@ -331,6 +345,7 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     send,
     mediaUrl,
     directory: logDirectory((q) => log.read(q)),
+    engagedMinutes: async (agentId) => settingsOf(await org(), agentId).engagedMinutes,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     store: log,
     onSent: (e, id) =>
