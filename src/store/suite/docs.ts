@@ -231,7 +231,7 @@ export function docsSuite(s: DocsSubstrate): void {
           "contact",
           "conversation",
           "edit",
-          "page",
+          "publish",
           "read",
           "search",
           "send",

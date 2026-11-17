@@ -7195,6 +7195,35 @@ Open:
   the message never fills, and a later history sync of the chat brings the message in.
 - Only WhatsApp logs a visitor in, so a page is for a WhatsApp conversation alone.
 
+### `publish`: a folder is its page (2026-11-16) — LANDED
+
+The first live try of `page` on new: matias's agent asked dubiku for a mock to show a
+friend on WhatsApp. dubiku read `page` as binding the link to one chat, and the chat was
+one only matias's agent reads, so it deployed the mock to a public host with a login it
+held from earlier work, and matias's agent sent that address on. Nothing in the tool's
+words pointed it away from a public host, and no path let one agent build a page another
+would hand over.
+
+- **The tool.** `publish({path, with?, title?})`: the folder lies below the agent's own or
+  below `shared/`, read whole by the files port (`Files.folder`, over a `list` both
+  grounds have), dot-named entries left out. One page per folder, keyed
+  `agents/<agent>/<path>` or `shared/<path>`; a republish keeps the link, and `with`
+  left out keeps the list, checked again against the agent publishing.
+- **The people.** `with` holds up to ten conversations. Each direct chat has a token of
+  its own, kept until spent; a code goes out from the account of the conversation that
+  admits the number.
+- **Standing.** The anchor's `pages` section lists the live pages an agent reaches;
+  `cancel` takes one down by folder or link. The doc says a page is how work reaches
+  people, never a public host, and that what another agent will publish is built in
+  `shared/`.
+
+Open:
+
+- A page in `shared/` goes with the agent that published it last, when that agent is
+  removed.
+- `cancel` is gated as `cancel` is, so taking a page down asks nobody.
+- The mock dubiku deployed is still up on its public host.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

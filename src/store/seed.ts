@@ -129,7 +129,7 @@ const TOOL_DOCS = [
   "contact",
   "connect",
   "agent",
-  "page",
+  "publish",
   "bash",
   "read",
   "write",

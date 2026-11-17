@@ -1,11 +1,12 @@
 /**
- * pages.ts — the pages agents publish (DESIGN §9): a folder for a WhatsApp conversation,
+ * pages.ts — the pages agents publish (DESIGN §9): a folder for WhatsApp conversations,
  * served by main behind the edge at `<base>/pages/<id>`, and the login that opens it.
  *
- * A page is a row in the vault under `page:<id>`, owned by the agent that published it, so
- * removing the agent removes its pages, and its files are objects under `pages/<id>/`. The
- * row keeps the conversation and its kind, the account it rides, the title, the files and
- * the deadline; a direct chat's row keeps the token its link carries, until it is spent.
+ * A folder is one page. Its row is in the vault under `page:<id>`, owned by the agent that
+ * published it last, so removing that agent removes the page, and its files are objects
+ * under `pages/<id>/`. The row keeps the folder, the conversations with the kind of each
+ * and the account it rides, the title, the files and the deadline; each direct chat's
+ * token, the one its link carries, is kept until it is spent.
  *
  * Opening a page is two steps. `/pages/<id>` is the door: it admits a visitor whose login
  * belongs to the page, and sends them into the box, `/pages/<id>/<view>/`, where the files
@@ -17,11 +18,11 @@
  * without `allow-same-origin`), so it can't read other pages or reach the login.
  *
  * The login is a cookie that names a phone, signed with the vault's `pages:sign` key. Each
- * time the door is opened, main checks the phone belongs: the conversation's own number
- * in a direct chat, a seat on the roster in a group. Without one, a direct chat's link
- * logs its person in with its token, posted by a button so a previewer spends nothing,
- * and anyone else asks for a code: main checks the number belongs before anything is
- * sent, DMs the code from the page's account, and answers the same either way.
+ * time the door is opened, main checks the phone belongs: a direct chat's own number, or a
+ * seat on a group's roster. Without one, a direct chat's link logs its person in with its
+ * token, posted by a button so a previewer spends nothing, and anyone else asks for a
+ * code: main checks the number belongs before anything is sent, DMs the code from the
+ * account of the conversation that admits it, and answers the same either way.
  */
 
 import { decodeBase64Url, encodeBase64Url } from "@std/encoding/base64url";
@@ -37,6 +38,8 @@ export const PAGE_FILES = "pages/";
 /** The most files a page holds, and the most bytes in all. */
 export const PAGE_FILES_MOST = 64;
 export const PAGE_BYTES_MOST = 25 * 1024 * 1024;
+/** The most conversations a page is for. */
+export const PAGE_WITH_MOST = 10;
 /** The file a page opens on. */
 export const PAGE_INDEX = "index.html";
 /** How long a view key opens the box. */
@@ -62,23 +65,35 @@ export interface PageFile {
   size: number;
 }
 
+/** A conversation a page is for. */
+export interface Party {
+  address: string;
+  /** The WhatsApp account the conversation rides: a code to a number it admits goes out
+   *  from it. */
+  connection: string;
+  kind: "direct" | "group";
+  /** What the conversation is called, as the agent saw it. */
+  name?: string;
+}
+
 /** A page as its row keeps it. */
 export interface Page {
   id: string;
+  /** The agent that published it last: its view vouched for `with`. */
   agentId: string;
-  /** The WhatsApp account the page rides: its codes go out from it. */
-  connection: string;
-  conversation: string;
-  /** What the conversation is called, as the agent saw it. */
-  name?: string;
-  kind: "direct" | "group";
+  /** The folder, `agents/<agent>/<path>` or `shared/<path>`: one page each. */
+  folder: string;
+  with: Party[];
   title: string;
   files: Record<string, PageFile>;
   created: number;
   until: number;
-  /** A direct chat's link token, until it is spent. */
-  token?: string;
+  /** Each direct chat's link token by its address, until it is spent. */
+  tokens: Record<string, string>;
 }
+
+/** The vault field a direct chat's token is kept under. */
+const TOKEN = "t:";
 
 /** A fresh id: 128 random bits, in the characters a path segment takes as they are. */
 export function pageId(): string {
@@ -98,13 +113,26 @@ export async function listPages(creds: Credentials, agentId?: string): Promise<P
   return agentId ? pages.filter((p) => p.agentId === agentId) : pages;
 }
 
+/** The live page a folder is, or null. */
+export async function pageAt(
+  creds: Credentials,
+  folder: string,
+  now = Date.now(),
+): Promise<Page | null> {
+  return (await listPages(creds)).find((p) => p.folder === folder && p.until > now) ?? null;
+}
+
 function pageOf(row: CredentialRow): Page {
-  const x = (row.extra ?? {}) as Omit<Page, "id" | "agentId" | "token">;
+  const x = (row.extra ?? {}) as Omit<Page, "id" | "agentId" | "tokens">;
   return {
     ...x,
     id: row.key.slice(PAGE_KEY.length),
     agentId: row.agentId ?? "",
-    ...(row.value.token ? { token: row.value.token } : {}),
+    tokens: Object.fromEntries(
+      Object.entries(row.value).flatMap(([k, v]) =>
+        k.startsWith(TOKEN) && v ? [[k.slice(TOKEN.length), v]] : []
+      ),
+    ),
   };
 }
 
@@ -124,13 +152,13 @@ export async function writePage(
       await storage.delete(key);
     }
   }
-  const { id, agentId, token, ...extra } = page;
+  const { id, agentId, tokens, ...extra } = page;
   // the row is replaced, not merged: a file the page no longer holds leaves its list
   await creds.delete(`${PAGE_KEY}${id}`);
   await creds.put({
     key: `${PAGE_KEY}${id}`,
     ...(agentId ? { agentId } : {}),
-    value: token ? { token } : {},
+    value: Object.fromEntries(Object.entries(tokens).map(([a, t]) => [`${TOKEN}${a}`, t])),
     extra: extra as unknown as Record<string, unknown>,
   });
 }
@@ -315,10 +343,11 @@ export interface PagesDeps {
   storage: Storage;
   /** Whether the org's address is https, so the login cookie is `Secure`. */
   secure: () => boolean;
-  /** The addresses on a group's roster now, as the bridge reads it. Throws when it can't. */
-  roster: (page: Page) => Promise<string[]>;
-  /** DM a code's words to a number, from the page's account. */
-  send: (page: Page, phone: string, text: string) => Promise<void>;
+  /** The addresses on a group's roster now, as the bridge reads it for the page's agent.
+   *  Throws when it can't. */
+  roster: (page: Page, group: Party) => Promise<string[]>;
+  /** DM a code's words to a number, from the account of the conversation that admits it. */
+  send: (from: Party, phone: string, text: string) => Promise<void>;
   /** A line for the run log. */
   say?: (line: string) => void;
   now?: () => number;
@@ -344,10 +373,26 @@ export function createPages(deps: PagesDeps): (req: Request) => Promise<Response
 
   const tail = (phone: string) => `…${phone.slice(-4)}`;
 
-  /** Whether a number may open a page. Throws when a group's roster can't be read. */
-  const admits = async (page: Page, phone: string): Promise<boolean> => {
-    if (page.kind === "direct") return digits(page.conversation) === phone;
-    return (await deps.roster(page)).some((a) => digits(a) === phone);
+  /** The conversation that lets a number open a page, its direct chat before a group, or
+   *  null. Throws when a group's roster can't be read. */
+  const admits = async (page: Page, phone: string): Promise<Party | null> => {
+    const direct = page.with.find((p) => p.kind === "direct" && digits(p.address) === phone);
+    if (direct) return direct;
+    for (const p of page.with) {
+      if (p.kind !== "group") continue;
+      if ((await deps.roster(page, p)).some((a) => digits(a) === phone)) return p;
+    }
+    return null;
+  };
+
+  /** Who a page is for, as the door says it to a visitor. */
+  const whom = (page: Page): string => {
+    const [one] = page.with;
+    if (page.with.length === 1 && one.kind === "group") {
+      return `This page is for the people of ${one.name ?? "a WhatsApp group"}.`;
+    }
+    if (page.with.length === 1) return "This page is for one person on WhatsApp.";
+    return "This page is for the people it was shared with on WhatsApp.";
   };
 
   const gone = () =>
@@ -356,9 +401,7 @@ export function createPages(deps: PagesDeps): (req: Request) => Promise<Response
   const numberForm = (page: Page): Form => ({
     title: page.title,
     lines: [
-      page.kind === "group"
-        ? `This page is for the people of ${page.name ?? "a WhatsApp group"}.`
-        : "This page is for one person on WhatsApp.",
+      whom(page),
       "Type your WhatsApp number, with its country code, and a code is sent to it there.",
     ],
     fields: [{
@@ -420,7 +463,8 @@ export function createPages(deps: PagesDeps): (req: Request) => Promise<Response
 
   /** Send a code, when the number belongs and its caps allow. */
   const offer = async (page: Page, phone: string): Promise<void> => {
-    if (!(await admits(page, phone))) return;
+    const from = await admits(page, phone);
+    if (!from) return;
     const t = now();
     const times = (sent.get(phone) ?? []).filter((at) => t - at < 3_600_000);
     if ((times.at(-1) ?? -Infinity) > t - CODE_GAP_MS || times.length >= CODES_AN_HOUR) {
@@ -433,7 +477,7 @@ export function createPages(deps: PagesDeps): (req: Request) => Promise<Response
     sent.set(phone, [...times, t]);
     try {
       await deps.send(
-        page,
+        from,
         phone,
         `${code} is your code to open "${page.title}". It is good for 10 minutes. ` +
           "If you didn't ask for it, ignore this message.",
@@ -461,22 +505,27 @@ export function createPages(deps: PagesDeps): (req: Request) => Promise<Response
     if (body.length > 4096) return formPage(numberForm(page), "That was too long.", 400);
     const fields = Object.fromEntries(new URLSearchParams(body));
     if (fields.t !== undefined) {
-      const ok = page.kind === "direct" && !!page.token && fields.t === page.token &&
-        !spending.has(page.id);
-      if (!ok) {
+      const chat = page.with.find((p) =>
+        p.kind === "direct" && !!fields.t && page.tokens[p.address] === fields.t
+      );
+      const spend = chat && `${page.id}:${chat.address}`;
+      if (!chat || !spend || spending.has(spend)) {
         return formPage(
           numberForm(page),
           "This link was used already. Log in with your number.",
           400,
         );
       }
-      spending.add(page.id);
+      spending.add(spend);
       try {
-        await deps.creds.put({ key: `${PAGE_KEY}${page.id}`, value: { token: "" } });
+        await deps.creds.put({
+          key: `${PAGE_KEY}${page.id}`,
+          value: { [`${TOKEN}${chat.address}`]: "" },
+        });
       } finally {
-        spending.delete(page.id);
+        spending.delete(spend);
       }
-      return await enter(page, digits(page.conversation), true);
+      return await enter(page, digits(chat.address), true);
     }
     const phone = digits(fields.phone ?? "");
     if (phone.length < 8 || phone.length > 15) {
