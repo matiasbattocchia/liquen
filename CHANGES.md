@@ -2,12 +2,14 @@
 
 Decided 17 Nov 2026, for Postgres: the database and short-lived functions, with no process
 that must stay up. Any writer may insert into `events`, and triggers make the row right.
-The four below are settled. What is still open closes the file.
+The five below are settled. What is still open closes the file.
 
 1. A `wakes` table holds every look a session is owed.
 2. A look's life runs between `wakes` and `locks`.
 3. `locks` keeps its contract, and gives a wake its status.
 4. The trigger on `events` arms a wake through the law and the class gate.
+5. On SQLite the adapter's publish arms the wake, and one drain serves every host that
+   stays up.
 
 ## 1. The wakes table
 
@@ -127,12 +129,28 @@ can mean work for them.
   delays a mind's wake for a row that is not the session's own. A named session's wake is
   due at once.
 
+## 5. SQLite, and the drain
+
+- **The contract is the port.** A publish arms the wake of every session the law admits
+  and the gate passes. Postgres keeps it with the trigger. SQLite keeps it in the
+  adapter's publish, inside the writing transaction: the law's text in the arming query,
+  and `relevant` called as it is. SQLite gets no trigger.
+- **The suite states it once.** The case runs over a substrate, on both engines.
+- **The drain is one module.** It takes the wakes that are due and have no live lock, and
+  runs xi for each. A commit wakes it (SQLite's watch, Postgres's `NOTIFY`), and it sleeps
+  until the next `due` otherwise. main runs it on SQLite, and so does a Postgres host
+  with no `pg_net`. It stands where steps 2 and 5 of a look's life have a trigger.
+- **Steps 3 and 4 are the store's.** Reading `seq` and acknowledging with the release are
+  the same statements on every engine.
+- **What main lets go.** Its subscription per agent, the debounce timers, the owed set
+  with its in-flight map, and the raw-log router for named sessions.
+- **What main keeps.** The drain, the ticker, the turns a stop waits out, the doors and
+  the sandbox.
+
 ## Open
 
 None of these is part of the batch until it is settled.
 
-- **SQLite.** Whether it follows with triggers of its own, or main drains `wakes` in a
-  loop.
 - **The minute's look.** Retiring it needs a look that defers to say when to ask again.
   `decide` answers only `ignore` today.
 - **Other timers.** Whether the cache keeper, a job followed past its answer and a
