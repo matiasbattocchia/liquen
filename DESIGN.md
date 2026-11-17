@@ -172,7 +172,8 @@ decide(window) →
 **The decision model** (`decision.enabled`, `decision.model`, `decision.effort`) is a cheap
 call that sorts the world before the ladder weighs it. Under the lease, before `decide`, xi
 judges each world room whose words no light covers yet (`judgeable`), one call per room
-(`judge.ts`). Each call reads the room's last lines with the news set off, who on our side
+(`judge.ts`). The principal's own words there, typed or spoken in a note, are not judged:
+nothing in them waits on the principal, and the judge reads them with the room. Each call reads the room's last lines with the news set off, who on our side
 spoke last there, and the day's calendar, under `system/decision.md`. It reads the
 principal's standing word too, the same for every room: the agent's own instructions, its
 memories and the profiles that load always, the principal's among them. Those close the

@@ -45,6 +45,49 @@ Deno.test("sliceOf: the room's lines with the news set off, who spoke on our sid
   assertMatch(slice, /14:54 agent: hasta luego\n— new, to judge —\n.*14:59 Facu: nos hablamos$/);
 });
 
+Deno.test("sliceOf: a transcript speaks as its note's author, and a note without words says its kind", () => {
+  const audio = (over: Partial<Event>, external: string) =>
+    line("", 3, {
+      ...over,
+      envelope: {
+        service: "whatsapp",
+        connection_address: "549110",
+        conversation: { address: "5491133", name: "Gasti", kind: "direct" },
+        sender: { address: "5491133", name: "Gasti" },
+        external_id: external,
+      },
+      parts: [{
+        type: "file",
+        kind: "audio",
+        file: { uri: "storage://media/a", mime_type: "audio/ogg" },
+      }],
+    } as Partial<Event>);
+  const words = (external: string, text: string) =>
+    line(text, 1, {
+      envelope: {
+        service: "whatsapp",
+        connection_address: "549110",
+        conversation: { address: "5491133", name: "Gasti", kind: "direct" },
+      },
+      payload: { action: "add", ref_external_id: external },
+      parts: [{ type: "text", kind: "transcript", text }],
+    } as Partial<Event>);
+  const mine = audio({ agent: { id: "a1", session_id: "mind" } } as Partial<Event>, "w1");
+  const theirs = audio({}, "w2");
+  const slice = sliceOf(
+    [mine, theirs, words("w1", "organizo el domingo"), words("w2", "dale, en lo de Lílian")],
+    "5491133",
+    new Set(),
+    SEAT,
+    [],
+    "UTC",
+    NOW,
+  );
+  assertMatch(slice, /principal: \[audio\]\n.*Gasti: \[audio\]/);
+  assertStringIncludes(slice, "principal (voice note, transcribed): organizo el domingo");
+  assertStringIncludes(slice, "Gasti (voice note, transcribed): dale, en lo de Lílian");
+});
+
 Deno.test("answerOf: a color and a reason, or nothing", () => {
   assertEquals(answerOf('{"reason":"se despide","color":"red"}'), {
     color: "red",

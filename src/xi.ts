@@ -67,7 +67,7 @@ import {
   TYPING_FRESH_MS,
   TYPING_HOLD_MS,
 } from "./config.ts";
-import { aboutOf, judge, lightOf, sliceOf, standingOf } from "./judge.ts";
+import { aboutOf, judge, lightOf, noteOf, sliceOf, standingOf } from "./judge.ts";
 import {
   cardNames,
   type Describe,
@@ -455,7 +455,8 @@ function colorsOf(events: Event[], lights: Lit[]): Map<string, Color> {
  * yet. None when the model is off, for a named session, at night, or when something already
  * wakes the mind without it: a summons, an alarm or an update, after which the turn reads
  * every room anyway. A room's news is its words, as the digest weighs them: marks are owed
- * no answer, and a sign-out is the harness's line, not the room's.
+ * no answer, a sign-out is the harness's line, not the room's, and the principal's own
+ * words, typed or spoken in a note, are theirs to follow up.
  */
 export function judgeable(
   events: Event[],
@@ -472,8 +473,15 @@ export function judgeable(
   );
   if (wakes) return [];
   const lit = colorsOf(events, lights);
+  // the principal's own words are no news to sort, their voice notes' included: nothing in
+  // them waits on the principal, and the judge reads them with the room anyway
+  const theirs = (e: Event) => {
+    const note = noteOf(e, events);
+    return ownComplex(note ?? e, session);
+  };
   const open = news.filter((e) =>
-    e.type === "message" && (spoken(e) || words(e) !== undefined) && !lit.has(e.id)
+    e.type === "message" && (spoken(e) || words(e) !== undefined) && !lit.has(e.id) &&
+    !theirs(e)
   );
   const rooms = new Map<string, Event[]>();
   for (const e of open) {
