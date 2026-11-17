@@ -107,7 +107,11 @@ Deno.test("a beat: the lines due remind as one alarm in the mind's room, the old
       "7 Nov 15:00 Jana — playas › Agendado, remind 1 day before at 10:00\n" +
         "7 Nov 15:00 Ringo — playas › Agendado, remind 1 day before at 10:00",
     );
-    assertEquals(alarms[0].extra?.reminder, { doc: "playas", at: "2026-11-06T10:00" });
+    assertEquals(alarms[0].extra?.reminder, {
+      doc: "playas",
+      at: "2026-11-06T10:00",
+      said: "7 Nov 15:00 Jana\n7 Nov 15:00 Ringo",
+    });
     assertEquals((await log.gates()).map((c) => c.payload.ref_id), ["fresh"]);
     // a line edited after it reminded, a beat later: what it reminded of stays reminded
     docs["agent:playas"] = board("Jana Techno Camp");
@@ -137,7 +141,11 @@ Deno.test("a clock that was down fires a repeat once, at the latest step it miss
     const now = Date.parse("2026-11-06T16:10:00Z");
     assertEquals((await tick(log, clockOver(docs), now)).fired, 1);
     const [alarm] = await log.read({ types: ["alarm"] });
-    assertEquals(alarm.extra?.reminder, { doc: "wakes", at: "2026-11-06T12:00" });
+    assertEquals(alarm.extra?.reminder, {
+      doc: "wakes",
+      at: "2026-11-06T12:00",
+      said: "6 Nov 12:00 Revisar la cola.",
+    });
     assertEquals(
       textOf(alarm),
       "6 Nov 12:00 Revisar la cola. — wakes, every 90 minutes from 19:30 to 12:00, remind",

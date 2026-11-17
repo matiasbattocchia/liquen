@@ -617,7 +617,9 @@ nothing beside them holds a fact about either.
 
 **An alarm always informs.** Its part is a `text` part of kind `alarm`: each line that came
 due, its occurrence, its words and where it stands, `7 Nov 17:30 Leo V — playas › Agendado,
-remind 1 day before at 10:00`. One shape, no bare variant — a pure poke needs no event at
+remind 1 day before at 10:00`. A due line is always open, so it carries no checkbox. A
+mirror shows the principal the occurrence and words alone (`extra.reminder.said`), since
+the doc a line stands in is the agent's to know. One shape, no bare variant — a pure poke needs no event at
 all (the tick invokes trigger-less), so an alarm that said nothing would be a row with no
 reader. `decide` counts it as news like anything else that arrives with something to say,
 and it wakes **now**: neither the digest nor `sleepHours` defers a time the agent's own

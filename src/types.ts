@@ -541,7 +541,7 @@ export interface Payload {
  *  replayed thinking, §5), `bash` (on a script's tool_use and its answer: the id of the bash
  *  call whose script made it through the door, §9 — the answer wakes nobody, and the window
  *  folds the pair into that call), `via` (mirror provenance, §4), `reminder` (alarm provenance, §10: the doc whose
- *  lines it reminds of, and the minute), `unload` (on an alarm the harness raised for an unload, §5: the
+ *  lines it reminds of, the minute, and `said`, the lines as a person reads them), `unload` (on an alarm the harness raised for an unload, §5: the
  *  first line of the span it asks written down and the last event it covers), `signed_out` (on an alarm the harness raised in
  *  an owner's mind when an account it owns signed out, §5: the service and address), and per-service provenance under the service name —
  *  how the wire said it, not what the event means (`slack: {subtype, authorizations}`,
@@ -779,7 +779,8 @@ export interface SummaryEvent extends EventBase {
  * something to say.
  *
  * A reminder's alarm arrives in the agent's mind session, carrying the lines that asked for
- * it, and says where they stand: `extra.reminder` names the doc and the minute (§10), and
+ * it, and says where they stand: `extra.reminder` names the doc and the minute (§10) and
+ * holds the lines without where they stand (`said`), the words a mirror shows a person, and
  * its `external_id` is the two together, so it is stored once whoever sweeps.
  */
 export interface AlarmEvent extends EventBase {

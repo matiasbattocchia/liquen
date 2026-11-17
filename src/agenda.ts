@@ -407,10 +407,13 @@ export function docEntries(name: string, body: string, d: Day): Entry[] {
     });
 }
 
-/** A reminder that came due: the wall minute it fires at, and the line it reminds of. */
+/** A reminder that came due: the wall minute it fires at, and the line it reminds of —
+ *  `text` with where it stands, for the agent, `said` the occurrence and words alone, for
+ *  a person. A due line is always open, so neither carries its checkbox. */
 export interface Due {
   fire: number;
   text: string;
+  said: string;
 }
 
 /** The reminders of a doc's lines that fall due in the wall minutes `(from, to]`, each line
@@ -450,7 +453,11 @@ export function remindersDue(
     const when = `${d.day} ${MONTHS[d.month - 1]}${d.year === today.year ? "" : ` ${d.year}`}${
       due.at === undefined ? "" : ` ${clock(due.at)}`
     }`;
-    out.push({ fire: due.fire, text: `${when} ${boxed(l)} — ${tailOf(name, l)}` });
+    out.push({
+      fire: due.fire,
+      text: `${when} ${l.text} — ${tailOf(name, l)}`,
+      said: `${when} ${l.text}`,
+    });
   }
   return out;
 }

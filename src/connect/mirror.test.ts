@@ -1105,7 +1105,23 @@ Deno.test("mirror fan-out: a wake, an unload and a failure cross as `[system]`; 
       await harness("alarm", [{ type: "text", kind: "alarm", text: "" }], {}, {
         unload: { since: "a", through: "b" },
       });
-      await harness("alarm", [{ type: "text", kind: "alarm", text: "recordarle a Mecha el mail" }]);
+      // a reminder shows the person its occurrence and words, not the doc it stands in
+      await harness(
+        "alarm",
+        [{
+          type: "text",
+          kind: "alarm",
+          text: "19 Nov recordarle a Mecha el mail — pendientes, remind 2 days before at 10:00",
+        }],
+        {},
+        {
+          reminder: {
+            doc: "pendientes",
+            at: "2026-11-17T10:00",
+            said: "19 Nov recordarle a Mecha el mail",
+          },
+        },
+      );
       await harness("tool_result", [{
         type: "data",
         kind: "tool_result",
@@ -1143,7 +1159,7 @@ Deno.test("mirror fan-out: a wake, an unload and a failure cross as `[system]`; 
       await waitFor(async () => (await inConv("549")).length === 5);
       assertEquals((await inConv("549")).map(textOf), [
         "`[agente memorizando...]`",
-        "`[sistema]` ⏰ recordarle a Mecha el mail",
+        "`[sistema]` ⏰ 19 Nov recordarle a Mecha el mail",
         "`[sistema]` ✗ Command exited with code 1",
         "`[sistema]` ✗ send(to: Vivian) — the bridge is down",
         '`[sistema]` ✗ …{status: 404, body: "not found"}\nCommand exited with code 1',

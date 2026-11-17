@@ -18,7 +18,7 @@ import type { AlarmEvent, Draft, PermissionResponseEvent } from "./types.ts";
 import { reportSends } from "./late.ts";
 import { LOCAL_CONNECTION, MIND, sessionAddress } from "./session.ts";
 import { GATE_HOURS } from "./config.ts";
-import { dayOf, docName, remindersDue, wallOf, wallStamp } from "./agenda.ts";
+import { dayOf, docName, type Due, remindersDue, wallOf, wallStamp } from "./agenda.ts";
 
 /** What the clock reads reminders off: the agents it sweeps, each on its own clock, the
  *  docs that hold their lines, and the backlog an agent inherits at boot. The backlog is
@@ -98,11 +98,11 @@ export async function remindDue(
     for (const d of await clock.docs.list(ctx)) {
       const name = docName(d.header);
       const body = d.body ?? await clock.docs.read(ctx, d.header) ?? "";
-      const byMinute = new Map<number, string[]>();
+      const byMinute = new Map<number, Due[]>();
       for (const due of remindersDue(name, body, to - grace, to, today)) {
-        byMinute.set(due.fire, [...byMinute.get(due.fire) ?? [], due.text]);
+        byMinute.set(due.fire, [...byMinute.get(due.fire) ?? [], due]);
       }
-      for (const [fire, lines] of byMinute) {
+      for (const [fire, dues] of byMinute) {
         const key = `remind:${agentId}:${name}:${wallStamp(fire)}`;
         if ((await log.read({ externalId: key, limit: 1 })).length > 0) continue;
         await log.publish(
@@ -115,8 +115,14 @@ export async function remindDue(
               conversation: { address: sessionAddress(agentId, MIND) },
               external_id: key,
             },
-            extra: { reminder: { doc: name, at: wallStamp(fire) } },
-            parts: [{ type: "text", kind: "alarm", text: lines.join("\n") }],
+            extra: {
+              reminder: {
+                doc: name,
+                at: wallStamp(fire),
+                said: dues.map((d) => d.said).join("\n"),
+              },
+            },
+            parts: [{ type: "text", kind: "alarm", text: dues.map((d) => d.text).join("\n") }],
           } satisfies Draft<AlarmEvent>,
         );
         fired++;

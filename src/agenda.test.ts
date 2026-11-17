@@ -189,13 +189,13 @@ Deno.test("a reminder follows the moment and any repeat; one the line cannot kee
   }]);
 });
 
-Deno.test("a reminder is due at the minute it names, once per line, never for a done one", () => {
+Deno.test("a reminder is due at the minute it names, once per line, never for a done one, and an open one's box stays home", () => {
   const zone = "America/Argentina/Buenos_Aires";
   const wall = (iso: string) => wallOf(iso, zone)!;
   const body = [
     "## Agendado",
     "- @5 Nov 10:00 remind 1 hour before Ale Castro",
-    "- @7 Nov remind 2 days before at 9:30 Greta: falta el horario",
+    "- [ ] @7 Nov remind 2 days before at 9:30 Greta: falta el horario",
     "- [x] @5 Nov 9:30 remind ya está",
     "- @3 Nov 2026 18:00 every Tue remind 15 minutes before Clase de inglés",
   ].join("\n");
@@ -208,6 +208,11 @@ Deno.test("a reminder is due at the minute it names, once per line, never for a 
   assertEquals(due("2026-11-05T12:29:00Z", "2026-11-05T12:30:00Z"), [
     "7 Nov Greta: falta el horario — playas › Agendado, remind 2 days before at 9:30",
   ]);
+  assertEquals(
+    remindersDue("playas", body, wall("2026-11-05T12:29:00Z"), wall("2026-11-05T12:30:00Z"), NOV4)
+      .map((d) => d.said),
+    ["7 Nov Greta: falta el horario"],
+  );
   assertEquals(due("2026-11-05T12:30:00Z", "2026-11-05T13:00:00Z"), []); // the done line is quiet
   // a week down: the class reminds once, of the latest one it missed
   assertEquals(
