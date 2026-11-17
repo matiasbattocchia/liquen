@@ -230,7 +230,9 @@ arrived, not how much arrived in one room, and there is nothing to exclude from 
 principal says never accumulates, an engaged conversation wakes before it piles, a silenced one is not news.
 A conversation someone is **writing** in holds its news on every rung, the summons and the
 floor included: the rest of the thought is on its way, as a burst's is while the debounce
-waits. The wire says who is writing (`status.typing`, §3), and the hold ends when they stop,
+waits. The wire says who is writing (`status.typing`, §3); a wire that tells only a client
+showing online hears it while a conversation the agent spoke in is engaged, since each send
+names when that ends (`engagedMinutes` on). The hold ends when they stop,
 when their stamp goes `TYPING_FRESH_MS` unrenewed, since a stop is not always said, or
 `TYPING_HOLD_MS` after the oldest news there, so an endless writer still gets an answer.
 The clock poke re-asks. It holds that conversation alone: news elsewhere still wakes the

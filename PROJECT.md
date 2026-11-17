@@ -7247,14 +7247,30 @@ clock: nothing told it he was still writing.
 
 Open:
 
-- Whether WhatsApp delivers chat states to the bridge at all without `SendPresence
-  (available)`: the bridge log says, once it runs. If it does not, going online is a
-  decision of its own (it shows the account online; whether it also keeps the phone's
-  notifications away is unverified).
-- A direct chat's typing may need `SubscribePresence` as well.
 - A stamp lives on a row in the window, so a conversation whose newest row is below the
   window's floor shows no typing.
 - Typing out is recorded in DESIGN §13, and so is the conversation as the stamp's home.
+
+### Online while engaged: the bridge hears typing (2026-11-17) — LANDED, not yet run live
+
+Overnight on new, 70 messages arrived and not one chat state did. whatsmeow's own word on
+`events.ChatPresence`: WhatsApp sends them only to a client marked online, and the bridge
+never declares a presence. Online all the time would cost the phone its notifications
+(whatsmeow bridges report the phone goes quiet while a linked device shows online), so the
+session shows online only while a conversation the agent spoke in is engaged.
+
+- **The dispatch** stamps each agent send with `engaged_until`: now plus the sending
+  agent's `engagedMinutes`, read from the org as it stands.
+- **The bridge** goes online on a send that names a future `engaged_until`, keeps the
+  latest window, goes offline when it closes, and shows online again on a reconnect inside
+  it. It logs `Session <n>: Online for …` and `Offline`.
+
+Open:
+
+- Whether chat states now arrive, and in direct chats as well as groups.
+- Whether the phone's notifications go quiet in the window, as reported.
+- Typing is heard only after the agent speaks: the first answer in a conversation it opens
+  has no hold.
 
 ### Where matias's spend goes, and logs to see it (2026-11-17) — LANDED
 
