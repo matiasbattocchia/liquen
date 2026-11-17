@@ -2,7 +2,7 @@
 
 Decided 17 Nov 2026, for Postgres: the database and short-lived functions, with no process
 that must stay up. Any writer may insert into `events`, and triggers make the row right.
-The eight below are settled, and nothing in them is open.
+The ten below are settled. What is still open closes the file.
 
 1. A `wakes` table holds every look a session is owed.
 2. A look's life runs between `wakes` and `locks`.
@@ -15,6 +15,9 @@ The eight below are settled, and nothing in them is open.
 7. A session has one timer, its wake, and `decide` names the moment to ask again. No look
    comes by the minute.
 8. Every model call is a step, tried and metered one way, under one name.
+9. On Postgres every table carries `organization_id`, and a store is opened on one org.
+   On SQLite the file is the org.
+10. A `looks` table keeps what each look cost in time and memory.
 
 ## 1. The wakes table
 
@@ -265,3 +268,51 @@ and the meter counts it under its kind.
   adaptive on every step, and the judge states only its `decision.effort`.
 - **What each keeps.** The judge keeps its slice, its instruction and the shape of its
   answer. The ping keeps `max_tokens: 0`.
+
+## 9. Orgs
+
+On Postgres one schema holds every org, and a column tells them apart. The schema is the
+service's: liquen's stands beside open-bsp-api's.
+
+- **The column.** Every table carries `organization_id`, `wakes` and `looks` among them.
+  Every key and unique index that names a thing inside an org leads with it, as
+  `connections (organization_id, service, address)` does.
+- **`organizations` is liquen's own table.** One row per org: its `id` and its `name`.
+- **A store is opened on one org.** The Postgres adapter binds its handle to the org, as
+  it binds it to the schema. xi, nu and the connectors see one org's rows.
+- **SQLite has no column.** The file is the org.
+- **A trigger stays inside its org.** A row arms wakes only for its org's sessions. The
+  law and the `config` it reads are that org's, and a post names the org with the session.
+- **The tick is one job.** `pg_cron` runs each org's passes.
+- **The suite holds two orgs apart.** A Postgres case writes to two orgs in one schema.
+  Neither reads the other's rows, and neither's insert arms the other's wake.
+
+## 10. The looks table
+
+A look is what a host bills: one invocation, its time and its memory. `looks` keeps a row
+for each, an `ignore` too.
+
+- **Columns.** `created_at`, `agent_id`, `session`, `turn_id`, `verdict`, `wall_ms`,
+  `model_ms`, `cpu_ms`, `memory_bytes`, `events`, `request_bytes`.
+- **What each number is.**
+  - `wall_ms`: from the lease taken to the look's end.
+  - `model_ms`: the wait on the provider, the judge's calls with the step's.
+  - `cpu_ms`: the look's synchronous work, timed where it runs: reading the window,
+    render, the request serialized and the answer parsed.
+  - `memory_bytes`: the process's resident memory as the look ends.
+  - `events` and `request_bytes`: the window's rows, and the bytes of the request sent.
+- **It is telemetry, as `usage` is.** A table beside the log, so its rows arm no wake. It
+  commits with the look's end (§2, step 4), and `turn_id` joins it to the calls `usage`
+  holds.
+- **A tool's time stays on its result.** An exec tool's run keeps its wall time in
+  `extra.exec`.
+
+## Open
+
+None of these is part of the batch until it is settled.
+
+- **How the store's role is held to its org.** A policy on every table could refuse what a
+  missed predicate lets through, by reading a setting of the connection. Whether a pooler
+  in transaction mode keeps that setting is unverified.
+- **An org's users.** Which rows say that a signed-in user may reach an org through the
+  Data API.
