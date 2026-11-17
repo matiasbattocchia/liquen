@@ -208,9 +208,12 @@ What the door is asked about:
 What follows:
 
 - **`warm` is a verdict.** With nothing else owed and the cache's hour near its end, xi
-  renders the window and sends it with `max_tokens: 0`. The request places no anchor, so
-  every byte it sends is the log's, and the next turn reads it back. Only a mind is kept
+  renders the window up to where its last step began and sends it with `max_tokens: 0`.
+  The request places no anchor of its own, so its bytes are the ones that step's think
+  sent: it reads what the think wrote, and closes as the think did. Only a mind is kept
   warm, on a provider whose cache a read renews.
+- **The suite holds the bytes.** A case renders a ping and finds the request its step
+  sent. What the provider read shows in the `keepalive` row of a live org.
 - **A ping writes a `keepalive` row.** It sits in the mind's room and says what the ping
   read, or the error that ended it. xi sets it aside from the window as it does a
   decision, so no rule, render or tool meets one, and it arms no wake. The log holds the
@@ -262,8 +265,5 @@ and the meter counts it under its kind.
 
 None of these is part of the batch until it is settled.
 
-- **The keeper's render.** Whether a window rendered again reads the cache the session's
-  last call wrote. `render.ts` says the request only ever grows, and no test holds a
-  second render to a live cache.
 - **The hour's start.** Which row says when a step's call was sent. The cache's hour runs
   from there, and a long answer is stamped minutes later.
