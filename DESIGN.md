@@ -4137,17 +4137,46 @@ no sent message without its call; worth it once scripts see real use).
 
 - **A decision model for the questions with known answers**: wake now or wait for the
   digest, act or stay silent, which tier drafts, which contact a name means. A decision
-  model answers each in one pass with a confidence, at a fraction of a think; Jev, from
-  TypeSafe AI, is one, so far known only through vendor claims. The LLM still writes every
-  draft and every note. By value:
-  - **Wake or not, promote only**: a burst it marks urgent wakes the mind early, and the
-    digest runs whatever it says. A miss costs today's delay, a false alarm one think.
+  model answers each in one pass, at a fraction of a think. Haiku 5.5 answers through
+  structured output; Jev, from TypeSafe AI, is known so far only through vendor claims,
+  and the shadow log is where the two can be compared. The LLM still writes every draft
+  and every note. By value:
+  - **Wake or not, as a traffic light**: once the debounce settles, each room with news
+    gets one call. It reads the burst, the room's last lines, who holds the floor, today's
+    agenda and the principal's standing word about people and rooms, and it answers with
+    a one-line reason and a light:
+    - **green** wakes the agent now;
+    - **yellow** waits for the next wake or the digest, and counts toward
+      `digestAfterMessages`;
+    - **red** never makes a digest due and is never counted. It is read whenever something
+      else wakes the agent.
+
+    A summons is never judged, and the night holds over every light. The prefix holds
+    what changes least (the instructions, then the principal's word, then the agenda),
+    and the room's lines follow the cache mark.
+  - **Engagement is a signal**: with the model on, holding the floor is something the call
+    reads, not a rung of the ladder. A question put to the agent where it holds the floor
+    is green; "nos hablamos" after its own "hasta luego" is red. With the model off, the
+    engaged rung of §2 decides, on `engagedMinutes`. Once the lights act, the defaults
+    become `digestMinutes: 60` and `engagedMinutes: 10`: green carries what a short digest
+    is there to catch, and the hour is where the spend falls.
+  - **A verdict is an event**, of a type of its own, in both phases. main writes it in the
+    mind room with no `turn_id`, so nothing counts it as the agent's voice. Its payload
+    holds the light, the reason, the model and the room it judged; `extra.consumed` names
+    the last event it read there, and the next call for that room starts past it. Its
+    spend meters in `usage` under a kind of its own. In shadow it is inert at every
+    reader: xi's class gate passes over it, render draws nothing, `search` never returns
+    it, and `decide` skips it in every positional rule. That last one is the hazard: a
+    verdict landing behind a trailing `error` would end the idle that error holds, and
+    the failing think would loop. Live, a green verdict passes the gate, so its arrival
+    is the wake, and `decide` reads the latest verdict for the news past the horizon.
   - **The agenda first, with no model**: a room named in today's agenda counts as engaged
     for a few hours around its time. The model takes the long tail ("estoy abajo", a
-    delivery at the door), reading the burst, the room's last lines and today's agenda.
-  - **Shadow before it acts**: its verdict is logged for each burst and compared with what
-    the next digest did. The principal's approvals are labels already on file for the
-    other questions.
+    delivery at the door).
+  - **Shadow before it acts**: each verdict is set beside what the next think did with
+    that burst (a send, a reply, or `<|SILENCE|>`), which shows what an hour-long digest
+    would have answered late. The principal's approvals are labels already on file for
+    the other questions.
 - **A second model family through Chat Completions.** DeepSeek V4-Pro runs an agent like
   matias for about a tenth of Opus 5.5, priced on a real week, and trails it by 5 to 20
   points on the benchmarks the two share. Chat Completions is also what OpenRouter, Kimi,
