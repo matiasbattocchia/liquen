@@ -207,14 +207,17 @@ What the door is asked about:
 What follows:
 
 - **`warm` is a verdict.** With nothing else owed and the cache's hour near its end, xi
-  renders the window and sends it with `max_tokens: 0`. `WARM_PINGS` bounds the run
-  between two turns.
+  renders the window and sends it with `max_tokens: 0`. The request places no anchor, so
+  every byte it sends is the log's, and the next turn reads it back. `WARM_PINGS` bounds
+  the run between two turns.
 - **The end settles the wake.** xi asks `decide` about the window it leaves, after an
   `ignore` and after work alike. Something still owed keeps the wake, due now: the
   checkpoint an over-budget window needs after a turn's own error is one. A moment named
   moves the wake there. With neither, the wake is deleted.
 - **An early look is free.** It answers `ignore` and settles the wake again. So the door
   may name a moment too soon, and never one too late.
+- **The look's clock.** xi decides with the later of its own clock and the wake's `due`.
+  A function whose clock runs behind the database's still finds the moment come.
 - **The judge rides that look.** News a hold kept back is judged in the look that comes
   when the hold ends, and a green thinks at once.
 - **A stamp taken off.** A typing stamp removed ends its hold early. The look still comes
