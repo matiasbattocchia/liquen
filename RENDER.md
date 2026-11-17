@@ -172,6 +172,19 @@ goes with its words. Each skill the system describes is one file under
 | `# Programs` with its note | ✗ | The helpers: `bash.md` |
 | `down — N connections:` `· … — whatsapp, logged out since 14:02` | ✗ | A connector never heard: `connector down, never heard since …` |
 
+## Decision · `system/decision.md`
+
+What the decision model reads of one room (`judge.ts`, not `render.ts`): its own call, apart
+from the mind's window, which never draws the `light` it writes.
+
+| Item | Described in system | Note |
+|---|---|---|
+| `Room: <name> (<kind>, <service>)` | ✗ | |
+| `The agent spoke last on your side here, N min ago: it holds the floor.`, `The principal spoke last…`, `Nobody on your side has spoken here…` | ✓ | Who holds the floor |
+| `Today:` and the calendar's lines, or `Today: nothing on the calendar.` | ✓ | The anchor's `today` and `tomorrow` lines |
+| `HH:MM <who>: <text>`, `who` being `agent`, `principal` or the sender's name | ✓ | The room's last 20 lines |
+| `— new, to judge —` | ✓ | Above the first line the mind has not read |
+
 ## Recall
 
 Search pages, which arrive as tool results.

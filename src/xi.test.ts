@@ -9,6 +9,8 @@ import {
   gateOf,
   HUSHED_READ,
   hushedOn,
+  judgeable,
+  type Lit,
   relevant,
   specsOf,
   typingOn,
@@ -19,7 +21,7 @@ import {
   windowOf,
   type XiPorts,
 } from "./xi.ts";
-import type { Draft, Envelope, Event, Session, ToolUseEvent } from "./types.ts";
+import type { Color, Draft, Envelope, Event, Session, ToolUseEvent } from "./types.ts";
 import { type Log, openLog } from "./store/log.ts";
 import { estTokens } from "./render.ts";
 import { RUNAWAY } from "./compact.ts";
@@ -1756,4 +1758,84 @@ Deno.test("causeOf: the principal's word or a reminder in the session's room ask
   assertEquals(causeOf([], SESSION, "act"), undefined);
   // news already answered asks nothing
   assertEquals(causeOf([word, selfMsg()], SESSION, "think"), undefined);
+});
+
+/* ── the decision model (§2): a light per room ───────────────────────── */
+
+const LIT: Wake = { decision: { enabled: true, model: "m", effort: "low" } };
+const light = (room: string, color: Color, consumed: string): Lit => ({
+  parts: [{ type: "data", kind: "light", data: { color, reason: "r", model: "m", room } }],
+  extra: { consumed },
+});
+
+Deno.test("attention: a green light wakes at once, and red news never makes the digest due", () => {
+  const news = world("slack:C1", 0);
+  // a recent look defers the world, unless the room's light is green
+  assertEquals(decide([looked(1), news], SESSION, LIT, NOON), "ignore");
+  const green = [light("slack:C1", "green", news.id)];
+  assertEquals(decide([looked(1), news], SESSION, LIT, NOON, [], green), "think");
+  // the interval is due, but red news is not what makes it so; yellow is weighed as ever
+  const red = [light("slack:C1", "red", news.id)];
+  assertEquals(decide([looked(16), news], SESSION, LIT, NOON, [], red), "ignore");
+  const yellow = [light("slack:C1", "yellow", news.id)];
+  assertEquals(decide([looked(16), news], SESSION, LIT, NOON, [], yellow), "think");
+  assertEquals(decide([looked(1), news], SESSION, LIT, NOON, [], yellow), "ignore");
+  // a light covers the room up to its horizon: a line after it is unjudged, and counts
+  const later = world("slack:C1", 0);
+  assertEquals(decide([looked(16), news, later], SESSION, LIT, NOON, [], red), "think");
+  // the latest light of a room wins
+  assertEquals(decide([looked(1), news], SESSION, LIT, NOON, [], [...green, ...red]), "ignore");
+});
+
+Deno.test("attention: with the model on, a judged room's floor wakes nobody, and an unjudged one is the floor's", () => {
+  const spoke = ev(
+    "message",
+    { ...SELF, conv: "slack:C1", ts: at(4), payload: { turn_id: "T0" } } as
+      & Partial<Event>
+      & { conv?: string },
+  );
+  const bye = world("slack:C1", 0, "nos hablamos");
+  const window = [spoke, looked(1), bye];
+  // the agent holds the floor: with no light yet, the engaged rung answers
+  assertEquals(decide(window, SESSION, LIT, NOON), "think");
+  // the judge read the floor and lit the goodbye red
+  const red = [light("slack:C1", "red", bye.id)];
+  assertEquals(decide(window, SESSION, LIT, NOON, [], red), "ignore");
+  // with the model off, lights are never read
+  assertEquals(decide(window, SESSION, WAKE, NOON, [], red), "think");
+});
+
+Deno.test("judgeable: the rooms whose words no light covers — none when off, at night, or when the mind wakes anyway", () => {
+  const a = world("slack:C1", 0);
+  const b = world("slack:C2", 0);
+  const rooms = (events: Event[], wake: Wake, lit: Lit[] = [], now = NOON) =>
+    judgeable(events, SESSION, wake, now, lit).map((r) => r.room);
+  assertEquals(rooms([looked(1), a, b], LIT), ["slack:C1", "slack:C2"]);
+  assertEquals(rooms([looked(1), a, b], LIT, [light("slack:C1", "yellow", a.id)]), ["slack:C2"]);
+  assertEquals(rooms([looked(1), a, b], WAKE), []);
+  // the principal's word at home wakes the mind, and the turn reads every room
+  const home = ev(
+    "message",
+    {
+      ...SELF,
+      conv: MIND,
+      ts: at(0),
+      parts: [{ type: "text", kind: "text", text: "¿algo nuevo?" }],
+    } as Partial<Event> & { conv?: string },
+  );
+  assertEquals(rooms([looked(1), a, home], LIT), []);
+  // asleep, the world waits for morning and nothing is judged
+  const night = Date.parse("2026-08-19T03:00:00Z");
+  assertEquals(rooms([a], LIT, [], night), []);
+  // a mark is owed no answer, so it is never judged
+  const reaction = ev(
+    "message",
+    {
+      conv: "slack:C3",
+      ts: at(0),
+      payload: { action: "add" },
+      parts: [{ type: "data", kind: "reaction", data: "👍" }],
+    } as Partial<Event> & { conv?: string },
+  );
+  assertEquals(rooms([looked(1), reaction], LIT), []);
 });

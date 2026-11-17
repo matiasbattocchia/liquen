@@ -78,7 +78,7 @@ export const DEFAULT_RULES: Rule[] = [
 // counted from the last time it looked, the way a person puts the phone down and picks it
 // up again. `digestAfterMessages` — how much unread has to pile up, across the whole world,
 // for it to check early.
-export const DEFAULT_ENGAGED_MINUTES = 15;
+export const DEFAULT_ENGAGED_MINUTES = 10;
 export const DEFAULT_DIGEST_AFTER_MESSAGES = 25;
 export const DEFAULT_DIGEST_MINUTES = 15;
 // Nights are not a slower cadence, they are SLEEP: inside the span the ambient class wakes
@@ -153,6 +153,11 @@ export const TICK_MS = 60_000;
 // nothing forwards at all.
 export const DEFAULT_EDGE_PORT = 8787;
 
+/** The decision model's own (`decision.model`, `decision.effort`): small and quick, since
+ *  it judges every burst the mind would otherwise wake on or let pile up. */
+export const DEFAULT_DECISION_MODEL = "claude-haiku-5-5";
+export const DEFAULT_DECISION_EFFORT: Effort = "low";
+
 /** How long a page lives from its publishing, in days (`pages.days`). */
 export const DEFAULT_PAGE_DAYS = 30;
 
@@ -184,6 +189,13 @@ export interface AgentDefaults {
   sleepHours: string | null; // org-clock span "23-8"; null ⇒ never sleeps
   presence: PresenceLevel; // what a surface hears of the mind at work (§9)
   mind: boolean; // false ⇒ no session runs (§4): a member with no agent, or an agent paused
+}
+
+/** The decision model (§2), the `decision` section. */
+export interface DecisionConfig {
+  enabled: boolean;
+  model: string;
+  effort: Effort | null; // null ⇒ the model decides
 }
 
 /** One roster entry: overrides of `shared.agents`, key by key, plus the agent's own identity —
@@ -253,6 +265,9 @@ export interface OrgConfig {
     /** How long a page lives from its publishing, in days. */
     days: number;
   };
+  /** The decision model (§2): a cheap call that judges each room's news green, yellow or
+   *  red before the mind's ladder weighs it. */
+  decision: DecisionConfig;
   /** The roster: every key under `agents` IS an agent, a row of the store (§9). The name
    *  is the agent's id, its folder under `data/agents/`, and its Linux user in the
    *  container. */
@@ -634,6 +649,26 @@ const PAGES: Entry[] = [
   },
 ];
 
+const DECISION: Entry[] = [
+  {
+    key: "enabled",
+    value: false,
+    doc: "judge each room's news before the mind wakes: green wakes it at once, yellow " +
+      "waits for the next look, red is never what makes a digest due; off ⇒ the ladder " +
+      "alone, the engaged rung on engagedMinutes",
+  },
+  {
+    key: "model",
+    value: DEFAULT_DECISION_MODEL,
+    doc: "the model that judges, on the agent's own provider",
+  },
+  {
+    key: "effort",
+    value: DEFAULT_DECISION_EFFORT,
+    doc: `the judge's reasoning effort (${EFFORTS.join("|")}); null ⇒ the model decides`,
+  },
+];
+
 const SECTION_DOCS: Record<string, string> = {
   system: "harness machinery — every deployment works on the defaults",
   deployment: "where the org's parts live — the log and the vault, the docs, the agents' " +
@@ -643,6 +678,8 @@ const SECTION_DOCS: Record<string, string> = {
   edge: "the org's one door — the address the world dials, the one port the org binds, " +
     "and the tunnel",
   pages: "the pages agents publish for WhatsApp conversations, served at <publicUrl>/pages/<id>",
+  decision: "the decision model — a cheap call that sorts each room's news into green, " +
+    "yellow and red, so the mind wakes for what cannot wait and the digest can be long",
   agents: "the roster: every key is a member — an agent, its folder and its unix user, or " +
     "a person alone (mind: false)",
   connections: "the connectors' knobs — a subsection per connector, validated by its owner",
@@ -670,6 +707,7 @@ function defaults(): OrgConfig {
     processors: fromEntries(PROCESSORS),
     edge: fromEntries(EDGE),
     pages: fromEntries(PAGES),
+    decision: fromEntries(DECISION),
     agents: {},
     connections: {},
   } as unknown as OrgConfig;
@@ -768,6 +806,7 @@ const SCOPES: Record<string, Entry[]> = {
   processors: PROCESSORS,
   edge: EDGE,
   pages: PAGES,
+  decision: DECISION,
 };
 
 /** The scope a connection's knobs live in, and the key its declaration stands by. */
@@ -850,6 +889,13 @@ export function parseDeclared(raw: string, path: string): Declared {
       ),
       ...leavesOf(asObject(found.edge, path, "edge"), EDGE, "edge", path, "edge"),
       ...leavesOf(asObject(found.pages, path, "pages"), PAGES, "pages", path, "pages"),
+      ...leavesOf(
+        asObject(found.decision, path, "decision"),
+        DECISION,
+        "decision",
+        path,
+        "decision",
+      ),
     ],
     agents: {},
   };
@@ -1064,7 +1110,9 @@ export function materialize(
     lines.push(`${name}:`);
   };
   const plain = cfg as unknown as Record<string, Record<string, unknown>>;
-  for (const name of ["system", "deployment", "shared", "processors", "edge", "pages"]) {
+  for (
+    const name of ["system", "deployment", "shared", "processors", "edge", "pages", "decision"]
+  ) {
     section(name);
     const entries = name === "deployment" ? DEPLOYMENT : SCOPES[name];
     emit("  ", name, entries, plain[name]);
@@ -1251,7 +1299,24 @@ export function validateOrg(cfg: OrgConfig, path: string): void {
         `${JSON.stringify(cfg.pages.days)})`,
     );
   }
+  validateDecision(cfg.decision, path);
   validateAgent(cfg.shared.agents, `${path}: shared.agents`);
+}
+
+function validateDecision(d: DecisionConfig, path: string): void {
+  if (typeof d.enabled !== "boolean") {
+    throw new Error(
+      `${path}: decision.enabled must be true or false (got ${JSON.stringify(d.enabled)})`,
+    );
+  }
+  if (typeof d.model !== "string" || d.model === "") {
+    throw new Error(`${path}: decision.model must be a model name`);
+  }
+  if (d.effort !== null && !(EFFORTS as readonly string[]).includes(d.effort)) {
+    throw new Error(
+      `${path}: decision.effort: unknown effort "${d.effort}" (one of ${EFFORTS.join(", ")})`,
+    );
+  }
 }
 
 /** The checks of `deployment`, the section read before there is a store to read. */

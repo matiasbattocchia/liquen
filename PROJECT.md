@@ -7295,6 +7295,36 @@ Open:
 - The two unexplained misses; the next one is named in the log.
 - The suspend lapses ask for a machine that stays awake while an org runs, or none at all.
 
+### The decision model: a light per room (2026-11-17) — LANDED, on in new
+
+matias's silent wakes and a 15-minute digest were much of his spend, and a longer digest
+would have kept a line that matters waiting. The `decision` section (`enabled`, `model`,
+`effort`; off, `claude-haiku-5-5`, `low`) turns on a judge: under the lease, before
+`decide`, each world room whose words no light covers gets one call, which answers a
+reason and a color, and the answer is a `light` row in the mind's room (DESIGN §2).
+
+- **Green** wakes the mind now; **yellow** waits for the next look; **red** neither makes
+  a digest due nor counts toward one. A room the judge has not lit falls back to the
+  engaged rung, and with the model off the ladder is unchanged.
+- **Lights are set aside in xi** before any rule reads the window, so a light behind a
+  failed turn cannot end the idle the failure holds.
+- **The judge spends past the keeper**, on its own meter kind (`decision`).
+- `engagedMinutes` now defaults to 10.
+
+Live on Haiku 5.5, through the branch's code with the seed prompt: "estoy abajo" came back
+green, "nos hablamos" after the agent's own goodbye red, and a request for a quote yellow.
+
+new runs it from its next start: `decision.enabled: true`, `digestMinutes: 60`,
+`engagedMinutes: 10` in its `config.yaml`. vibes and turtle keep it off.
+
+Open:
+
+- The principal's standing word about people and rooms is not in the judge's prompt yet.
+- The class gate restated in SQL (CHANGES, the wakes batch) needs `light` among the types
+  that wake nobody.
+- What the lights on file say against what the turns after them did, once new has run on
+  them a while.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

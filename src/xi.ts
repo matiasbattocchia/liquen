@@ -29,6 +29,7 @@ import type {
   Action,
   AlarmEvent,
   Cause,
+  Color,
   ContactHit,
   Contacts,
   Conversation,
@@ -39,6 +40,7 @@ import type {
   Event,
   EventId,
   Json,
+  LightEvent,
   MessageEvent,
   PermissionRequestEvent,
   PermissionResponseEvent,
@@ -55,6 +57,7 @@ import type {
   ToolUseEvent,
 } from "./types.ts";
 import {
+  type DecisionConfig,
   DEFAULT_DIGEST_AFTER_MESSAGES,
   DEFAULT_DIGEST_MINUTES,
   DEFAULT_ENGAGED_MINUTES,
@@ -64,6 +67,7 @@ import {
   TYPING_FRESH_MS,
   TYPING_HOLD_MS,
 } from "./config.ts";
+import { judge, lightOf, sliceOf } from "./judge.ts";
 import {
   cardNames,
   type Describe,
@@ -229,16 +233,21 @@ export interface Wake {
    *  compacting it, and what the checkpoint leaves uncovered. Unset ⇒ the catalog's. */
   compactAt?: number;
   keepRecent?: number;
+  /** The decision model (§2, the `decision` section). Enabled, a room's light decides its
+   *  news on the engaged rung and in the digest; unset or off, the ladder alone. */
+  decision?: DecisionConfig;
 }
 
 /** Decide — once, from one window — what is owed. Position-aware, so a late invocation that
- *  arrives after the work was already done decides `ignore` (quiescence). */
+ *  arrives after the work was already done decides `ignore` (quiescence). `lights` are the
+ *  decision model's judgments, which the window itself never holds. */
 export function decide(
   events: Event[],
   session: Session,
   wake: Wake,
   now: number = Date.now(),
   owed: Owed[] = owedOf(events, session),
+  lights: Lit[] = [],
 ): Decision {
   // A gate never wedges the mind. Every use gets an answer in the turn it was made — a
   // gated one gets `pending_approval` — so the chain always closes and the conversation
@@ -264,7 +273,7 @@ export function decide(
       compactionSpan(events, session, wake.compactAt, wake.keepRecent) !== null;
     return due ? "compact" : "think";
   }
-  const v = attention(events, session, wake, now);
+  const v = attention(events, session, wake, now, lights);
   return v === "ignore" ? idle(true) : v;
 }
 
@@ -331,14 +340,14 @@ function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
  * Deferring costs nothing and loses nothing: the news stays owed in the log, and the clock
  * poke (main's tick) re-asks this same question until it is due.
  */
-function attention(events: Event[], session: Session, wake: Wake, now: number): Decision {
-  // news that is no reason to wake waits for a turn something else opens: a late result its
-  // tool marked quiet, and a lapse
-  const news = unlessWriting(
-    newsOf(events, session).filter((e) => !sealed(e, events, wake, now) && !quiet(e) && !lapse(e)),
-    typingIn(events, now),
-    now,
-  );
+function attention(
+  events: Event[],
+  session: Session,
+  wake: Wake,
+  now: number,
+  lights: Lit[] = [],
+): Decision {
+  const news = heard(events, session, wake, now);
   if (news.length === 0) return "ignore";
   // a NAMED session is REACTIVE (§4): only its own rooms reach it at all — its window is
   // its enrollments — so every piece of news is addressed to it, and the ladder below
@@ -369,8 +378,15 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // command was asked to wake on, its end — which the next turn may have to act on
   if (told.some((e) => e.type === "tool_result")) return "think";
   // holding the floor is the one question that is per-conversation — so the news is grouped
-  // for it, and for nothing else: the two rules below weigh the world as one thing
+  // for it, and for nothing else: the two rules below weigh the world as one thing. With the
+  // decision model on, a room's light answers it: green wakes now, and a room whose news is
+  // all judged is not woken for by the floor, which the judge read. News no light covers yet
+  // (the judge failed, or has not run) is weighed by the floor, as with no model at all
+  const lit = wake.decision?.enabled ? colorsOf(events, lights) : undefined;
   for (const conv of new Set(told.map((e) => e.envelope.conversation.address))) {
+    const here = told.filter((e) => e.envelope.conversation.address === conv);
+    if (lit && here.some((e) => lit.get(e.id) === "green")) return "think";
+    if (lit && here.every((e) => lit.has(e.id))) continue;
     if (engaged(conv, events, session, wake, now)) return "think";
   }
   // ASLEEP: inside the span the ambient class wakes nobody, however deep the pile. The two
@@ -395,9 +411,76 @@ function attention(events: Event[], session: Session, wake: Wake, now: number): 
   // the same pile it is, and the digest reads the two together.
   if (news.some((e) => lateWords(e, events, looked))) return "think";
   // a MARK — a reaction, a deletion, a room's change — is owed no answer: it rides along
-  // when words make the digest due, and alone it never does
-  const said = news.filter((e) => e.type !== "message" || spoken(e) || words(e) !== undefined);
+  // when words make the digest due, and alone it never does. Nor does news the judge lit
+  // red: it is read when something else opens a turn, and counts toward no pile
+  const said = news.filter((e) =>
+    (e.type !== "message" || spoken(e) || words(e) !== undefined) && lit?.get(e.id) !== "red"
+  );
   return said.length > 0 && digestDue(said, looked, wake, now) ? "think" : "ignore";
+}
+
+/** The news attention weighs: what the window owes past the last look, less what is no
+ *  reason to wake (a note whose words are on the way, a late result its tool marked quiet,
+ *  a lapse) and what someone is still writing. */
+function heard(events: Event[], session: Session, wake: Wake, now: number): News[] {
+  return unlessWriting(
+    newsOf(events, session).filter((e) => !sealed(e, events, wake, now) && !quiet(e) && !lapse(e)),
+    typingIn(events, now),
+    now,
+  );
+}
+
+/** A light as the rules read it: its judgment and its horizon, stored or about to be. */
+export type Lit = Pick<LightEvent, "parts" | "extra">;
+
+/** Each piece of news a light covers, and its color: the latest light of the news's room
+ *  whose horizon (`extra.consumed`) stands at or past it. A light whose horizon the window
+ *  no longer holds covers nothing in it. */
+function colorsOf(events: Event[], lights: Lit[]): Map<string, Color> {
+  const at = new Map(events.map((e, i) => [e.id, i]));
+  const out = new Map<string, Color>();
+  for (const l of lights) {
+    const { room, color } = l.parts[0].data;
+    const upTo = at.get(String(l.extra?.consumed));
+    if (upTo === undefined) continue;
+    for (let i = 0; i <= upTo; i++) {
+      if (events[i].envelope.conversation.address === room) out.set(events[i].id, color);
+    }
+  }
+  return out;
+}
+
+/**
+ * The rooms the decision model is owed a look at (§2), each with its news no light covers
+ * yet. None when the model is off, for a named session, at night, or when something already
+ * wakes the mind without it: a summons, an alarm or an update, after which the turn reads
+ * every room anyway. A room's news is its words, as the digest weighs them: marks are owed
+ * no answer, and a sign-out is the harness's line, not the room's.
+ */
+export function judgeable(
+  events: Event[],
+  session: Session,
+  wake: Wake,
+  now: number,
+  lights: Lit[],
+): { room: string; news: Event[] }[] {
+  if (!wake.decision?.enabled || session.id !== MIND || asleep(now, wake)) return [];
+  const news = heard(events, session, wake, now).filter((e) => !signedOutOf(e));
+  const wakes = news.some((e) =>
+    e.envelope.conversation.address === session.conversation ||
+    e.envelope.service === "local" || e.type === "alarm" || e.type === "tool_result"
+  );
+  if (wakes) return [];
+  const lit = colorsOf(events, lights);
+  const open = news.filter((e) =>
+    e.type === "message" && (spoken(e) || words(e) !== undefined) && !lit.has(e.id)
+  );
+  const rooms = new Map<string, Event[]>();
+  for (const e of open) {
+    const room = e.envelope.conversation.address;
+    rooms.set(room, [...rooms.get(room) ?? [], e]);
+  }
+  return [...rooms].map(([room, news]) => ({ room, news }));
 }
 
 /** Is this event a transcript — machine words ridden onto a message that carried none? */
@@ -1086,6 +1169,9 @@ export interface XiPorts {
   /** The model edge. main picks it (Anthropic today) and it travels down the chain unchanged
    *  — the transport is where another provider adapts in, so nothing above it changes. */
   transport: ModelTransport;
+  /** The decision model's edge (§2): the metered transport WITHOUT the mind's keeper, so a
+   *  judgment never stands the keeper's ping down. Absent: no room is judged. */
+  decision?: ModelTransport;
   exec?: Record<string, ExecTool>; // bash + MCP; send/search are built-in
   /** The address book's write side (§9), one port per service that keeps one — main wires
    *  whatsapp's where the connection is declared. The `contact` tool is offered when any
@@ -1272,14 +1358,29 @@ export async function xi(
   //    session's own checkpoint and the window holds visible rows only — xi never sees, nor
   //    re-checks, what policy hides. The ONE read: the work's input as well as the
   //    decision's (§2).
-  const events = await windowOf(ports.log, config.since);
+  // The decision model's lights are set aside here, before any rule reads the window: no
+  // positional rule, render or tool ever meets one, and `decide` reads them apart.
+  const read = await windowOf(ports.log, config.since);
+  const events = read.filter((e) => e.type !== "light");
+  // the rooms with news no light covers are judged now, under the lease; their lights land
+  // with whatever this invocation ends on
+  const lit = read.filter((e): e is LightEvent => e.type === "light");
+  const fresh = await lightUp(events, session, config, ports, lit, signal);
+  const lights = [...lit, ...fresh];
   // the rulings still owed are STANDING state, read off the store (§9): a card asked before
   // the window's floor is as open as one asked a minute ago
   const owed = await ports.log.owed(session.agentId, session.id);
-  const v = decide(events, session, config, Date.now(), owed);
+  const v = decide(events, session, config, Date.now(), owed, lights);
   ports.onDecision?.(v, events.at(-1)?.id, causeOf(events, session, v, owed.length));
   if (v === "ignore") {
-    await lock.release();
+    try {
+      if (fresh.length > 0) await ports.log.publishAndRelease(fresh, lock.lease());
+    } catch (err) {
+      if (!(err instanceof LeaseLost)) throw err;
+      return "lost"; // a successor judges the same rooms from the same window
+    } finally {
+      await lock.release();
+    }
     return v;
   }
 
@@ -1307,12 +1408,13 @@ export async function xi(
     throw err;
   }
   try {
-    const landed = await ports.log.publishAndRelease(last, lock.lease());
+    const landed = (await ports.log.publishAndRelease([...fresh, ...last], lock.lease()))
+      .filter((e) => e.type !== "light");
     // the verdict the turn's own end implies, disclosed here: a closing message pokes the
     // next invocation, which discloses again, but a terminal error or a cancel wakes
     // nothing on purpose (`relevant`), and the idle they leave would otherwise go unsaid
     const after = [...events, ...landed];
-    const next = decide(after, session, config);
+    const next = decide(after, session, config, Date.now(), owedOf(after, session), lights);
     ports.onDecision?.(
       next,
       landed.at(-1)?.id,
@@ -1334,6 +1436,51 @@ export async function xi(
     await lock.release();
   }
   return v;
+}
+
+/* ── the decision model's look (§2) ───────────────────────────────────── */
+
+/** Judge each room `judgeable` names, in parallel, through the decision port: a light for
+ *  every answer, none for a call that failed or a room it could not read. */
+async function lightUp(
+  events: Event[],
+  session: Session,
+  config: AgentConfig,
+  ports: XiPorts,
+  lights: Lit[],
+  signal: AbortSignal,
+): Promise<Draft<LightEvent>[]> {
+  const d = config.decision;
+  if (!ports.decision || !d?.enabled) return [];
+  const rooms = judgeable(events, session, config, Date.now(), lights);
+  if (rooms.length === 0) return [];
+  const cascade = { agent: config.agentId, inView: inViewOf(events) };
+  const instruction = await ports.docs.read(cascade, {
+    scope: "system",
+    kind: "instruction",
+    name: "decision",
+  });
+  if (instruction === null) {
+    console.error("[decision] system/decision.md is missing: no room was judged");
+    return [];
+  }
+  const today = await dayOn(config, ports, cascade, await ports.docs.list(cascade));
+  const transport = ports.decision;
+  const judged = await Promise.all(rooms.map(async ({ room, news }) => {
+    const last = events.findLast((e) => e.envelope.conversation.address === room);
+    if (!last) return undefined;
+    const slice = sliceOf(
+      events,
+      room,
+      new Set(news.map((e) => e.id)),
+      session,
+      today,
+      config.timezone,
+    );
+    const j = await judge(transport, d, instruction, slice, signal);
+    return j ? lightOf(session, room, last.id, j, d.model) : undefined;
+  }));
+  return judged.filter((l): l is Draft<LightEvent> => l !== undefined);
 }
 
 /* ── think: one locked turn ───────────────────────────────────────────── */

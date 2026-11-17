@@ -567,7 +567,8 @@ export type EventType =
   | "error"
   | "delta"
   | "anchor"
-  | "prefix";
+  | "prefix"
+  | "light";
 
 export interface EventBase {
   id: EventId;
@@ -862,6 +863,22 @@ export interface AnchorEvent extends EventBase {
   parts: [TextPart & { kind: "anchor" }];
 }
 
+/** The decision model's three answers (§2): green wakes the mind now, yellow waits for the
+ *  next look, red is never what makes a digest due. */
+export type Color = "green" | "yellow" | "red";
+
+/**
+ * The decision model's judgment of one room's news (§2), written in the mind's room with no
+ * `turn_id`, so nothing counts it as the agent's voice. `extra.consumed` is the last event
+ * of that room the judge read: the next judgment of the room starts past it, and the light
+ * covers the news up to it. It is no news and no input: xi sets lights aside from the
+ * window before any rule reads it, and nothing renders one.
+ */
+export interface LightEvent extends EventBase {
+  type: "light";
+  parts: [DataPart<"light", { color: Color; reason: string; model: string; room: string }>];
+}
+
 /** One section of the system prefix: an always-doc's body under its handle, or one of the
  *  harness's own sections (`On-demand docs`, `Programs`, `Environment`) under its title. */
 export interface PrefixSection {
@@ -895,7 +912,8 @@ export type Event =
   | ErrorEvent
   | DeltaEvent
   | AnchorEvent
-  | PrefixEvent;
+  | PrefixEvent
+  | LightEvent;
 
 /**
  * An event as PRODUCERS build it: everything but the id. The id belongs to the STORE —
@@ -1045,7 +1063,7 @@ export interface Usage {
  *  the keep-alive that holds a quiet mind's cache (§5). Spend is one row per call, so
  *  the kind is what makes "what has maintenance cost" a query; a delta carries the same
  *  word so a surface knows which text it is watching. */
-export type CallKind = "think" | "checkpoint" | "keepalive";
+export type CallKind = "think" | "checkpoint" | "keepalive" | "decision";
 
 /** Ephemeral broadcast — stream the in-progress; never stored. Correctness never depends on
  *  it. Every kind reaches every tailer: what to show and what to fold away is the client's
