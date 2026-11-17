@@ -72,9 +72,9 @@ export const DEFAULT_RULES: Rule[] = [
   { tool: "*", action: "allow" },
 ];
 // attention (§2). The baseline is that every message deserves a reaction; these four knobs
-// are the cooling, and each names one rule of the ladder. `engagedMinutes` — how long the
-// agent's own last word keeps a conversation hot, and how long the principal's own line
-// there holds the floor back. `digestMinutes` — how often the agent CHECKS the world,
+// are the cooling, and each names one rule of the ladder. `engagedMinutes` — how long our
+// side's last word keeps a conversation hot, the agent's or the principal's: the agent
+// backs a conversation its principal is in. `digestMinutes` — how often the agent CHECKS the world,
 // counted from the last time it looked, the way a person puts the phone down and picks it
 // up again. `digestAfterMessages` — how much unread has to pile up, across the whole world,
 // for it to check early.
@@ -183,7 +183,7 @@ export interface AgentDefaults {
   tools: string[] | null; // the tools offered to the model, by name; null ⇒ all of them
   rules: Rule[]; // permission policy as data (§9)
   export: string[]; // the harness's environment variables its shell inherits, by name
-  engagedMinutes: number; // attention (§2): how long the agent's own last word keeps
+  engagedMinutes: number; // attention (§2): how long our side's last word keeps
   digestAfterMessages: number; //   a conversation hot · the ambient pile that forces a
   digestMinutes: number; //   wake · the ambient look interval
   sleepHours: string | null; // org-clock span "23-8"; null ⇒ never sleeps
@@ -573,7 +573,8 @@ const AGENT: Entry[] = [
   {
     key: "engagedMinutes",
     value: DEFAULT_ENGAGED_MINUTES,
-    doc: "attention: a conversation stays hot this long after the agent's own last word",
+    doc: "attention: a conversation stays hot this long after our side's last word, the " +
+      "agent's or the principal's",
   },
   {
     key: "digestAfterMessages",

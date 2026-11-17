@@ -16,8 +16,8 @@ and so does a complaint about answers being slow.
 **green**: the assistant should look now, because waiting an hour costs something.
 - Someone is waiting on the principal right now: at the door, downstairs, outside, on the
   way, "are you coming?".
-- A question or request put to the assistant where it holds the floor, in a conversation
-  it is carrying.
+- A line wanting an answer in a conversation the principal or the assistant is carrying:
+  one of them spoke there lately, and the other side answered.
 - Something on today's calendar that is about to start or has changed.
 - A deadline within the hour, an emergency, a payment or booking that fails if left.
 

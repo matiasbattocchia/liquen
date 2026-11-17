@@ -915,7 +915,7 @@ Deno.test("attention: engagement is HOLDING THE FLOOR — our word last, and rec
   assertEquals(decide([spoke(60), looked(1), world("slack:C1", 0)], SESSION, WAKE, NOON), "ignore");
 });
 
-Deno.test("attention: the principal speaking in a conversation ENDS engagement, at once", () => {
+Deno.test("attention: the principal speaking in a conversation holds the floor for the agent to back", () => {
   // A wire echo carries `agent.id` (the classifier stamps it from their grant) and NO
   // session_id — an unstamped row reads as the ROUTED session's, the one world traffic
   // belongs to (§4): the mind, which this session is.
@@ -935,15 +935,15 @@ Deno.test("attention: the principal speaking in a conversation ENDS engagement, 
         & Partial<Event>
         & { conv?: string },
     );
-  const look = looked(1, self); // recent, so rule 5 defers and only the floor can answer
-  // our word is 4 min old — engaged, but for their line landing after it
+  const look = looked(1, self); // recent, so rule 4 defers and only the floor can answer
+  // our word is 4 min old — engaged, and their line landing after it wakes the agent
   assertEquals(decide([spoke(), look, world("slack:C1", 0)], s, WAKE, NOON), "think");
-  assertEquals(decide([spoke(), byHand(3), look, world("slack:C1", 0)], s, WAKE, NOON), "ignore");
-  // and the floor comes back the moment the agent speaks again
-  assertEquals(
-    decide([spoke(), byHand(3), spoke(), look, world("slack:C1", 0)], s, WAKE, NOON),
-    "think",
-  );
+  // the principal's word holds the floor just as well: the agent backs them there
+  assertEquals(decide([byHand(3), look, world("slack:C1", 0)], s, WAKE, NOON), "think");
+  // …but their own line is the floor, never a reason to wake on it
+  assertEquals(decide([look, byHand(0)], s, WAKE, NOON), "ignore");
+  // and the floor decays with silence, whoever held it
+  assertEquals(decide([byHand(11), look, world("slack:C1", 0)], s, WAKE, NOON), "ignore");
 });
 
 Deno.test("attention: asleep, the ambient world waits for morning — the principal never does", () => {
