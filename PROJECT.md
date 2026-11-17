@@ -7338,6 +7338,24 @@ Open:
 - What the lights on file say against what the turns after them did, once new has run on
   them a while.
 
+### The agent backs a conversation its principal is in (2026-11-17) — LANDED, on in new
+
+When matias wrote in a room, the agent's floor there ended at once, and with the hourly
+digest the other side's answer could wait an hour. The floor is now our side's: the last
+word the agent or its principal said there, younger than `engagedMinutes`. The other side's
+next line wakes the agent, and `send.md` tells it to take on what it can answer as its
+principal would (a fact, a time, a place, a confirmation), to leave them the rest, and never
+to repeat or contradict them. The principal's own line, typed or a voice note's words, is
+the floor and never wakes. The judge's rubric lights such a line green.
+
+There is no wait for the principal to answer first, and no field beside the color: whether
+the agent can answer is its own reading of the room. With the decision model off, as on
+vibes, a reply within ten minutes of the principal's line now wakes a think.
+
+Open:
+
+- Whether it talks over matias: the fix then is a window in which he answers first.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

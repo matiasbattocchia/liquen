@@ -157,8 +157,9 @@ decide(window) →
       `TYPING_HOLD_MS`                                                thought is coming)
     a summons — the mind alias, or a local room                    → think (never waits)
     a room the decision model lit green (`decision.enabled`)       → think (it cannot wait)
-    an engaged conversation — it HOLDS THE FLOOR: our complex's    → think (you don't drop
-      last word there is the agent's, and it is recent;               out mid-conversation)
+    an engaged conversation — our side HOLDS THE FLOOR: our        → think (you don't drop
+      complex's last word there, the agent's or the principal's,     out mid-conversation)
+      is recent, and the other side's line came after it;
       with the model on, only a room no light covers yet
     asleep (`sleepHours`)                                          → ignore (the world waits)
     a transcript for a note already LOOKED at                      → think (the words are
@@ -207,15 +208,16 @@ through the mirror's fan-in (§4), or in a room of the org's own, which a member
 the agent in it: nothing local is the world talking around it, so a peer's word wakes it
 at once, the night included. An owned account's sign-out (§5) lands in the mind room yet
 is the world's news, so only the night and the digest govern it. The rest is the world, and the world waits. An **engaged** conversation wakes immediately too, and
-engagement is **holding the floor**: the last thing our complex said there was the agent's
-own voice (`ownVoice` — the `turn_id` discriminator, §3) and it is younger than
-`engagedMinutes`. Every reply refreshes the clock (ping-pong), silence lets it decay — and
-the **principal speaking there ends it at once, without a clock**: they took the floor
-back, from their own phone, and an agent that answered over them for the rest of the window
-would be talking past its own principal. To hand the floor over again they say so in the
-mind session,
-which is the one thing that still wakes the agent. So the world can never pull the agent in
-without the principal: it is only ever engaged where it was sent.
+engagement is **holding the floor**: the last thing our complex said there, the agent's own
+voice or the principal's from their phone, is younger than `engagedMinutes`. Every reply
+refreshes the clock (ping-pong), silence lets it decay. A conversation the principal is
+carrying is one the agent **backs**: the other side's next line wakes it, and it takes on
+what it can answer as the principal would (a fact, a time, a place, a confirmation),
+leaving them what only they can say and never repeating or contradicting them (`send.md`).
+Whether it can is the agent's call as it reads the room, made by whatever model it thinks
+with. The principal's own line is the floor and never a reason to wake. So the world can
+never pull the agent in without our side: it is only ever engaged where it or its
+principal is.
 Everything else is **ambient**, and the agent **checks the world** the way a person checks a
 phone: every `digestMinutes`, counted from **the last time it looked** — the stamp on its
 last closing message there. Not from the oldest unread, which is the difference between "I
@@ -373,8 +375,9 @@ no block for it (§5), and the REPL holds the deltas back until it knows which w
 read at all; a silence note is ours, and it is only the body that is absent.
 
 *(v0 has no `held`/park pre-check. **Coexistence** — the principal answering a customer
-directly — is handled by the model **yielding** when it sees the principal's reply, not by
-a state flag. Explicit **takeover/hold** is deferred, §10.)*
+directly — is the agent **backing** them (§2, the floor): it answers what it can as they
+would and leaves them the rest, by its own reading of the room, not by a state flag.
+Explicit **takeover/hold** is deferred, §10.)*
 
 **No wake-rule.** The agent wakes on **everything it can read** — access (the per-principal
 readable filter / RLS, §6) *is* the wake filter. It decides relevance itself: act
@@ -2414,8 +2417,9 @@ with a time bound.
 - **Agent memory dropped**: the long-running session **is** the memory. Only org memory
   (shared) and conversation working-state (optional projection) remain (§8).
 - **Oversight & control are trivial** (one context per session; the principal reads and
-  steers directly). Undirected `stop` cancels the in-flight work. Coexistence = the model
-  yields when it sees the principal reply; explicit per-conversation takeover is deferred (§10).
+  steers directly). Undirected `stop` cancels the in-flight work. Coexistence = the agent
+  backs a conversation its principal is in, answering what it can as they would (§2);
+  explicit per-conversation takeover is deferred (§10).
 - **The limit + the deferral signal**: context capacity — the mind holds all world
   conversations, so it **dilutes at high volume**. Named sessions are the split for WORK
   (a coding task, a project thread); a subagent tree stays deferred until compaction

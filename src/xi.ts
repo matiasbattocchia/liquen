@@ -308,14 +308,14 @@ function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
  * something was worth reading:
  *
  *   1. a SUMMONS — the mind alias, or any local room — wakes now
- *   2. during `sleepHours` the world gets nothing (3 and 4 still apply — see below)
- *   3. an ENGAGED conversation wakes now: you don't drop out of one you are in
- *   4. unless the principal took the floor there, which cancels 3 and only 3
- *   5. otherwise the agent CHECKS the world every `digestMinutes`, counted from the last
+ *   2. during `sleepHours` the world gets nothing (3 still applies — see below)
+ *   3. an ENGAGED conversation wakes now: our side is in it, the agent or its principal,
+ *      and you don't drop out of one you are in
+ *   4. otherwise the agent CHECKS the world every `digestMinutes`, counted from the last
  *      time it looked — the way you put the phone down and pick it up again
- *   6. or early, when `digestAfterMessages` have piled up across the whole world
+ *   5. or early, when `digestAfterMessages` have piled up across the whole world
  *
- * Rungs 5 and 6 weigh words: a reaction, a deletion or a room's change is a mark nobody
+ * Rungs 4 and 5 weigh words: a reaction, a deletion or a room's change is a mark nobody
  * is owed an answer for, so it is read when words make the digest due and never makes it
  * due alone.
  *
@@ -326,7 +326,7 @@ function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
  * says who is writing where.
  *
  * A sign-out (`signedOutOf`) is the world's news told in the harness's voice: it lands in
- * the mind room as an alarm, yet only the night and the digest (rungs 2, 5 and 6) govern
+ * the mind room as an alarm, yet only the night and the digest (rungs 2, 4 and 5) govern
  * it, so the night holds it for the morning.
  *
  * A transcript is not a rung of its own: it INHERITS the attention of the note it names.
@@ -381,10 +381,15 @@ function attention(
   // for it, and for nothing else: the two rules below weigh the world as one thing. With the
   // decision model on, a room's light answers it: green wakes now, and a room whose news is
   // all judged is not woken for by the floor, which the judge read. News no light covers yet
-  // (the judge failed, or has not run) is weighed by the floor, as with no model at all
+  // (the judge failed, or has not run) is weighed by the floor, as with no model at all.
+  // Only the other side's lines ask anything: our own, the principal's typed or spoken
+  // ones included, are the floor, never a reason to wake on it
   const lit = wake.decision?.enabled ? colorsOf(events, lights) : undefined;
   for (const conv of new Set(told.map((e) => e.envelope.conversation.address))) {
-    const here = told.filter((e) => e.envelope.conversation.address === conv);
+    const here = told.filter((e) =>
+      e.envelope.conversation.address === conv && !ownComplex(noteOf(e, events) ?? e, session)
+    );
+    if (here.length === 0) continue;
     if (lit && here.some((e) => lit.get(e.id) === "green")) return "think";
     if (lit && here.every((e) => lit.has(e.id))) continue;
     if (engaged(conv, events, session, wake, now)) return "think";
@@ -534,18 +539,12 @@ function lateWords(e: Event, events: Event[], looked: number): boolean {
 }
 
 /**
- * The agent HOLDS THE FLOOR in the conversation ⇒ it is IN it. Two conditions, both on the
- * last thing our complex said there: it was the agent's own voice, and it is recent. Every
- * reply refreshes the clock (the ping-pong extension); silence lets it decay.
- *
- * The floor is the point. Scanning for the agent's last word alone would skip PAST the
- * principal's — so an agent that spoke once kept waking for a conversation its principal
- * had since taken over by hand, answering over them for a whole engagement window. So the
- * scan stops at whichever half spoke last (`ownComplex`, either half) and engagement holds
- * only if that half was the model (`ownVoice` — the discriminator is `payload.turn_id`,
- * §3). A principal typing into that conversation from their phone ends it, at once and
- * without a clock: they took the floor back. To hand it over again they say so at home,
- * which is the one thing that still wakes the agent now.
+ * Our side HOLDS THE FLOOR in the conversation ⇒ the agent is IN it: the last thing our
+ * complex said there (`ownComplex`, either half) is recent, whether the agent said it or
+ * its principal did, typing from their phone. Every reply refreshes the clock (the
+ * ping-pong extension); silence lets it decay. A conversation the principal is carrying is
+ * one the agent backs: a line there wanting an answer wakes it, and it takes on what it can
+ * answer as they would and leaves them the rest (`send.md`).
  */
 function engaged(
   conversation: string,
@@ -560,13 +559,13 @@ function engaged(
     if (
       e.type === "message" && ownComplex(e, session) &&
       e.envelope.conversation.address === conversation
-    ) return ownVoice(e, session) && now - Date.parse(e.ts) < minutes * 60_000;
+    ) return now - Date.parse(e.ts) < minutes * 60_000;
   }
   return false;
 }
 
 /**
- * Checking the phone (rules 5 and 6). Both weigh the world as ONE thing, and both are
+ * Checking the phone (rules 4 and 5). Both weigh the world as ONE thing, and both are
  * clocked off the agent, not off the messages.
  *
  * The interval runs from the LAST LOOK, not from the oldest unread — that is the whole
