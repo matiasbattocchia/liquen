@@ -1,10 +1,12 @@
 /**
  * runlog.ts — the org's run log, `data/run/liquen.log` (§9): every line whatever runs the
- * org says, stamped `HH:MM:SS [name]`. The supervisor writes its own lines and its
- * children's here, attached or detached, and main raised alone by an interface writes its
- * own; `say` is the one way a line gets there. Attached, the same line prints to the
- * terminal too, each tag in a color of its own and a failure in red, while the file is
- * always plain.
+ * org says, stamped `YYYY-MM-DD HH:MM:SS [name]` on the org machine's clock. The supervisor
+ * writes its own lines and its children's here, attached or detached, and main raised alone
+ * by an interface writes its own; `say` is the one way a line gets there. Attached, the
+ * same line prints to the terminal too, stamped with the time alone, each tag in a color of
+ * its own and a failure in red, while the file is always plain. The date is the file's
+ * because the file outlives the day: a line read back is set beside spend and the log by
+ * when it happened.
  *
  * The file is bounded as a background job's output is (`halve`): past `RUN_LOG_CAP` on
  * disk, its older half becomes a hole up to the newer half's first line, so the offsets
@@ -24,7 +26,6 @@ export const RUN_LOG_CAP = 16 * 1024 * 1024;
 const LOOK_EVERY = 256 * 1024;
 
 const enc = new TextEncoder();
-const clock = () => new Date().toLocaleTimeString("en-GB");
 
 /** ANSI foregrounds for the tags, handed out in the order the names first speak: cyan,
  *  green, magenta, blue, yellow, then the bright ones. */
@@ -67,10 +68,11 @@ export function openRunLog(dir: string, terminal: boolean): RunLog {
   return {
     path,
     say(name, line, { err = true, failure = false } = {}) {
-      const at = clock();
-      const plain = enc.encode(`${at} [${name}] ${line}\n`);
-      write(file, plain);
-      written += plain.length;
+      const now = new Date();
+      const at = now.toLocaleTimeString("en-GB");
+      const filed = enc.encode(`${now.toLocaleDateString("en-CA")} ${at} [${name}] ${line}\n`);
+      write(file, filed);
+      written += filed.length;
       if (written >= LOOK_EVERY && !halving) {
         written = 0;
         halving = true;
@@ -81,7 +83,7 @@ export function openRunLog(dir: string, terminal: boolean): RunLog {
         ? enc.encode(
           `\x1b[2m${at}\x1b[22m ${tag(name)} ${failure ? `\x1b[31m${line}\x1b[39m` : line}\n`,
         )
-        : plain;
+        : enc.encode(`${at} [${name}] ${line}\n`);
       write(err ? Deno.stderr : Deno.stdout, shown);
     },
   };

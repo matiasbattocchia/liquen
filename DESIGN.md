@@ -1747,6 +1747,12 @@ before plus new rows, until a checkpoint moves the floor:
   keeper takes it up, so a restart inside the hour keeps the cache. A named session has
   none: its work ends, and the next brief may be days away. Only an Anthropic transport is
   kept, and a replay is metered as `keepalive`.
+- **A miss is said with its cause.** Each call the keeper passes names the session's call
+  before it, the run's last carried over in the owed file, and the API answers where the
+  two requests diverged: the tools, the system, the messages. The run log hears every call
+  that read nothing back or changed its prefix, every ping that stood down past its hour,
+  and every ping a run left or took up, under `[cache] <agent>`. A lapse and a changed
+  prefix cost the same write and want opposite fixes, so the line says which it was.
 
 ### Media (kept like the rest, until the checkpoint)
 
@@ -3931,7 +3937,9 @@ loudly, the same law as an unknown config key.
   children, waits `system.stopTimeoutMs`, then SIGKILLs.
 - **Every child line arrives stamped** — `HH:MM:SS [name] …`, stdout/stderr split preserved
   (stdout is data, stderr is diagnostics) — so attribution is the harness's property, not a
-  convention each service must remember: panics and stack traces land tagged too. Services
+  convention each service must remember: panics and stack traces land tagged too. The run
+  log's copy carries the date as well, and the boot line names what runs, a checkout's
+  commit included, so a restart and the lines after it can be set beside spend. Services
   never self-name; a line carries at most a MODULE tag (`[ingest]`, `[dispatch]`, `[oauth]`,
   `[exec]`, `[proxy]`), so a supervised line reads `[whatsapp] [dispatch] …` and a standalone
   run's terminal is its own tag. After the boot lines, silence means every process is up;

@@ -22,6 +22,31 @@ export function packageManifest(): Promise<PackageManifest> {
   return manifest;
 }
 
+/** What runs, in a word: the release's version, and for a checkout the commit it stands on
+ *  (`liquen 0.1.4 at 0a86d4e`), since a linked org runs whatever the checkout holds. */
+export async function running(): Promise<string> {
+  const version = (await packageManifest()).version;
+  const commit = await checkoutCommit(import.meta.url);
+  return `liquen ${version ?? "?"}${commit ? ` at ${commit}` : ""}`;
+}
+
+/** The short commit of the git checkout a module at `url` lives in; nothing when it was
+ *  loaded from the registry, or git cannot say. */
+export async function checkoutCommit(url: string): Promise<string | undefined> {
+  if (!url.startsWith("file:")) return undefined;
+  try {
+    const out = await new Deno.Command("git", {
+      args: ["-C", new URL(".", url).pathname, "rev-parse", "--short", "HEAD"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    const commit = new TextDecoder().decode(out.stdout).trim();
+    return out.success && commit ? commit : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The manifest a module at `url` belongs to. */
 export async function read(url: string): Promise<PackageManifest> {
   try {

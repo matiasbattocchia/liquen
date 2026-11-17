@@ -140,7 +140,9 @@ Deno.test("the request states what a mismatched thinking block does, under the b
   };
 
   await anthropicTransport(client)(params);
-  assertEquals(seen.headers, { "anthropic-beta": "thinking-binding-controls-2026-08-01" });
+  assertEquals(seen.headers, {
+    "anthropic-beta": "thinking-binding-controls-2026-08-01,cache-diagnosis-2026-04-07",
+  });
   assertEquals(seen.params?.thinking, {
     type: "adaptive",
     display: "summarized",

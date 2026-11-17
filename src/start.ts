@@ -41,9 +41,11 @@
  * with SIGINT then, the signal that ends what the agents' commands left running; a reload
  * restarts it with SIGTERM, which leaves that running for the next main to adopt (§9).
  *
- * Every line a child writes arrives stamped — `HH:MM:SS [name] …` — so attribution is
- * the harness's property, not a convention each service must remember: panics and
- * stack traces land tagged too. Each goes to the run log (`runlog.ts`), and attached it
+ * Every line a child writes arrives stamped — `YYYY-MM-DD HH:MM:SS [name] …` in the file,
+ * the time alone on a terminal — so attribution is the harness's property, not a
+ * convention each service must remember: panics and stack traces land tagged too. The
+ * boot line names what runs, a checkout's commit included, so a line that follows a
+ * restart can be read against the code that wrote it. Each goes to the run log (`runlog.ts`), and attached it
  * prints too, the stdout/stderr split riding through (stdout is data, stderr is
  * diagnostics). After the boot lines, silence means every process is up. On a terminal
  * each tag has a color of its own, so one process's lines read as a column in the
@@ -75,6 +77,7 @@ import { RUNNING, SHIPPED } from "./connect/connect.ts";
 import { helpFlag } from "./connect/help.ts";
 import { serveSocket } from "./connect/serve.ts";
 import { openRunLog, RUN_LOG, type RunLog, sayConsole } from "./runlog.ts";
+import { running } from "./package.ts";
 
 export const USAGE = `usage: liquen start [-D | --detach] [--dir <org>]
 
@@ -558,7 +561,10 @@ if (import.meta.main) {
     Deno.addSignalListener("SIGINT", () => stop());
     Deno.addSignalListener("SIGHUP", () => stop(true));
 
-    lines.say(SUPERVISOR, `${procs.map((p) => p.name).join(" · ")} — root ${root}`);
+    lines.say(
+      SUPERVISOR,
+      `${procs.map((p) => p.name).join(" · ")} — root ${root} · ${await running()}`,
+    );
     const reads = await readsOf(procs, cfg);
     for (const proc of procs) launch(proc, reads.get(proc.name)!);
     await finished;

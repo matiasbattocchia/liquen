@@ -311,16 +311,71 @@ Deno.test("warmth: a call that fails leaves the ping armed before it", async () 
   }
 });
 
-Deno.test("warmth: a ping whose hour ran out stands down, since it would write", async () => {
+Deno.test("warmth: a ping whose hour ran out stands down, since it would write, and says so", async () => {
   let clock = 0;
-  const w = warmth({ everyMs: 20, pings: 5, now: () => clock });
+  const said: string[] = [];
+  const w = warmth({ everyMs: 20, pings: 5, now: () => clock, say: (s) => said.push(s) });
   const { seen, t } = calls();
   try {
     await w.through(t)(REQUEST, undefined, { kind: "think" });
-    clock = CACHE_HOUR_MS; // the machine slept through it
+    clock = CACHE_HOUR_MS + 42 * 60_000; // the machine slept through it
     await wait(60);
     assertEquals(seen.map((c) => c.kind), ["think"]);
+    assertEquals(said, ["keep-alive stood down 42 min past its hour: the cache lapsed"]);
     assertEquals(w.stop(), undefined);
+  } finally {
+    w.stop();
+  }
+});
+
+/** A transport that answers each call with an id of its own and the reply `answers` holds
+ *  for it, and keeps the `diagnostics` each request carried. */
+function diagnosed(answers: Partial<Anthropic.Message & { diagnostics: unknown }>[]) {
+  const named: unknown[] = [];
+  const t: ModelTransport = (params) => {
+    named.push((params as { diagnostics?: unknown }).diagnostics);
+    const n = named.length;
+    return Promise.resolve({ ...DONE, id: `msg_${n}`, ...answers[n - 1] } as Anthropic.Message);
+  };
+  return { named, t };
+}
+const usage = (read: number, wrote: number) =>
+  ({ cache_read_input_tokens: read, cache_creation_input_tokens: wrote }) as Anthropic.Usage;
+
+Deno.test("warmth: each call names the one before it, and a miss is said with its reason", async () => {
+  const said: string[] = [];
+  const w = warmth({ everyMs: 60_000, say: (s) => said.push(s) });
+  const { named, t } = diagnosed([
+    { usage: usage(0, 50_000) }, // the first call writes, with nothing to compare
+    { usage: usage(50_000, 300), diagnostics: null }, // read back
+    { usage: usage(0, 52_000), diagnostics: { cache_miss_reason: { type: "tools_changed" } } },
+    { usage: usage(0, 52_000), diagnostics: null }, // the same prefix, its entry gone
+  ]);
+  try {
+    const through = w.through(t);
+    for (let n = 0; n < 4; n++) await through(REQUEST, undefined, { kind: "think" });
+    assertEquals(named, [
+      { previous_message_id: null },
+      { previous_message_id: "msg_1" },
+      { previous_message_id: "msg_2" },
+      { previous_message_id: "msg_3" },
+    ]);
+    assertEquals(said, [
+      "think missed the cache: tools_changed, read 0, wrote 52000",
+      "think read nothing back, wrote 52000: the prefix held, the cache had lapsed",
+    ]);
+    assertEquals(w.stop()?.previous, "msg_4");
+  } finally {
+    w.stop();
+  }
+});
+
+Deno.test("warmth: a provider not kept is asked nothing of the cache", async () => {
+  const w = warmth({ everyMs: 60_000, say: () => {} });
+  const { named, t } = diagnosed([{}]);
+  try {
+    await w.through(t, false)(REQUEST, undefined, { kind: "think" });
+    assertEquals(named, [undefined]);
   } finally {
     w.stop();
   }
@@ -339,13 +394,22 @@ Deno.test("warmth: a stopped keeper hands over the ping it owes, and the next on
     assertEquals(owed?.params, REQUEST);
     assertEquals(owed?.left, 3);
     assertEquals(takeOwed(path), undefined); // taken once
-    const next = warmth({ everyMs: 20, pings: 3, owed });
+    const said: string[] = [];
+    const next = warmth({ everyMs: 20, pings: 3, owed, say: (s) => said.push(s) });
     next.through(after.t);
     await wait(150);
     next.stop();
     assertEquals(first.seen.map((c) => c.kind), ["think"]);
     assertEquals(after.seen.map((c) => c.kind), ["keepalive", "keepalive", "keepalive"]);
     assertEquals(after.seen[0].max_tokens, 0);
+    assertEquals(said, ["took up the last run's keep-alive, due in 0 min"]);
+    const late = warmth({
+      owed: { ...owed!, started: Date.now() - CACHE_HOUR_MS - 5 * 60_000 },
+      say: (s) => said.push(s),
+    });
+    late.through(after.t);
+    late.stop();
+    assertEquals(said[1], "the last run's keep-alive had lapsed 5 min before this one began");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

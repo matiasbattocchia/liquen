@@ -12,6 +12,11 @@ import type { ModelTransport } from "../mu.ts";
  *  changed under it, and makes every response report what it dropped. */
 const BINDING_BETA = "thinking-binding-controls-2026-08-01";
 
+/** The beta under which a request's `diagnostics` names the call before it and the answer
+ *  says where the two diverged (the keeper's, transport/mod.ts). Sent on every request, so
+ *  the set of betas, which the cache reads, never differs between a session's calls. */
+const DIAGNOSIS_BETA = "cache-diagnosis-2026-04-07";
+
 /** A replayed thinking block is bound to everything its request held before it. On a
  *  mismatch, `drop_block` answers without that reasoning and `error` refuses the request. */
 export type PrefixMismatch = "drop_block" | "error";
@@ -39,7 +44,10 @@ export function anthropicTransport(
         }
         : {}),
     } as Anthropic.MessageStreamParams;
-    const options = { headers: { "anthropic-beta": BINDING_BETA }, ...(signal ? { signal } : {}) };
+    const options = {
+      headers: { "anthropic-beta": `${BINDING_BETA},${DIAGNOSIS_BETA}` },
+      ...(signal ? { signal } : {}),
+    };
     // a keep-alive (`max_tokens: 0`) reads the prefix and answers nothing, and the API takes
     // it only unstreamed; the stream is a transport option, outside the cached prefix
     if (bound.max_tokens === 0) {
