@@ -2,7 +2,7 @@
 
 Decided 17 Nov 2026, for Postgres: the database and short-lived functions, with no process
 that must stay up. Any writer may insert into `events`, and triggers make the row right.
-The eight below are settled. What is still open closes the file.
+The eight below are settled, and nothing in them is open.
 
 1. A `wakes` table holds every look a session is owed.
 2. A look's life runs between `wakes` and `locks`.
@@ -203,7 +203,8 @@ What the door is asked about:
   there has waited `TYPING_HOLD_MS`;
 - the night: when `sleepHours` ends on the agent's clock;
 - the digest: `digestMinutes` after the agent last looked;
-- the cache's hour: `WARM_MS` after the session's last think or ping.
+- the cache's hour: `WARM_MS` after the newer of the session's last anchor and its last
+  `keepalive` row.
 
 What follows:
 
@@ -212,6 +213,10 @@ What follows:
   The request places no anchor of its own, so its bytes are the ones that step's think
   sent: it reads what the think wrote, and closes as the think did. Only a mind is kept
   warm, on a provider whose cache a read renews.
+- **The hour starts at the anchor.** nu stamps a step's anchor when its request is made,
+  and places one whenever the minute moved. So the newest anchor is under a minute older
+  than the newest think's send, and the ping comes that much early. A compaction with no
+  think since leaves no anchor past its summary, and nothing to keep.
 - **The suite holds the bytes.** A case renders a ping and finds the request its step
   sent. What the provider read shows in the `keepalive` row of a live org.
 - **A ping writes a `keepalive` row.** It sits in the mind's room and says what the ping
@@ -260,10 +265,3 @@ and the meter counts it under its kind.
   adaptive on every step, and the judge states only its `decision.effort`.
 - **What each keeps.** The judge keeps its slice, its instruction and the shape of its
   answer. The ping keeps `max_tokens: 0`.
-
-## Open
-
-None of these is part of the batch until it is settled.
-
-- **The hour's start.** Which row says when a step's call was sent. The cache's hour runs
-  from there, and a long answer is stamped minutes later.
