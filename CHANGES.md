@@ -244,11 +244,12 @@ and the meter counts it under its kind.
 |---|---|---|---|
 | A turn's step | `think` | `think` | `thinking`, `message`, `tool_use` |
 | A compaction | `compact` | `compact` | `summary` |
-| The judge | none, it runs before `decide` | `decision` | `decision` |
-| The keeper's ping | `warm` | `keepalive` | `keepalive` |
+| The judge | none, it runs before `decide` | `decide` | `decision` |
+| The keeper's ping | `warm` | `warm` | `keepalive` |
 
-- **The names follow the table.** The meter kind `checkpoint` becomes `compact`, and the
-  `light` row becomes a `decision` row.
+- **The names follow the table.** A meter kind is a verb, the verdict's own where there is
+  one: `checkpoint` becomes `compact`, `decision` becomes `decide`, and `keepalive`
+  becomes `warm`. The `light` row becomes a `decision` row.
 - **nu hands the step out.** The judge and the ping take the call nu gives its compaction
   (`StepCall`), so each is tried as a think is: the client's fast retries, then
   `RETRY_DELAYS_MS`.
