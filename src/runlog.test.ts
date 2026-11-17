@@ -1,15 +1,17 @@
 import { assert, assertEquals, assertMatch } from "@std/assert";
 import { openRunLog, RUN_LOG, RUN_LOG_CAP } from "./runlog.ts";
 
-Deno.test("the run log: each line stamped with its time and its name, plain", async () => {
+Deno.test("the run log: each line stamped with its date, its time and its name, plain", async () => {
   const dir = await Deno.makeTempDir();
   try {
     const log = openRunLog(dir, false);
     log.say("main", "agents: ana");
     log.say("liquen", "slack exited (code 1)", { failure: true });
     const lines = (await Deno.readTextFile(`${dir}/${RUN_LOG}`)).trimEnd().split("\n");
-    assertMatch(lines[0], /^\d\d:\d\d:\d\d \[main\] agents: ana$/);
-    assertMatch(lines[1], /^\d\d:\d\d:\d\d \[liquen\] slack exited \(code 1\)$/);
+    const day = new Date().toLocaleDateString("en-CA");
+    assertMatch(lines[0], /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \[main\] agents: ana$/);
+    assertMatch(lines[1], /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \[liquen\] slack exited \(code 1\)$/);
+    assert(lines[0].startsWith(day) || lines[1].startsWith(day), lines[0]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -64,7 +66,7 @@ Deno.test("a process with nobody pumping its output says it in the run log, its 
     assertEquals(out.code, 2); // a refusal
     assertEquals(new TextDecoder().decode(out.stderr), "");
     const lines = (await Deno.readTextFile(`${dir}/${RUN_LOG}`)).trimEnd().split("\n");
-    assertEquals(lines.map((l) => l.slice(9)), [
+    assertEquals(lines.map((l) => l.slice("YYYY-MM-DD HH:MM:SS ".length)), [
       "[main] agents: ana",
       "[main] a main already runs here",
     ]);

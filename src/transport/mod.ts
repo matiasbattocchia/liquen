@@ -17,6 +17,7 @@
  * provider that cannot run its model at its effort fails at start, never mid-conversation.
  */
 
+import type Anthropic from "@anthropic-ai/sdk";
 import type { ModelTransport } from "../mu.ts";
 import type { UsageRow } from "../store/log.ts";
 import type { Credentials } from "../store/credentials.ts";
@@ -276,6 +277,9 @@ export interface Owed {
   params: Parameters<ModelTransport>[0];
   started: number;
   left: number;
+  /** The id of the session's last response, so the next run's first call can name it and
+   *  hear whether a restart changed the prefix. */
+  previous?: string;
 }
 
 /** A session's keeper: its transport passes `through` it, and `stop` ends it for good,
@@ -301,35 +305,83 @@ export interface Warmth {
  *
  * `owed` is the ping a stopped keeper handed over: the first kept transport through this
  * one arms it, so a restart inside the hour keeps the cache.
+ *
+ * Every kept call, ping or turn, names the session's call before it (cache diagnostics),
+ * and the API answers where the two requests diverged. A call that reads nothing back, or
+ * that the API says changed its prefix, is said through `say`, with what it read and
+ * wrote; so is a ping that stands down, one taken up from the last run, and one that failed.
  */
 export function warmth(
-  { everyMs = WARM_MS, pings = WARM_PINGS, now = Date.now, owed: handed }: {
+  {
+    everyMs = WARM_MS,
+    pings = WARM_PINGS,
+    now = Date.now,
+    owed: handed,
+    say = (line) => console.error(line),
+  }: {
     everyMs?: number;
     pings?: number;
     now?: () => number;
     owed?: Owed;
+    say?: (line: string) => void;
   } = {},
 ): Warmth {
   const quit = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let run: (Owed & { transport: ModelTransport }) | undefined; // the ping armed now
+  let previous = handed?.previous; // the session's last response, named by its next call
   const lapsed = (o: Owed) => now() - o.started >= CACHE_HOUR_MS;
+  const minutes = (ms: number) => Math.max(0, Math.round(ms / 60_000));
   const stand = () => {
     clearTimeout(timer);
     timer = undefined;
     run = undefined;
+  };
+  const send = async (
+    transport: ModelTransport,
+    params: Parameters<ModelTransport>[0],
+    meta: Parameters<ModelTransport>[2],
+    emit?: Parameters<ModelTransport>[1],
+    signal?: AbortSignal,
+  ) => {
+    const named = previous;
+    const asked = { ...params, diagnostics: { previous_message_id: named ?? null } };
+    const message = await transport(asked as typeof params, emit, meta, signal);
+    if (message.id) previous = message.id;
+    if (named) tell(meta?.kind ?? "call", message);
+    return message;
+  };
+  const tell = (kind: string, message: Anthropic.Message) => {
+    const read = message.usage?.cache_read_input_tokens ?? 0;
+    const wrote = message.usage?.cache_creation_input_tokens ?? 0;
+    const diagnostics = (message as { diagnostics?: Diagnostics | null }).diagnostics;
+    const reason = diagnostics?.cache_miss_reason;
+    if (reason) {
+      return say(`${kind} missed the cache: ${reason.type}, read ${read}, wrote ${wrote}`);
+    }
+    if (read > 0 || wrote === 0) return;
+    say(
+      diagnostics === null
+        ? `${kind} read nothing back, wrote ${wrote}: the prefix held, the cache had lapsed`
+        : `${kind} read nothing back, wrote ${wrote}`,
+    );
   };
   const arm = (next: Owed & { transport: ModelTransport }) => {
     clearTimeout(timer);
     run = next;
     timer = setTimeout(() => {
       timer = undefined;
-      if (lapsed(next)) return void (run = undefined);
+      if (lapsed(next)) {
+        run = undefined;
+        const late = now() - next.started - CACHE_HOUR_MS;
+        return say(`keep-alive stood down ${minutes(late)} min past its hour: the cache lapsed`);
+      }
       const start = now();
-      void next.transport(
+      void send(
+        next.transport,
         { ...next.params, max_tokens: 0 },
-        undefined,
         { kind: "keepalive" },
+        undefined,
         quit.signal,
       )
         .then(
@@ -341,9 +393,7 @@ export function warmth(
           (err) => {
             if (run === next) run = undefined;
             if (!quit.signal.aborted) {
-              console.error(
-                `keep-alive failed, the cache left to lapse: ${(err as Error).message}`,
-              );
+              say(`keep-alive failed, the cache left to lapse: ${(err as Error).message}`);
             }
           },
         );
@@ -351,12 +401,23 @@ export function warmth(
   };
   return {
     through: (transport, kept = true) => {
-      if (handed && kept && !lapsed(handed)) arm({ ...handed, transport });
+      if (handed && kept) {
+        if (lapsed(handed)) {
+          const ago = now() - handed.started - CACHE_HOUR_MS;
+          say(`the last run's keep-alive had lapsed ${minutes(ago)} min before this one began`);
+        } else {
+          arm({ ...handed, transport });
+          const due = handed.started + everyMs - now();
+          say(`took up the last run's keep-alive, due in ${minutes(due)} min`);
+        }
+      }
       handed = undefined;
       return async (params, emit, meta, signal) => {
         if (!kept) stand();
         const start = now();
-        const message = await transport(params, emit, meta, signal);
+        const message = kept
+          ? await send(transport, params, meta, emit, signal)
+          : await transport(params, emit, meta, signal);
         if (kept && !quit.signal.aborted) {
           if (meta?.kind === "think") arm({ transport, params, started: start, left: pings });
           else stand();
@@ -367,12 +428,25 @@ export function warmth(
     stop() {
       quit.abort();
       const owed = run && !lapsed(run)
-        ? { params: run.params, started: run.started, left: run.left }
+        ? {
+          params: run.params,
+          started: run.started,
+          left: run.left,
+          ...(previous ? { previous } : {}),
+        }
         : undefined;
       stand();
       return owed;
     },
   };
+}
+
+/** What the API says of a request that named the one before it: `null` when nothing
+ *  diverged before the last cache mark, a `cache_miss_reason` naming the first place it
+ *  did (`system_changed`, `tools_changed`, `messages_changed`, …), or a null reason while
+ *  the comparison is still running. */
+interface Diagnostics {
+  cache_miss_reason: { type: string; cache_missed_input_tokens?: number } | null;
 }
 
 /** The ping a stopped keeper left at `path`, taken once: the file goes with the reading. */

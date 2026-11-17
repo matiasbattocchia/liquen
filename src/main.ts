@@ -70,6 +70,7 @@ import {
   takeOwed,
   transports,
   vaultKeys,
+  WARM_MS,
   type Warmth,
   warmth,
 } from "./transport/mod.ts";
@@ -547,6 +548,17 @@ export async function start(
   // still owes waits in a file of its agent's for the next boot's keeper to take up
   const keepers = new Map<string, Warmth>();
   const owedAt = (agentId: string) => `${dir}/run/${agentId}.keep.json`;
+  // what a mind's cache went through, in the run log: lapses, misses and handovers
+  const cacheSays = (agentId: string) => (line: string) =>
+    console.error(`[cache] ${agentId}: ${line}`);
+  const handOver = (agentId: string, w: Warmth) => {
+    const owed = w.stop();
+    leaveOwed(owedAt(agentId), owed);
+    if (owed) {
+      const due = Math.max(0, Math.round((owed.started + WARM_MS - Date.now()) / 60_000));
+      cacheSays(agentId)(`left a keep-alive for the next run, due in ${due} min`);
+    }
+  };
   // the runner (§4): one builder for the mind and every named session, over the store,
   // the row and these ports — the process's own part is the fan-outs and the transports
   // a page's last day as its agent reads a date, in the org's zone
@@ -603,7 +615,7 @@ export async function start(
     ...(derived ? { history: historyFor } : {}),
     transport: (agentId) => stock.get(agentId)!,
     warmth: (agentId) => {
-      const w = warmth({ owed: takeOwed(owedAt(agentId)) });
+      const w = warmth({ owed: takeOwed(owedAt(agentId)), say: cacheSays(agentId) });
       keepers.set(agentId, w);
       return w;
     },
@@ -840,7 +852,7 @@ export async function start(
       config.stopTimeoutMs ?? STOP_TIMEOUT_MS,
     );
     const keeper = keepers.get(agentId);
-    if (keeper) leaveOwed(owedAt(agentId), keeper.stop());
+    if (keeper) handOver(agentId, keeper);
     keepers.delete(agentId);
     stock.delete(agentId);
     for (const key of [...named.keys()].filter(mine)) named.delete(key);
@@ -1171,7 +1183,7 @@ export async function start(
       clearInterval(pageSweeper);
       for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
       settling.clear();
-      for (const [agentId, w] of keepers) leaveOwed(owedAt(agentId), w.stop());
+      for (const [agentId, w] of keepers) handOver(agentId, w);
       for (const unsub of [...unsubs, ...subs.values()]) unsub();
       await asked.shutdown(); // no change to the roster is taken from here on
       await Deno.remove(`${dir}/run/main.sock`).catch(() => {});
