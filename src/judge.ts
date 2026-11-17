@@ -4,10 +4,11 @@
  * now; yellow waits for the next look; red is never what makes a digest due.
  *
  * The call reads one room, never the window: the room's last lines with the news marked,
- * who holds the floor there, and the day's calendar. Its words are `system/decision.md`,
- * an org's own copy like every instruction. Its answer is structured (a reason, then a
- * color), and a call that fails or answers out of shape judges nothing: the room falls back
- * to the ladder as if no model were configured.
+ * who holds the floor there, the day's calendar, and the principal's standing word, which
+ * is the agent's own notes about people and rooms (`standingOf`, `aboutOf`). Its words are
+ * `system/decision.md`, an org's own copy like every instruction. Its answer is structured
+ * (a reason, then a color), and a call that fails or answers out of shape judges nothing:
+ * the room falls back to the ladder as if no model were configured.
  *
  * What it writes is a `light` row (types.ts), in the mind's room: `xi` sets lights aside
  * from the window before any rule reads it, so a light is never news and never input.
@@ -15,6 +16,7 @@
 
 import type { ModelTransport } from "./mu.ts";
 import type { Color, Draft, Effort, Event, LightEvent, MessageEvent } from "./types.ts";
+import type { DocEntry, Where } from "./store/docs.ts";
 import { hhmm, ownComplex, ownVoice, textOf } from "./render.ts";
 import { roomOnly } from "./room.ts";
 import { LOCAL_CONNECTION } from "./session.ts";
@@ -53,8 +55,38 @@ export interface Seat {
   conversation: string;
 }
 
+/**
+ * The principal's standing word, the same for every room: the agent's own instructions,
+ * its one-line memories, and the profiles that load always, the principal's among them
+ * (`instructions/80-people.md` keeps profiles under `profiles/`). The agent's other docs
+ * (what it learned about a beach, a procedure) say nothing about who can wait. Empty when
+ * the agent keeps none of these.
+ */
+export function standingOf(docs: DocEntry[]): string {
+  const kept = docs.filter(({ header: h, body }) =>
+    h.scope === "agent" && h.load === "always" && body &&
+    (h.name === "instructions" || h.name === "memories" || h.name.startsWith("profiles/"))
+  );
+  if (kept.length === 0) return "";
+  return [
+    "What the assistant keeps about the principal and the people in their life, from the " +
+    "principal's own word:",
+    ...kept.map(({ header: h, body }) => `\n[${h.name}]\n${body!.trim()}`),
+  ].join("\n");
+}
+
+/** The docs about one room: a profile or note that loads while the room is in view, the
+ *  person's or the group's, whoever keeps it. */
+export function aboutOf(docs: DocEntry[], where: Where): DocEntry[] {
+  return docs.filter(({ header: h, body }) =>
+    h.load === "conditional" && body &&
+    (h.conversations ?? []).some((c) => c.service === where.service && c.address === where.address)
+  );
+}
+
 /** What one room shows the judge, as text: its name and kind, who holds the floor, the
- *  day, and its last lines with the news set off below a rule. */
+ *  day, what the agent keeps about the room, and its last lines with the news set off
+ *  below a rule. */
 export function sliceOf(
   events: Event[],
   room: string,
@@ -63,6 +95,7 @@ export function sliceOf(
   today: string[],
   zone?: string,
   now = Date.now(),
+  about: DocEntry[] = [],
 ): string {
   const lines = events.filter((e): e is MessageEvent =>
     e.type === "message" && e.envelope.conversation.address === room && !roomOnly(e)
@@ -75,6 +108,7 @@ export function sliceOf(
     })`,
     floorOf(lines, seat, now),
     today.length > 0 ? `Today:\n${today.join("\n")}` : "Today: nothing on the calendar.",
+    ...about.map(({ header: h, body }) => `\nAbout this room [${h.name}]:\n${body!.trim()}`),
   ];
   const body: string[] = [];
   let ruled = false;
@@ -109,20 +143,26 @@ function floorOf(lines: MessageEvent[], seat: Seat, now: number): string {
   return "Nobody on your side has spoken here in these lines.";
 }
 
-/** Ask the model for one room's light; nothing when the call fails or answers out of shape. */
+/** Ask the model for one room's light; nothing when the call fails or answers out of shape.
+ *  The instruction and the standing word are the same for every room an agent judges, so
+ *  the system closes on a cache mark and a burst of rooms reads it back. */
 export async function judge(
   transport: ModelTransport,
   { model, effort }: { model: string; effort: Effort | null },
   instruction: string,
   slice: string,
   signal?: AbortSignal,
+  standing = "",
 ): Promise<Judgment | undefined> {
+  const system = [instruction, standing].filter((t) => t.trim() !== "")
+    .map((text) => ({ type: "text" as const, text }));
+  (system.at(-1) as { cache_control?: object }).cache_control = { type: "ephemeral" };
   try {
     const message = await transport(
       {
         model,
         max_tokens: JUDGE_MAX_TOKENS,
-        system: instruction,
+        system,
         messages: [{ role: "user", content: slice }],
         output_config: {
           ...(effort ? { effort } : {}),

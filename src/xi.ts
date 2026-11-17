@@ -67,7 +67,7 @@ import {
   TYPING_FRESH_MS,
   TYPING_HOLD_MS,
 } from "./config.ts";
-import { judge, lightOf, sliceOf } from "./judge.ts";
+import { aboutOf, judge, lightOf, sliceOf, standingOf } from "./judge.ts";
 import {
   cardNames,
   type Describe,
@@ -1454,7 +1454,15 @@ async function lightUp(
   if (!ports.decision || !d?.enabled) return [];
   const rooms = judgeable(events, session, config, Date.now(), lights);
   if (rooms.length === 0) return [];
-  const cascade = { agent: config.agentId, inView: inViewOf(events) };
+  // the rooms judged are the ones in view: a profile about one of them loads with it
+  const whereOf = (room: string): Where | undefined => {
+    const last = events.findLast((e) => e.envelope.conversation.address === room);
+    return last && { service: last.envelope.service, address: room };
+  };
+  const cascade = {
+    agent: config.agentId,
+    inView: rooms.map(({ room }) => whereOf(room)).filter((w): w is Where => w !== undefined),
+  };
   const instruction = await ports.docs.read(cascade, {
     scope: "system",
     kind: "instruction",
@@ -1464,11 +1472,14 @@ async function lightUp(
     console.error("[decision] system/decision.md is missing: no room was judged");
     return [];
   }
-  const today = await dayOn(config, ports, cascade, await ports.docs.list(cascade));
+  const docs = await ports.docs.list(cascade);
+  const today = await dayOn(config, ports, cascade, docs);
+  const standing = standingOf(docs);
   const transport = ports.decision;
   const judged = await Promise.all(rooms.map(async ({ room, news }) => {
     const last = events.findLast((e) => e.envelope.conversation.address === room);
-    if (!last) return undefined;
+    const where = whereOf(room);
+    if (!last || !where) return undefined;
     const slice = sliceOf(
       events,
       room,
@@ -1476,8 +1487,10 @@ async function lightUp(
       session,
       today,
       config.timezone,
+      Date.now(),
+      aboutOf(docs, where),
     );
-    const j = await judge(transport, d, instruction, slice, signal);
+    const j = await judge(transport, d, instruction, slice, signal, standing);
     return j ? lightOf(session, room, last.id, j, d.model) : undefined;
   }));
   return judged.filter((l): l is Draft<LightEvent> => l !== undefined);

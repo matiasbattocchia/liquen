@@ -7309,17 +7309,21 @@ reason and a color, and the answer is a `light` row in the mind's room (DESIGN Â
 - **Lights are set aside in xi** before any rule reads the window, so a light behind a
   failed turn cannot end the idle the failure holds.
 - **The judge spends past the keeper**, on its own meter kind (`decision`).
+- **The judge reads the principal's standing word**: the agent's instructions, memories
+  and always-loaded profiles in a cached system prompt (about 7,000 characters for
+  matias), and the profiles that name the room beside its lines.
 - `engagedMinutes` now defaults to 10.
 
 Live on Haiku 5.5, through the branch's code with the seed prompt: "estoy abajo" came back
 green, "nos hablamos" after the agent's own goodbye red, and a request for a quote yellow.
+With matias's own docs, Carlos Rossi asking about the property records came back yellow,
+its reason naming him as a friend from his profile.
 
 new runs it from its next start: `decision.enabled: true`, `digestMinutes: 60`,
 `engagedMinutes: 10` in its `config.yaml`. vibes and turtle keep it off.
 
 Open:
 
-- The principal's standing word about people and rooms is not in the judge's prompt yet.
 - The class gate restated in SQL (CHANGES, the wakes batch) needs `light` among the types
   that wake nobody.
 - What the lights on file say against what the turns after them did, once new has run on

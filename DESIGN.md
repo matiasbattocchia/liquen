@@ -173,8 +173,13 @@ decide(window) →
 call that sorts the world before the ladder weighs it. Under the lease, before `decide`, xi
 judges each world room whose words no light covers yet (`judgeable`), one call per room
 (`judge.ts`). Each call reads the room's last lines with the news set off, who on our side
-spoke last there, and the day's calendar, under `system/decision.md`. It answers with a
-reason and a color, and the answer is a `light` row in the mind's room. Its
+spoke last there, and the day's calendar, under `system/decision.md`. It reads the
+principal's standing word too, the same for every room: the agent's own instructions, its
+memories and the profiles that load always, the principal's among them. Those close the
+system prompt on a cache mark, so a burst of rooms reads them back. The profiles about the
+room itself, those whose `conversations` name it, ride with its lines. The rubric puts that
+word above its own rules. It answers with a reason and a color, and the answer is a
+`light` row in the mind's room. Its
 `extra.consumed` is the room's last row the judge read, and it covers the room up to there:
 **green** wakes the mind now, **yellow** waits for the next look, and **red** neither makes
 a digest due nor counts toward one, read whenever something else opens a turn. The floor
@@ -4173,8 +4178,6 @@ no sent message without its call; worth it once scripts see real use).
   same shape, one pass at a fraction of a think, and the principal's approvals are labels
   already on file for them. The LLM still writes every draft and every note. What the
   light leaves for later:
-  - **The principal's standing word** about people and rooms in the judge's prompt,
-    ahead of the room's lines, where the cache keeps it.
   - **The agenda first, with no model**: a room named in today's agenda counts as engaged
     for a few hours around its time, and the model takes the long tail.
   - **Jev**, from TypeSafe AI, a decision model known so far only through vendor claims:
