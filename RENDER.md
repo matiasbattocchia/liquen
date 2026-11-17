@@ -66,6 +66,7 @@ goes with its words. Each skill the system describes is one file under
 | `— N more messages in M other conversations not shown — search to read them —` | ✗ | |
 | `… N earlier, not shown` | ✗ | |
 | `unanswered — N conversations:` `· … — whatsapp group, 3 since 14:02 · mentioned`, `— N more` | ✗ | A reaction answers too: `send.md` |
+| `typing — N conversations:` `· … — whatsapp direct`, `· … — whatsapp group: Ana` | ✗ | In the anchor: who is writing where, the writers named unless it is a direct chat's other side. Wait for the rest: `send.md` |
 | `— N lines in M muted conversations not shown — search to read them —` | ✗ | In the anchor: muted and crowded rooms' lines that were not for the account, since the window's floor; `N+` past 200 |
 
 ## Principal

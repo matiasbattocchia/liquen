@@ -461,7 +461,8 @@ than a rewrite would reach in months:
 
 - text · media (image/audio/video/document/sticker, encrypt+upload / fetch+decrypt) ·
   reactions · locations · vCards · replies (quote ↔ `re_message_id`) · edits · revokes ·
-  delivery/read receipts in · read receipts + typing out · pushnames · the address book,
+  delivery/read receipts in · typing in (a `typing` entry of the batch, logged) · read
+  receipts + typing out · pushnames · the address book,
   both ways (`sender_saved` on every message it names, `POST /dispatch` `{type: "contact"}`
   to write an entry, `GET /contacts/{address}?q=…` to look one up — on a fork of
   whatsmeow carrying `tulir/whatsmeow#1247`)

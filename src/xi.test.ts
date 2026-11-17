@@ -11,6 +11,7 @@ import {
   hushedOn,
   relevant,
   specsOf,
+  typingOn,
   UNANSWERED_ROOMS,
   unansweredOn,
   unknownTool,
@@ -659,6 +660,29 @@ Deno.test("attention: the world is checked on the interval, counted from the LAS
   assertEquals(decide([looked(16), world("slack:C1", 14)], SESSION, WAKE, NOON), "think");
   // and an agent that has never looked is due now: it has been away, it picks the phone up
   assertEquals(decide([world("slack:C1", 0)], SESSION, WAKE, NOON), "think");
+});
+
+Deno.test("attention: someone writing holds their conversation's news, and only theirs", () => {
+  const sec = (s: number) => new Date(NOON - s * 1000).toISOString();
+  const typed = (stamp: string, minAgo = 0) => ({
+    ...world("slack:C1", minAgo),
+    status: { typing: { U1: stamp } },
+  } as Event);
+  assertEquals(decide([typed(sec(5))], SESSION, WAKE, NOON), "ignore");
+  // a stamp the wire has not renewed in TYPING_FRESH_MS is a stop nobody said
+  assertEquals(decide([typed(sec(31))], SESSION, WAKE, NOON), "think");
+  // the writer's own word after the stamp is the thought arriving
+  const theirs = (s: number) =>
+    ({
+      ...world("slack:C1", 0),
+      ts: sec(s),
+      envelope: { ...env("slack:C1"), sender: { address: "U1" } },
+    }) as Event;
+  assertEquals(decide([typed(sec(10)), theirs(2)], SESSION, WAKE, NOON), "think");
+  // news that has waited TYPING_HOLD_MS is answered, writing or not
+  assertEquals(decide([typed(sec(5), 2)], SESSION, WAKE, NOON), "think");
+  // another conversation's news still wakes
+  assertEquals(decide([typed(sec(5)), world("slack:C2", 0)], SESSION, WAKE, NOON), "think");
 });
 
 Deno.test("attention: marks never make the digest due — a reaction, a deletion, a room's change", () => {
@@ -1506,6 +1530,34 @@ Deno.test("unansweredOn: a room whose last word is a peer's is listed, newest ro
     "unanswered — 1 conversation:",
     "· Ana — whatsapp direct, 3 since 16 Sep 14:01",
   ]);
+});
+
+Deno.test("typingOn: each conversation someone is writing in, and who when it is not the other side", () => {
+  const now = Date.parse(T(10));
+  const stamped = (e: Event, typing: Record<string, string>) =>
+    ({ ...e, status: { typing } }) as Event;
+  const named = (e: Event, name: string) =>
+    ({ ...e, envelope: { ...e.envelope, sender: { ...e.envelope.sender!, name } } }) as Event;
+  const fresh = new Date(now - 5_000).toISOString();
+  const window = [
+    named(line("333", T(1), { kind: "group", name: "Obra", sender: "777" }), "Ana"),
+    stamped(line("111", T(2), { kind: "direct", name: "Facu" }), { "111": fresh }),
+    stamped(line("333", T(3), { kind: "group", name: "Obra", sender: "888" }), { "777": fresh }),
+    stamped(line("444", T(4), { kind: "direct", name: "Gero" }), {
+      "444": new Date(now - 31_000).toISOString(),
+    }),
+  ];
+  assertEquals(typingOn(window, now), [
+    "typing — 2 conversations:",
+    "· Facu — whatsapp direct",
+    "· Obra — whatsapp group: Ana",
+  ]);
+  // the writer's word landing after the stamp drops the line
+  assertEquals(typingOn([...window, line("111", T(10), { kind: "direct", name: "Facu" })], now), [
+    "typing — 1 conversation:",
+    "· Obra — whatsapp group: Ana",
+  ]);
+  assertEquals(typingOn(window, now + 30_000), []);
 });
 
 Deno.test("unansweredOn: a room's change of members is owed no answer", () => {
