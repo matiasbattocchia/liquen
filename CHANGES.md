@@ -84,7 +84,7 @@ carries no payload, as a poke carries none.
    upserts the wake: `seq` goes up, and the earlier `due` stays. A row from the world sets
    a mind's `due` one debounce away (`system.debounceMs`). The session's own row sets it
    to now.
-2. **A due wake with no live lock is offered,** if its agent runs. The drain runs xi for it. On a host it
+2. **A due wake with no live lock is offered,** if its agent runs. On a host the drain
    runs xi itself. Where no host stays up it posts through `pg_net` to the function that
    runs xi, and waits on no turn.
 3. **xi takes the lock.** Held, it exits and the wake stays. Taken, it reads the wake's
