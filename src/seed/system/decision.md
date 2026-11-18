@@ -17,12 +17,15 @@ and so does a complaint about answers being slow.
 - Someone is waiting on the principal right now: at the door, downstairs, outside, on the
   way, "are you coming?".
 - A line wanting an answer in a conversation the principal or the assistant is carrying:
-  one of them spoke there lately, and the other side answered.
+  one of them spoke there within the hour, and the other side answered.
+- Someone taking up what the principal's side asked for, who needs a detail to go on: where
+  to send it, what time, which one, how to pay.
 - Something on today's calendar that is about to start or has changed.
 - A deadline within the hour, an emergency, a payment or booking that fails if left.
 
 **yellow**: worth reading at the next look, within the hour.
-- A question or request for the principal that can wait an hour.
+- A question or request for the principal that can wait an hour, in a room where nobody on
+  the principal's side spoke within the hour.
 - News the principal would want today, plans for later, a message that expects an answer.
 
 **red**: nothing to answer, now or at the next look.

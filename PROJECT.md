@@ -7377,6 +7377,32 @@ Open:
 
 - Whether it talks over matias: the fix then is a window in which he answers first.
 
+### The judge's floor is an hour, and a detail to go on is green (2026-11-18) — LANDED, on in new
+
+matias ordered fish from his phone at 13:09; the shop answered at 13:27, "Siii mañana
+vuelve a ingresar trucha fresca y lo enviamos" and "A donde ?". Haiku lit both bursts
+yellow, the second with a reason that named the green rule ("la conversación está activa y
+el principal habló hace 18 min") and still chose the next look. His own line had opened
+that hour's digest at 13:09, so the question waited until about 14:10. The rubric's
+"spoke there lately" gave the judge no number to read the floor line's "18 min ago"
+against, and the yellow rule "a question that can wait an hour" overlapped it.
+
+`decision.md` now says "within the hour" for the floor, the yellow rule holds only where
+nobody on the principal's side spoke within the hour, and a rule of its own lights green
+someone taking up what the principal's side asked for who needs a detail to go on (where,
+when, which one, how to pay), whatever the floor's age.
+
+Replayed on Haiku 5.5, `effort: low`, with matias's standing word, five calls a case, old
+rubric then new: the real "A donde ?" 1/5 then 5/5 green; a friend asking back 18 minutes
+after the principal 1/5 then 4/5 green, and 3 hours after 1/5 green either way; the shop's
+price list red 5/5 either way; the greeting alone mostly yellow either way; the same "A
+donde ?" 3 hours after the order 0/5 then 5/5 green, by the new rule.
+
+Open:
+
+- The principal's own line makes a digest due like the world's, so a look spent on it
+  restarts the hour the other side's answer then waits.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
