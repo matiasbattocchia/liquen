@@ -1,15 +1,18 @@
 # Next batch: wakes, the looks a session is owed
 
-Decided 17 Nov 2026, for Postgres: the database and short-lived functions, with no process
-that must stay up. Any writer may insert into `events`, and triggers make the row right.
-The ten below are settled. What is still open closes the file.
+Decided 17 and 18 Nov 2026, for Postgres: the database and short-lived functions, with no
+process that must stay up. Any writer may insert into `events`, and it waits on nothing of
+liquen's. What follows a write is TypeScript, the same on both engines: the database
+stores rows and rings a bell. The ten below are settled. What is still open closes the
+file.
 
 1. A `wakes` table holds every look a session is owed.
 2. A look's life runs between `wakes` and `locks`.
 3. `locks` keeps its contract, and gives a wake its status.
-4. The trigger on `events` arms a wake through the law and the class gate.
-5. On SQLite the adapter's publish arms the wake, and one drain serves every host that
-   stays up.
+4. `events` is immutable, optimistically: a row's data is written once, and an update
+   carries its status and metadata.
+5. One drain routes each new event to `wakes` through the law and the class gate. Every
+   consumer's queue is state on rows, and a bell carries nothing.
 6. Every timer is one of three kinds: a look, a pass of the tick, or a watch on a live
    thing.
 7. A session has one timer, its wake, and `decide` names the moment to ask again. No look
@@ -41,17 +44,17 @@ carries no payload, as a poke carries none.
         ┌───────────┐
         │  events   │◀──────────────────────────────────────┐
         └───────────┘                                       │
-              │ 1  trigger: the law, the class gate         │
+              │ 1  the drain: the law, the class gate       │
               ▼    upsert, keep the earlier due             │
         ┌─────────────────────┐                             │
         │        wakes        │◀───────────────┐            │
         │ session · due · seq │                │            │
         └─────────────────────┘                │            │
               │ 2  due, no live lock:          │            │
-              ▼    trigger now, pg_cron later  │            │
+              ▼    the drain offers it         │            │
         ┌─────────────────────┐                │            │
-        │  pg_net → function  │                │            │
         │         xi          │                │            │
+        │ main, or a function │                │            │
         └─────────────────────┘                │            │
               │ 3  take the lock               │            │
               ▼                                │            │
@@ -76,30 +79,34 @@ carries no payload, as a poke carries none.
           └─────────────────────────────────┘
 ```
 
-1. **An insert arms the wake.** The trigger on `events` applies the law and the class gate
-   (`relevant`), then upserts the session's wake: `seq` goes up, and the earlier `due`
-   stays. A row from the world sets a mind's `due` one debounce away
-   (`system.debounceMs`). The session's own row sets it to now.
-2. **A due wake with no live lock is offered.** A trigger on `wakes` posts through `pg_net`
-   to the function that runs xi, and `pg_cron` offers the wakes that come due later.
-3. **The function takes the lock.** Held, it exits and the wake stays. Taken, it reads the
-   wake's `seq`, then the window, then decides and works.
+1. **The drain arms the wake.** A pass takes the events not yet routed and applies the law
+   and the class gate (`relevant`) to each (§5). For every session a row passes for, it
+   upserts the wake: `seq` goes up, and the earlier `due` stays. A row from the world sets
+   a mind's `due` one debounce away (`system.debounceMs`). The session's own row sets it
+   to now.
+2. **A due wake with no live lock is offered.** The drain runs xi for it. On a host it
+   runs xi itself. Where no host stays up it posts through `pg_net` to the function that
+   runs xi, and waits on no turn.
+3. **xi takes the lock.** Held, it exits and the wake stays. Taken, it reads the wake's
+   `seq`, then the window, then decides and works.
 4. **The end is one transaction.** The turn's last events, the lock's delete and the
    wake's settling commit together. The wake is settled only if its `seq` is the one read:
    deleted, or moved to the moment `decide` named (§7).
-5. **A release offers what stands.** A trigger on the lock's delete sends a surviving wake
-   through step 2 again. It offers, and writes nothing.
+5. **A release rings the bell.** The lock's delete wakes the drain, and its pass offers a
+   wake that still stands.
 
 What follows:
 
-- **A turn chains through the table.** Step 4's rows pass the same trigger and arm the
-  wake under a new `seq`, so the settling misses and step 5 offers it.
-- **A lost post costs nothing.** `pg_net` tries once, the wake stands, and `pg_cron`
+- **A turn chains through the table.** Step 4's rows are routed as any insert is and arm
+  the wake under a new `seq`, so the settling misses and step 5 offers it.
+- **A lost post costs nothing.** `pg_net` tries once, the wake stands, and the next pass
   offers it again.
-- **Two posts for one wake do no harm.** One function takes the lock, and the other exits.
+- **Two posts for one wake do no harm.** One xi takes the lock, and the other exits.
 - **A crash needs no path of its own.** The wake was never deleted and the lock stops
-  being renewed, so `pg_cron` offers the wake and the next function steals the lease. xi
+  being renewed, so a later pass offers the wake and the next xi steals the lease. xi
   sweeps what the dead holder left, as after any steal.
+- **A pass that dies loses nothing.** Its transaction rolls back, its rows stay unrouted,
+  and the next pass takes them.
 
 ## 3. Locks
 
@@ -109,56 +116,112 @@ What follows:
 - **The cancel mark stays on the lock.** A `control` row marks a running turn and arms no
   wake, since it never starts one.
 
-## 4. The trigger on events
+## 4. Events are written once
 
-The trigger answers two questions for each row: which sessions may see it, and whether it
-can mean work for them.
+`events` is immutable, optimistically. A row's data is written once, at its insert. What
+is written afterwards is about the event: its status, and its metadata.
 
-- **The law has one source.** The schema builds a SQL function from the text `policyFor`
-  gives the reads, as it builds `object_readable`. The trigger calls it, and a row-level
-  policy may call it too.
+- **The data.** `type`, `parts`, `text`, `payload`, `timestamp`, and the envelope: the
+  service, the connection, the room, the sender, the agent and its session.
+- **The metadata.** `status`, `extra`, `updated_at`, and `routed_at` (§5). A receipt, a
+  withdrawal and a send's progress are updates to `status`. A connector's marks sit in
+  `extra`, stamped on arrival.
+- **A change to a message is a row of its own.** An edit and a revoke are inserted, with
+  the original's id in `ref_external_id`, on every connector.
+- **A late fact fills, once.** What the wire tells after the insert fills a field that
+  was empty: a send's `external_id` and sender, a room's kind, the thread a sent mail
+  opened. A filled field stays as it is.
+- **A restated row lands as metadata.** An upsert on a known `external_id` merges `status`
+  and `extra`, fills what is empty, and leaves the data as first written.
+- **It is optimistic.** liquen's writers keep the rule in their own code, and the suite
+  holds them to it: a row restated with other words reads back as first written, on both
+  engines. A role that is not liquen's is held by its privileges on Postgres: it may
+  insert, and update `status`, `extra` and `updated_at` alone.
+
+What follows:
+
+- **A row is news once.** Whether a row wakes a session is decided when it is routed,
+  from data that will not change and marks stamped on arrival. An insert is asked, and an
+  update is not.
+- **An update is a bell.** It tells the consumers that read state to look again: a
+  dispatcher its re-offer, the report pass a send that failed.
+
+## 5. The drain, and the queues
+
+What follows a write is one TypeScript module, the drain. It runs after the write,
+wherever a process lives, and no writer waits on it. It keeps nothing between passes:
+what it knows is in the tables.
+
+- **A pass does three things.** It routes the events not yet routed, offers the wakes
+  that are due with no live lock, and runs the tick's passes that are due (§6).
+- **Its queue is state on `events`.** `routed_at` is null on a new row, and a partial
+  index holds the rows where it is. A pass takes them oldest first, arms the wakes they
+  earn and stamps them, in one transaction. The stamp is the drain's alone, and it leaves
+  `updated_at` as it was, so no reader of a row's moves sees it.
+- **One pass at a time.** A pass locks the rows it takes. A second drain waits, then
+  finds them routed. So each row is routed once, and in order.
+- **Routing is the law and the class gate.** For each row the drain asks which sessions
+  may see it (`policyFor`), and whether it can mean work for them (`relevant`). `wakes` is
+  xi's queue, filled with what passed both, so no session looks at a row to learn it was
+  not for it.
 - **Who is asked.** The mind of every agent whose row says it runs, under the law. A named
   session by its room: the members a local address spells, or the memberships of a group.
   A paused agent gets no wake.
-- **The class gate lives in the trigger.** A wake carries no payload, so xi has no row to
+- **The class gate comes before the wake.** A wake carries no payload, so xi has no row to
   refuse at its door, and a wake armed for nothing would cost a lease and a window read.
-  The gate is `relevant` in SQL:
-  - a `message` passes unless it is silenced or holds only `room` parts;
-  - a `tool_use` or a `tool_result` passes when it is the session's own and no script
-    made it;
-  - a `permission_response`, an `alarm` and a `summary` pass;
-  - an `error` passes in the session's own room, when it says the request was too long or
-    that a checkpoint's try failed;
-  - any other row is dropped.
-- **Two languages, one answer.** The suite runs its cases through `relevant` and through
-  the SQL, as it does for `fold` and `docs_edit`. The pattern for a request too long is
-  built from `TOO_LONG` (`compact.ts`).
-- **An insert is asked, and an update that turns a row.** A merge into a known row is an
-  update. It is asked only when the row passes the gate and did not before, as a line in a
-  muted room does once it is restated with a mention of the account. Any other merge wakes
-  nobody.
-- **The debounce.** The trigger reads `system.debounceMs` from the `config` table. It
-  delays a mind's wake for a row that is not the session's own. A named session's wake is
-  due at once.
+  `relevant` passes:
+  - a `message`, unless it is silenced or holds only `room` parts;
+  - a `tool_use` or a `tool_result`, when it is the session's own and no script made it;
+  - a `permission_response`, an `alarm` and a `summary`;
+  - an `error` in the session's own room, when it says the request was too long or that a
+    checkpoint's try failed.
+- **The debounce.** The drain reads `system.debounceMs` from the org's `config`. It delays
+  a mind's wake for a row that is not the session's own. A named session's wake is due at
+  once.
+- **One language.** The law and the gate are TypeScript on both engines, and the suite
+  runs their cases once.
 
-## 5. SQLite, and the drain
+Every consumer reads a queue held as state on rows:
 
-- **The contract is the port.** A publish arms the wake of every session the law admits
-  and the gate passes. Postgres keeps it with the trigger. SQLite keeps it in the
-  adapter's publish, inside the writing transaction: the law's text in the arming query,
-  and `relevant` called as it is. SQLite gets no trigger.
-- **The suite states it once.** The case runs over a substrate, on both engines.
-- **The drain is one module.** It takes the wakes that are due and have no live lock, and
-  runs xi for each. A commit wakes it (SQLite's watch, Postgres's `NOTIFY`), and it sleeps
-  until the next `due` otherwise. main runs it on SQLite, and so does a Postgres host
-  with no `pg_net`. It stands where steps 2 and 5 of a look's life have a trigger.
+| Consumer | Its queue |
+|---|---|
+| The drain | Events with no `routed_at` |
+| xi | Wakes that are due, with no live lock |
+| A dispatcher | Its service's rows in state `queued` |
+| The tick | Rows whose time has come: reminders, asks, retries, reports |
+
+- **A bell carries nothing.** It says a queue may have changed, and the consumer reads
+  its queue. A lost bell costs time, never a row.
+
+  | Bell | Who hears it | Where |
+  |---|---|---|
+  | The store's watch | A host on the file | SQLite |
+  | `NOTIFY` | A host connected to the database | Postgres |
+  | Realtime | A connector hosted elsewhere, a frontend | Supabase |
+  | `pg_net` | Nobody: it starts the drain's function | Supabase, with no host |
+  | `pg_cron` | Nobody: it rings each minute | Supabase: a lost bell, a `due` that came |
+
+- **What rings.** An insert into `events`, a move of a row's `status`, and a lock's
+  delete. On Postgres a statement-level trigger rings, with no condition and no row.
+- **A claim is one statement.** A consumer takes a row by changing its state under a
+  condition, so two of a kind never take the same one. A dispatcher claims a `queued` row
+  by stamping `posting_at` so, in the store.
+- **The mirror and the reports ride the drain.** The mirror copies from the rows a pass
+  routes. The send reports run when a status moves, and each minute (§6).
+- **Where the drain runs.** In main, on SQLite and on a Postgres host: a bell wakes it,
+  and it sleeps until the next `due` otherwise. As a function where no host stays up,
+  started by `pg_net` and by `pg_cron`.
+- **What the database holds.** Rows, the bell's triggers, and the privileges of a role
+  that is not liquen's.
 - **Steps 3 and 4 are the store's.** Reading `seq` and acknowledging with the release are
   the same statements on every engine.
+- **The suite states it once.** Its cases run over a substrate, on both engines: an
+  insert arms the wakes the law and the gate admit, and two drains route a row once.
 - **What main lets go.** Its subscription per agent, the debounce timers, the owed set
-  with its in-flight map, the raw-log router for named sessions, the minute's poke of
-  every agent, and the cache's keeper.
-- **What main keeps.** The drain, the ticker for the clock's passes, the turns a stop
-  waits out, the doors and the sandbox.
+  with its in-flight map, the raw-log router for named sessions, the subscriptions of the
+  mirror and the reports, the minute's poke of every agent, and the cache's keeper.
+- **What main keeps.** The drain and its ticker, the turns a stop waits out, the doors and
+  the sandbox.
 
 ## 6. Timers
 
@@ -168,24 +231,27 @@ Every timer is one of three kinds. A new one is placed by asking the three in th
    due. The session's wake keeps the time. The holds, the debounce and the cache's keeper
    are looks (§7).
 2. **A pass of the tick.** A row says when something is due, or the store needs a sweep.
-   The tick keeps the time: once a minute per org, each pass at its own pace, by main's
-   ticker or by `pg_cron` where no host stays up. Its passes:
+   The tick keeps the time: once a minute per org, each pass at its own pace. The drain
+   runs it, on main's ticker or on `pg_cron`'s ring. Its passes:
    - reminders, lapsed asks, send retries and send reports;
    - sign-in tickets past their deadline;
    - pages past their days;
    - objects no event references.
+
+   A bell may bring a pass early. The send reports run when a row's `status` moves, and
+   the minute stays the guarantee.
 3. **A watch on a live thing.** A process, a socket or a lease is alive now, and the
    process that owns it keeps the time: a job's probe, the lease's heartbeat, a
    connector's reconnect, a sign-in flow polling its provider.
 
-A pass and a watch write rows, and their rows arm wakes as any insert does.
+A pass and a watch write rows, and their rows are routed as any insert is.
 
 ## 7. The clock's looks
 
 `decide` reads three things: the window, the config and the clock. A wake has a source
 for each.
 
-- **The window.** The trigger on `events` arms the wake (§4).
+- **The window.** The drain arms the wake for a new event (§5).
 - **The config and the law.** A membership's insert arms that member's session. A write
   to `agents`, `connections` or `config` arms the mind of every running agent, and an
   agent that starts to run gets its first look so.
@@ -281,9 +347,11 @@ service's: liquen's stands beside open-bsp-api's.
 - **A store is opened on one org.** The Postgres adapter binds its handle to the org, as
   it binds it to the schema. xi, nu and the connectors see one org's rows.
 - **SQLite has no column.** The file is the org.
-- **A trigger stays inside its org.** A row arms wakes only for its org's sessions. The
-  law and the `config` it reads are that org's, and a post names the org with the session.
-- **The tick is one job.** `pg_cron` runs each org's passes.
+- **A pass stays inside its org.** The drain finds the orgs with unrouted events or due
+  wakes, and opens a store on each. A row arms wakes only for its org's sessions, under
+  that org's law and `config`, and a post to xi names the org with the session.
+- **`pg_cron` is one job.** It rings the drain each minute, and the drain runs each org's
+  passes.
 - **The suite holds two orgs apart.** A Postgres case writes to two orgs in one schema.
   Neither reads the other's rows, and neither's insert arms the other's wake.
 
@@ -315,4 +383,11 @@ None of these is part of the batch until it is settled.
   missed predicate lets through, by reading a setting of the connection. Whether a pooler
   in transaction mode keeps that setting is unverified.
 - **An org's users.** Which rows say that a signed-in user may reach an org through the
-  Data API.
+  Data API, and whether what they read of `events` passes the law.
+- **What arms a wake for a write that is no event.** §7 has a membership's insert, and a
+  write to `agents`, `connections` or `config`, arm wakes. liquen's own writes can arm
+  them in the store, in the writing transaction. A signed-in user's write through the
+  Data API has no code of liquen's on its path.
+- **The riders that keep state or take time.** The transcriber runs a command for each
+  note, and presence remembers who asked for a stretch. Whether each is a step of a pass,
+  or a consumer with a queue of its own.
