@@ -341,6 +341,9 @@ and the meter counts it under its kind.
   adaptive on every step, and the judge states only its `decision.effort`.
 - **What each keeps.** The judge keeps its slice, its instruction and the shape of its
   answer. The ping keeps `max_tokens: 0`.
+- **The judge names its provider.** `decision.provider` joins `decision.model` and
+  `decision.effort`, which are checked against it. Unset, the judge rides the agent's
+  provider. Its step takes its own transport (§11).
 
 ## 9. Orgs
 
@@ -389,6 +392,10 @@ A look builds what it runs with, and keeps nothing for the next.
 - **xi builds its own runner.** A look reads the org and the agent's row, makes the
   session's config, and builds its ports from the host. main hands it one thing more, the
   session's tune. A function hands it none.
+- **A transport is asked for by provider.** The host hands every provider's transport
+  through one function. xi binds its agent to it, for the agent's key and its meter, and
+  resolves two: the session's, and the judge's. nu, the judge and the ping each receive a
+  transport, and see no provider.
 - **main keeps no runners.** Its maps of minds and of named sessions go, and `retune` with
   them: a change to a row is read by the next look.
 - **The tune is the triple.** Provider, model and effort, taken when a session is first
@@ -397,7 +404,8 @@ A look builds what it runs with, and keeps nothing for the next.
   runs on the tune whole, so a write to `config` leaves an attached session's triple as
   it was.
 - **The rest follows the org.** Tools, rules, `sleepHours` and the window's budget are
-  read at each look, attached or not.
+  read at each look, attached or not. So is the judge: its provider, model and effort are
+  the org's, and a tune leaves them alone.
 - **One tune per session.** main holds it beside the session's attachments. A later
   attach that names no values joins it. One that names other values is refused, with an
   error that says what the session holds.
