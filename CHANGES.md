@@ -3,7 +3,7 @@
 Decided 17 and 18 Nov 2026, for Postgres: the database and short-lived functions, with no
 process that must stay up. Any writer may insert into `events`, and it waits on nothing of
 liquen's. What follows a write is TypeScript, the same on both engines: the database
-stores rows and rings a bell. The ten below are settled. What is still open closes the
+stores rows and rings a bell. The eleven below are settled. What is still open closes the
 file.
 
 1. A `wakes` table holds every look a session is owed.
@@ -21,6 +21,8 @@ file.
 9. On Postgres every table carries `organization_id`, and a store is opened on one org.
    On SQLite the file is the org.
 10. A `looks` table keeps what each look cost in time and memory.
+11. A look builds what it runs with, and an attached session holds its provider, model
+    and effort.
 
 ## 1. The wakes table
 
@@ -224,7 +226,8 @@ Every consumer reads a queue held as state on rows:
   insert arms the wakes the law and the gate admit, and two drains route a row once.
 - **What main lets go.** Its subscription per agent, the debounce timers, the owed set
   with its in-flight map, the raw-log router for named sessions, the subscriptions of the
-  mirror and the reports, the minute's poke of every agent, and the cache's keeper.
+  mirror and the reports, the minute's poke of every agent, the cache's keeper, and the
+  runners it keeps per session (§11).
 - **What main keeps.** The drain and its ticker, the turns a stop waits out, the doors and
   the sandbox.
 
@@ -378,6 +381,28 @@ for each, an `ignore` too.
   holds.
 - **A tool's time stays on its result.** An exec tool's run keeps its wall time in
   `extra.exec`.
+
+## 11. The runner, and the tune
+
+A look builds what it runs with, and keeps nothing for the next.
+
+- **xi builds its own runner.** A look reads the org and the agent's row, makes the
+  session's config, and builds its ports from the host. main hands it one thing more, the
+  session's tune. A function hands it none.
+- **main keeps no runners.** Its maps of minds and of named sessions go, and `retune` with
+  them: a change to a row is read by the next look.
+- **The tune is the triple.** Provider, model and effort, taken when a session is first
+  attached: the values the attach names, and the row's for the rest. The door checks it
+  then, and refuses an attach whose provider cannot run the model at that effort. A look
+  runs on the tune whole, so a write to `config` leaves an attached session's triple as
+  it was.
+- **The rest follows the org.** Tools, rules, `sleepHours` and the window's budget are
+  read at each look, attached or not.
+- **One tune per session.** main holds it beside the session's attachments. A later
+  attach that names no values joins it. One that names other values is refused, with an
+  error that says what the session holds.
+- **The last hang-up ends it.** With no attachment left, the tune goes, and the next look
+  runs on the row.
 
 ## Open
 
