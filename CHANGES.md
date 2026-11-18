@@ -84,7 +84,7 @@ carries no payload, as a poke carries none.
    upserts the wake: `seq` goes up, and the earlier `due` stays. A row from the world sets
    a mind's `due` one debounce away (`system.debounceMs`). The session's own row sets it
    to now.
-2. **A due wake with no live lock is offered.** The drain runs xi for it. On a host it
+2. **A due wake with no live lock is offered,** if its agent runs. The drain runs xi for it. On a host it
    runs xi itself. Where no host stays up it posts through `pg_net` to the function that
    runs xi, and waits on no turn.
 3. **xi takes the lock.** Held, it exits and the wake stays. Taken, it reads the wake's
@@ -166,7 +166,8 @@ what it knows is in the tables.
   not for it.
 - **Who is asked.** The mind of every agent whose row says it runs, under the law. A named
   session by its room: the members a local address spells, or the memberships of a group.
-  A paused agent gets no wake.
+  A paused agent's wake is armed and waits: the first pass after the agent runs again
+  offers it, with all the news that came while it was paused.
 - **The class gate comes before the wake.** A wake carries no payload, so xi has no row to
   refuse at its door, and a wake armed for nothing would cost a lease and a window read.
   `relevant` passes:
@@ -213,6 +214,10 @@ Every consumer reads a queue held as state on rows:
   started by `pg_net` and by `pg_cron`.
 - **What the database holds.** Rows, the bell's triggers, and the privileges of a role
   that is not liquen's.
+- **Every start reads the org.** A look, a pass and a delivery read the org from the
+  store as they start, and hold it until they end. The store's `config_version` and its
+  triggers go. main brings an agent's door and sandbox in line when a command pokes its
+  socket.
 - **Steps 3 and 4 are the store's.** Reading `seq` and acknowledging with the release are
   the same statements on every engine.
 - **The suite states it once.** Its cases run over a substrate, on both engines: an
@@ -248,14 +253,13 @@ A pass and a watch write rows, and their rows are routed as any insert is.
 
 ## 7. The clock's looks
 
-`decide` reads three things: the window, the config and the clock. A wake has a source
-for each.
+`decide` reads three things: the window, the config and the clock. Two of them arm a
+wake.
 
 - **The window.** The drain arms the wake for a new event (§5).
-- **The config and the law.** A membership's insert arms that member's session. A write
-  to `agents`, `connections` or `config` arms the mind of every running agent, and an
-  agent that starts to run gets its first look so.
 - **The clock.** `decide` names the moment to ask again.
+- **The config.** A look reads it as it starts. A change to the config or to the law
+  reaches a session at its next look, whatever arms it.
 
 Two rules keep the clock's part whole:
 
@@ -384,10 +388,6 @@ None of these is part of the batch until it is settled.
   in transaction mode keeps that setting is unverified.
 - **An org's users.** Which rows say that a signed-in user may reach an org through the
   Data API, and whether what they read of `events` passes the law.
-- **What arms a wake for a write that is no event.** §7 has a membership's insert, and a
-  write to `agents`, `connections` or `config`, arm wakes. liquen's own writes can arm
-  them in the store, in the writing transaction. A signed-in user's write through the
-  Data API has no code of liquen's on its path.
 - **The riders that keep state or take time.** The transcriber runs a command for each
   note, and presence remembers who asked for a stretch. Whether each is a step of a pass,
   or a consumer with a queue of its own.
