@@ -166,7 +166,7 @@ decide(window) →
                                                                       that note, arriving)
     `digestAfterMessages` unread, across the whole world           → think (check early)
     `digestMinutes` since the agent last LOOKED                    → think (check the phone)
-      (news lit red counts toward neither)
+      (news lit red, and the principal's own lines, count toward neither)
   else                                                             → ignore (quiescence)
 ```
 
@@ -240,6 +240,9 @@ agent, and that turn's anchor lists who is writing where (`typing —`, §5), so
 the rest and leaves the one still being written.
 Both weigh words: a reaction or a deletion is a **mark** nobody is owed an answer for, read
 when words make the check due and never making it due alone, and never counted unanswered.
+The principal's own line in the world, typed or a voice note's words, weighs the same: where
+they step in they carry the room themselves and leave the rest to the agent's hour, so their
+line rides along with the next look, never opens one, and never counts toward the pile.
 A room's change is not news at all, on any rung: a join, a rename, an archive, a call, a
 read — in the mind, a local room, a named session or a conversation the agent holds the
 floor in — informs about the room and wakes nobody. It is read when something else opens a

@@ -315,9 +315,12 @@ function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
  *      time it looked — the way you put the phone down and pick it up again
  *   5. or early, when `digestAfterMessages` have piled up across the whole world
  *
- * Rungs 4 and 5 weigh words: a reaction, a deletion or a room's change is a mark nobody
- * is owed an answer for, so it is read when words make the digest due and never makes it
- * due alone.
+ * Rungs 4 and 5 weigh the other side's words: a reaction, a deletion or a room's change is
+ * a mark nobody is owed an answer for, so it is read when words make the digest due and
+ * never makes it due alone. The principal's own words in the world, typed or a voice
+ * note's, are the same: where they step in they carry the room themselves, and the rest is
+ * the agent's at its own hour, so their lines ride along with the next look and neither
+ * open it nor count toward its pile.
  *
  * A conversation someone is WRITING in (`typingIn`) holds its news on every rung: the rest
  * of the thought is on its way, as a burst's is while the debounce waits. The hold ends
@@ -416,10 +419,13 @@ function attention(
   // the same pile it is, and the digest reads the two together.
   if (news.some((e) => lateWords(e, events, looked, session))) return "think";
   // a MARK — a reaction, a deletion, a room's change — is owed no answer: it rides along
-  // when words make the digest due, and alone it never does. Nor does news the judge lit
-  // red: it is read when something else opens a turn, and counts toward no pile
+  // when words make the digest due, and alone it never does. Nor does the principal's own
+  // line in the world, typed or spoken, nor news the judge lit red: each is read when
+  // something else opens a turn, and counts toward no pile
   const said = news.filter((e) =>
-    (e.type !== "message" || spoken(e) || words(e) !== undefined) && lit?.get(e.id) !== "red"
+    (e.type !== "message" ||
+      ((spoken(e) || words(e) !== undefined) && !ownComplex(e, session))) &&
+    lit?.get(e.id) !== "red"
   );
   return said.length > 0 && digestDue(said, looked, wake, now) ? "think" : "ignore";
 }

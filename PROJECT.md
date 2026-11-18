@@ -7398,10 +7398,16 @@ after the principal 1/5 then 4/5 green, and 3 hours after 1/5 green either way; 
 price list red 5/5 either way; the greeting alone mostly yellow either way; the same "A
 donde ?" 3 hours after the order 0/5 then 5/5 green, by the new rule.
 
-Open:
+### The principal's own lines never make the digest due (2026-11-18) — LANDED, on in new
 
-- The principal's own line makes a digest due like the world's, so a look spent on it
-  restarts the hour the other side's answer then waits.
+In the same case, matias's order at 13:09 was the only news since the 11:37 look, and it
+opened that hour's look, a silent one, which restarted the hour the shop's answer then
+waited. When matias steps in, he does it in a few rooms he carries himself and leaves the
+rest to the agent. His own lines in the world, typed or a voice note's words, now weigh on
+the digest as marks do: they ride along with the next look, never open one, and never count
+toward `digestAfterMessages`. On that morning the 11:37 look would have stood, and the
+shop's 13:27 answer would have found the digest due and been read at once, yellow light
+and all.
 
 ### What is open (2026-10-20)
 

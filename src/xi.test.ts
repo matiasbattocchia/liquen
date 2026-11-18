@@ -946,6 +946,32 @@ Deno.test("attention: the principal speaking in a conversation holds the floor f
   assertEquals(decide([byHand(11), look, world("slack:C1", 0)], s, WAKE, NOON), "ignore");
 });
 
+Deno.test("attention: the principal's own lines in the world never make the digest due, nor count toward its pile", () => {
+  const hourly: Wake = { digestMinutes: 60 };
+  const byHand = (conv: string, minAgo: number) =>
+    ev("message", {
+      agent: { id: "a1" }, // their phone in hand: no session_id, and never a turn_id
+      ts: at(minAgo),
+      envelope: { ...env(conv), sender: { address: "matias", name: "matias" } },
+      parts: [{ type: "text", kind: "text", text: "te encargo 4 kg de trucha" }],
+    } as Partial<Event>);
+  // the look is long past, and the principal's line is all that arrived: it waits for it
+  assertEquals(decide([looked(98), byHand("wa:shop", 0)], SESSION, hourly, NOON), "ignore");
+  // however many rooms they step into
+  const rounds = Array.from({ length: 40 }, (_, i) => byHand(`wa:r${i}`, 0));
+  assertEquals(decide([looked(1), ...rounds], SESSION, hourly, NOON), "ignore");
+  // so the hour runs from the last look, and the other side's answer, past the floor's
+  // ten minutes, finds the digest already due
+  assertEquals(
+    decide([looked(110), byHand("wa:shop", 18), world("wa:shop", 0)], SESSION, hourly, NOON),
+    "think",
+  );
+  assertEquals(
+    decide([looked(30), byHand("wa:shop", 18), world("wa:shop", 0)], SESSION, hourly, NOON),
+    "ignore",
+  );
+});
+
 Deno.test("attention: asleep, the ambient world waits for morning — the principal never does", () => {
   const night = Date.parse("2026-08-19T03:00:00Z"); // inside the default 23-8 span (UTC)
   const ambient = (base: number, minAgo = 10) =>
