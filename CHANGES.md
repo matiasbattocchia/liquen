@@ -17,7 +17,7 @@ file.
    thing.
 7. A session has one timer, its wake, and `decide` names the moment to ask again. No look
    comes by the minute.
-8. Every model call is a step, tried and metered one way, under one name.
+8. Every model call is tried and metered one way, under one name.
 9. On Postgres every table carries `organization_id`, and a store is opened on one org.
    On SQLite the file is the org.
 10. A `looks` table keeps what each look cost in time and memory.
@@ -323,12 +323,12 @@ What follows:
 
 ## 8. Model calls
 
-A model call is a step, whatever it is for. `mu` shapes the request, nu's ladder tries it,
-and the meter counts it under its kind.
+A model call is tried and metered one way, whatever it is for. `mu` shapes the request,
+nu's ladder tries it, and the meter counts it under its kind.
 
-| Call | Verdict | Meter kind | Row |
+| Model call | Verdict | Meter kind | Row |
 |---|---|---|---|
-| A turn's step | `think` | `think` | `thinking`, `message`, `tool_use` |
+| A think | `think` | `think` | `thinking`, `message`, `tool_use` |
 | A compaction | `compact` | `compact` | `summary` |
 | The judge | none, it runs before `decide` | `decide` | `decision` |
 | The keeper's ping | `warm` | `warm` | `keepalive` |
@@ -336,16 +336,16 @@ and the meter counts it under its kind.
 - **The names follow the table.** A meter kind is a verb, the verdict's own where there is
   one: `checkpoint` becomes `compact`, `decision` becomes `decide`, and `keepalive`
   becomes `warm`. The `light` row becomes a `decision` row.
-- **nu hands the step out.** The judge and the ping take the call nu gives its compaction
-  (`StepCall`), so each is tried as a think is: the client's fast retries, then
+- **nu hands the model call out.** The judge and the ping take the one nu gives its
+  compaction (`StepCall`), so each is tried as a think is: the client's fast retries, then
   `RETRY_DELAYS_MS`.
-- **`mu` learns one thing.** A step may ask for its answer in a schema. Thinking stays
-  adaptive on every step, and the judge states only its `decision.effort`.
+- **`mu` learns one thing.** A model call may ask for its answer in a schema. Thinking
+  stays adaptive on every call, and the judge states only its `decision.effort`.
 - **What each keeps.** The judge keeps its slice, its instruction and the shape of its
   answer. The ping keeps `max_tokens: 0`.
 - **The judge names its provider.** `decision.provider` joins `decision.model` and
   `decision.effort`, which are checked against it. Unset, the judge rides the agent's
-  provider. Its step takes its own transport (§11).
+  provider. Its model call takes its own transport (§11).
 
 ## 9. Orgs
 
@@ -423,7 +423,13 @@ glossary, so a thing that has a name is never given another.
 - **An invocation is one run of xi.** The ReAct loop is unrolled across invocations: each
   reads the window, and `decide` picks the step it carries out.
 - **A step is a verdict carried out.** `think`, `act`, or `ignore`, which stops the loop.
-  An act is a step as a think is: it answers the calls the last think made.
+  An act is a step as a think is: it answers the tool calls the last think made.
+- **An auxiliary step is outside the loop.** `compact`, `warm` and `unload` are verdicts
+  the ReAct loop does not take. Each runs on the same invocation path as a step: the turn
+  lease, the window read, and the end's one transaction.
+- **A model call is one request to a provider,** whatever it is for: a think's, a
+  compaction's, the judge's, the cache keepalive's. A tool call is the model's request to
+  run a tool. Once a paragraph has named one of them, it may say call.
 - **A turn is the loop.** It runs from the news that opens it to the `ignore` that stops
   it, one step to an invocation, chained through `wakes` (§2).
 - **"Look" is no term.** Where this file says a look, the glossary's word is invocation.
@@ -447,6 +453,3 @@ None of these is part of the batch until it is settled.
 - **The riders that keep state or take time.** The transcriber runs a command for each
   note, and presence remembers who asked for a stretch. Whether each is a step of a pass,
   or a consumer with a queue of its own.
-- **The steps that are no turn's.** `compact` and `warm` are verdicts that call the model,
-  and an unload opens a turn of its own. Whether each is a step, and what §8 and DESIGN
-  §14 call a model call, now that a step is a verdict and not a call.
