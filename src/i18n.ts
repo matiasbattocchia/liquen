@@ -46,6 +46,7 @@ const TONGUES = {
       files: "Attachments",
       location: "Location",
       contacts: "Contacts",
+      forward: "Forward",
       // what the answered line carried beside its words, `[image]` before the caption
       carried: {
         image: "image",
@@ -120,6 +121,7 @@ const TONGUES = {
       files: "Adjuntos",
       location: "Ubicación",
       contacts: "Contactos",
+      forward: "Reenviar",
       carried: {
         image: "imagen",
         audio: "audio",

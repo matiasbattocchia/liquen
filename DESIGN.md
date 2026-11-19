@@ -751,9 +751,12 @@ added to someone else's message) · `delete` removes them all · `reply`/`forwar
 relational, not mutational. A thread is a reply chain inside its conversation, never a
 conversation of its own: a Slack or Teams thread reply is a `reply` to the thread's root,
 filed in the channel it was posted to, and a `send` with `re` lands in the root's thread on
-a wire that threads. Edits and deletes are their OWN events (own external_id = the
-carrier protocol message's id): the original row stays sealed, past WUMs stay invariant,
-and the change renders in a later one (§5).
+a wire that threads. A forward carries its original's parts and points at it wherever it
+stands, usually another conversation: the wire marks it forwarded and quotes nothing, and
+the window names the original only where it already draws it. An ingested forward has no
+referent, since the wire never says where it came from. Edits and deletes are their OWN
+events (own external_id = the carrier protocol message's id): the original row stays
+sealed, past WUMs stay invariant, and the change renders in a later one (§5).
 
 **The reference rule** — `ref_external_id` when the referent lives on a wire (the platform
 id is the only stable name at ingest time); `ref_id` when both ends are ours (the log id

@@ -57,6 +57,7 @@ goes with its words. Each skill the system describes is one file under
 | `about="…"` on an outsider's line | ✗ | What they wrote of themselves on the wire, once per conversation |
 | `re="…"`, `re="?"` | ✗ | `send.md` |
 | `action="edit"`, `action="delete"` | ✗ | `send.md` |
+| `action="forward"`: its sender passed it on; on the agent's own line, `re` is the original where the window draws it | ✗ | `send.md` |
 | `<reaction>`, `action="remove"` | ✗ | `send.md` |
 | `mentions="…"` | ✗ | |
 | `<image/>` `<audio/>` `<document/>` … `name path` | ✗ | `path`: `bash.md` |

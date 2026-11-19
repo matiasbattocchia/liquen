@@ -243,6 +243,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
     files: "Adjuntos",
     location: "Ubicación",
     contacts: "Contactos",
+    forward: "Reenviar",
     carried: {
       image: "imagen",
       audio: "audio",
@@ -376,6 +377,29 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
       labels,
     ),
     "**Conversación**: Ana (5492615550102)\n\n**Mensaje a borrar** (21 Oct 9:00):\nMuchas gracias",
+  );
+  // a forward: each message it copies as its line reads, who wrote it and when, above the
+  // words that ride after them
+  assertEquals(
+    describeSendCard(
+      {
+        conversation: { name: "José Nicotra", address: "5492614543569", kind: "direct" },
+        last: { text: "Gracias Matias.", at: "19 Nov 12:14" },
+        forward: [
+          { from: "Carlos Rossi", text: "", carries: ["image"], at: "12 Nov 9:17" },
+          { from: "Carlos Rossi", text: "el de ATM", carries: ["image"], at: "12 Nov 9:22" },
+          { text: "San Lorenzo 440", at: "12 Nov 9:30" },
+        ],
+        text: "Ahí van los padrones",
+        files: 0,
+      },
+      labels,
+    ),
+    "**Conversación**: José Nicotra (5492614543569)\n\n" +
+      "**Último mensaje** (19 Nov 12:14):\nGracias Matias.\n\n" +
+      "**Reenviar**:\n[imagen] (Carlos Rossi, 12 Nov 9:17)\n" +
+      "[imagen] el de ATM (Carlos Rossi, 12 Nov 9:22)\nSan Lorenzo 440 (12 Nov 9:30)\n\n" +
+      "**Respuesta**:\nAhí van los padrones",
   );
   // a line that is not words says what it carried, ahead of whatever words it has
   const answering = (last: SendPreview["last"]) =>

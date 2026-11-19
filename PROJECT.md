@@ -7470,6 +7470,28 @@ reference replaces the address's last segment, so it names `ingest` again and la
 The ingest serves `/media/`. A test in `edge.test.ts` resolves a minted path against the
 ingest's address and fetches it through the edge.
 
+### Forwards both ways on WhatsApp (2026-11-19) — LANDED, on in new
+
+The agent had no way to forward. To pass Carlos's photos on to José it re-attached their
+`storage://` files, and José would have read them as matias's own. Nothing marked a forward
+on the way in either: the bridge never read WhatsApp's mark, so no WhatsApp line in the log
+was a forward, and render drew none from any service.
+
+`send` takes `forward`, message ids. Each goes as a row of its own, in the order named,
+with the original's words, files with their captions, pin or cards, `action: "forward"` and
+the original's `ref_external_id`; `text` follows as a message of the agent's own. It rides
+WhatsApp only, as a pin and a card do: the other dispatchers read `ref_external_id` as the
+line to answer or thread under. The dispatch marks each content `forwarded` and quotes
+nothing, and a file now carries its own caption, so a received photo keeps its words. The
+bridge (`messageContext`) answers `forwarded` with `IsForwarded` and a `ForwardingScore`
+of 1, and reads `IsForwarded` off whichever message type carries it, live and in history
+sync. The window draws `action="forward"` on a forwarded line. The agent's own points `re`
+at its original only where the window already draws it, and never pulls it into the room
+it went to. The approval card lists each line forwarded, who wrote it and when.
+
+The bytes still go up again. WhatsApp's own forward reuses the CDN copy, which would need
+the bridge to keep every received message's media keys.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
