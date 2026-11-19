@@ -1,12 +1,29 @@
 import { assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import type Anthropic from "@anthropic-ai/sdk";
-import { aboutOf, answerOf, judge, lightOf, type Seat, sliceOf, standingOf } from "./judge.ts";
+import {
+  aboutOf,
+  answerOf,
+  type Clock,
+  judge,
+  lightOf,
+  type Seat,
+  sliceOf,
+  standingOf,
+} from "./judge.ts";
 import type { ModelTransport } from "./mu.ts";
 import type { Event } from "./types.ts";
 import type { DocEntry, DocHeader } from "./store/docs.ts";
 
 const SEAT: Seat = { agentId: "a1", id: "mind", conversation: "mind@a1" };
 const NOW = Date.parse("2026-11-17T15:00:00Z");
+const CLOCK: Clock = {
+  now: NOW,
+  zone: "UTC",
+  engagedMinutes: 10,
+  night: false,
+  next: NOW + 45 * 60_000,
+  dawn: false,
+};
 
 let n = 0;
 const line = (text: string, minAgo: number, over: Partial<Event> = {}): Event =>
@@ -36,13 +53,44 @@ Deno.test("sliceOf: the room's lines with the news set off, who spoke on our sid
     new Set([bye.id]),
     SEAT,
     ["· 10:00 dentista"],
-    "UTC",
-    NOW,
+    CLOCK,
   );
   assertStringIncludes(slice, "Room: Facu (direct, whatsapp)");
-  assertStringIncludes(slice, "The agent spoke last on your side here, 6 min ago");
+  assertStringIncludes(slice, "Now 17 Nov 15:00. The assistant looks next around 17 Nov 15:45.");
+  assertStringIncludes(
+    slice,
+    "The agent spoke last on your side here, 6 min ago: the assistant is carrying this conversation.",
+  );
   assertStringIncludes(slice, "Today:\n· 10:00 dentista");
   assertMatch(slice, /14:54 agent: hasta luego\n— new, to judge —\n.*14:59 Facu: nos hablamos$/);
+});
+
+Deno.test("sliceOf: the room says whose it is — the principal's within engagedMinutes, then nobody's — and the night says when it ends", () => {
+  const ours = { agent: { id: "a1" } } as Partial<Event>; // their phone in hand: no turn
+  const news = line("¿y entonces?", 0);
+  const at = (minAgo: number, clock: Clock) =>
+    sliceOf(
+      [line("che", minAgo, ours), news],
+      "5491133",
+      new Set([news.id]),
+      SEAT,
+      [],
+      clock,
+    );
+  assertStringIncludes(
+    at(3, CLOCK),
+    "The principal spoke last on your side here, 3 min ago: the principal holds the floor.",
+  );
+  assertStringIncludes(
+    at(27, CLOCK),
+    "The principal spoke last on your side here, 27 min ago: nobody on your side holds the floor now.",
+  );
+  const night = { ...CLOCK, night: true, next: Date.parse("2026-11-18T08:00:00Z"), dawn: true };
+  assertStringIncludes(
+    at(27, night),
+    "Now 17 Nov 15:00, the principal's night. " +
+      "The assistant looks next at 18 Nov 8:00, when the night ends.",
+  );
 });
 
 Deno.test("sliceOf: a transcript speaks as the author it wears, and a note without words says its kind", () => {
@@ -82,8 +130,7 @@ Deno.test("sliceOf: a transcript speaks as the author it wears, and a note witho
     new Set(),
     SEAT,
     [],
-    "UTC",
-    NOW,
+    CLOCK,
   );
   assertMatch(slice, /principal: \[audio\]\n.*Gasti: \[audio\]/);
   assertStringIncludes(slice, "principal (voice note, transcribed): organizo el domingo");
@@ -191,7 +238,7 @@ Deno.test("standingOf and aboutOf: the principal's word, and what the agent keep
   assertEquals(aboutOf(docs, { service: "whatsapp", address: "5492612339930" }), [carlos]);
   assertEquals(aboutOf(docs, { service: "slack", address: "5492612339930" }), []);
   // the slice carries it, ahead of the lines
-  const slice = sliceOf([line("hola", 0)], "5491133", new Set(), SEAT, [], "UTC", NOW, [carlos]);
+  const slice = sliceOf([line("hola", 0)], "5491133", new Set(), SEAT, [], CLOCK, [carlos]);
   assertStringIncludes(
     slice,
     "About this room [profiles/carlos]:\nSe quejó de que no le responden.",

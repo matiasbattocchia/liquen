@@ -21,7 +21,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { ModelTransport } from "../mu.ts";
 import type { UsageRow } from "../store/log.ts";
 import type { Credentials } from "../store/credentials.ts";
-import { EFFORTS, type ProviderName } from "../config.ts";
+import { DEFAULT_WARM_HOURS, EFFORTS, type ProviderName } from "../config.ts";
 import type { Effort } from "../types.ts";
 import { anthropicClient, anthropicTransport } from "./anthropic.ts";
 import { googleClient, googleTransport } from "./google.ts";
@@ -263,20 +263,18 @@ export const CACHE_HOUR_MS = 60 * 60_000;
  *  it again: the hour, less the margin a ping needs to land inside it. */
 export const WARM_MS = 55 * 60_000;
 
-/** The most keep-alives in a row with no call of the session's between them. A ping reads
- *  the prefix at the cache-read rate and a lapsed cache writes it again at the hour's write
- *  rate, which the list prices put at 20 to 80 reads: a run this long that never meets a
- *  turn costs at most one write more than letting the cache lapse. Twenty hold it some
- *  eighteen hours, a night and a quiet day. */
-export const WARM_PINGS = 20;
+/** How often an armed keeper reads the wall clock. A timer counts on a clock that stands
+ *  still while the machine is suspended, so a ping never waits on one long timer: each beat
+ *  sets the next against the wall clock, and a ping falls due within a beat of its time. */
+export const WARM_BEAT_MS = 60_000;
 
 /** The ping a session's cache is owed: the request to read again, the start of the read
- *  its hour runs from, and how many more the run may send. A keeper hands it over when it
- *  stops, and the next one takes it up. */
+ *  its hour runs from, and the start of the session's last call, which the run's horizon
+ *  counts from. A keeper hands it over when it stops, and the next one takes it up. */
 export interface Owed {
   params: Parameters<ModelTransport>[0];
   started: number;
-  left: number;
+  since: number;
   /** The id of the session's last response, so the next run's first call can name it and
    *  hear whether a restart changed the prefix. */
   previous?: string;
@@ -295,13 +293,15 @@ export interface Warmth {
  * Keep a quiet session's cache warm (§5). A turn's call (`think`) arms a ping `everyMs`
  * after its start: the same request with `max_tokens: 0`, which reads the whole prefix,
  * answers nothing and starts the hour again. It goes through the transport the call went
- * through, metered as `keepalive`, and arms the next, up to `pings` in a row. A call that
- * answers takes the timer over, and a checkpoint arms none, since the next turn renders
- * past it. A call that fails read nothing, so the ping armed before it stays armed.
+ * through, metered as `keepalive`, and arms the next, for as long as `horizonMs` past the
+ * start of the session's last call. A call that answers takes the timer over, and a
+ * checkpoint arms none, since the next turn renders past it. A call that fails read
+ * nothing, so the ping armed before it stays armed.
  *
- * A ping whose hour ran out stands down: it would write the prefix, not read it, and the
- * next turn writes it anyway. A machine that slept past the hour wakes to that. A failed
- * ping ends the run, and so does the last of `pings`.
+ * An armed keeper beats every `beatMs` on the wall clock, so a machine woken from a suspend
+ * sends the ping within a beat, and a beat that lands late says how long the machine
+ * slept. A ping whose hour ran out stands down: it would write the prefix, not read it,
+ * and the next turn writes it anyway. A failed ping ends the run, and so does the horizon.
  *
  * `owed` is the ping a stopped keeper handed over: the first kept transport through this
  * one arms it, so a restart inside the hour keeps the cache.
@@ -309,18 +309,22 @@ export interface Warmth {
  * Every kept call, ping or turn, names the session's call before it (cache diagnostics),
  * and the API answers where the two requests diverged. A call that reads nothing back, or
  * that the API says changed its prefix, is said through `say`, with what it read and
- * wrote; so is a ping that stands down, one taken up from the last run, and one that failed.
+ * wrote; so is a ping that stands down, one taken up from the last run, one that failed,
+ * a run the horizon ends, and a sleep a beat finds.
  */
 export function warmth(
   {
     everyMs = WARM_MS,
-    pings = WARM_PINGS,
+    beatMs = WARM_BEAT_MS,
+    horizonMs = () => DEFAULT_WARM_HOURS * 3_600_000,
     now = Date.now,
     owed: handed,
     say = (line) => console.error(line),
   }: {
     everyMs?: number;
-    pings?: number;
+    beatMs?: number;
+    /** Read at each ping, so an edit to the knob reaches a run already going. */
+    horizonMs?: () => number;
     now?: () => number;
     owed?: Owed;
     say?: (line: string) => void;
@@ -367,14 +371,30 @@ export function warmth(
     );
   };
   const arm = (next: Owed & { transport: ModelTransport }) => {
-    clearTimeout(timer);
     run = next;
+    beat(next);
+  };
+  const beat = (next: Owed & { transport: ModelTransport }) => {
+    clearTimeout(timer);
+    const set = now();
+    const wait = Math.min(beatMs, Math.max(0, next.started + everyMs - set));
     timer = setTimeout(() => {
       timer = undefined;
+      const late = now() - set - wait;
+      if (late > SLEPT_MS) say(`the machine slept ${minutes(late)} min`);
       if (lapsed(next)) {
         run = undefined;
-        const late = now() - next.started - CACHE_HOUR_MS;
-        return say(`keep-alive stood down ${minutes(late)} min past its hour: the cache lapsed`);
+        const past = now() - next.started - CACHE_HOUR_MS;
+        return say(`keep-alive stood down ${minutes(past)} min past its hour: the cache lapsed`);
+      }
+      if (now() < next.started + everyMs) return beat(next);
+      const horizon = horizonMs();
+      if (now() - next.since >= horizon) {
+        run = undefined;
+        const hours = Math.round(horizon / 3_600_000);
+        return say(
+          `keep-alive run over, ${hours} h past the session's last call: the cache lapses`,
+        );
       }
       const start = now();
       void send(
@@ -387,8 +407,7 @@ export function warmth(
         .then(
           () => {
             if (run !== next) return; // a call answered meanwhile and armed its own
-            if (next.left > 1) arm({ ...next, started: start, left: next.left - 1 });
-            else run = undefined;
+            arm({ ...next, started: start });
           },
           (err) => {
             if (run === next) run = undefined;
@@ -397,7 +416,7 @@ export function warmth(
             }
           },
         );
-    }, Math.max(0, next.started + everyMs - now()));
+    }, wait);
   };
   return {
     through: (transport, kept = true) => {
@@ -419,7 +438,7 @@ export function warmth(
           ? await send(transport, params, meta, emit, signal)
           : await transport(params, emit, meta, signal);
         if (kept && !quit.signal.aborted) {
-          if (meta?.kind === "think") arm({ transport, params, started: start, left: pings });
+          if (meta?.kind === "think") arm({ transport, params, started: start, since: start });
           else stand();
         }
         return message;
@@ -431,7 +450,7 @@ export function warmth(
         ? {
           params: run.params,
           started: run.started,
-          left: run.left,
+          since: run.since,
           ...(previous ? { previous } : {}),
         }
         : undefined;

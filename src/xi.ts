@@ -309,11 +309,17 @@ function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
  *
  *   1. a SUMMONS — the mind alias, or any local room — wakes now
  *   2. during `sleepHours` the world gets nothing (3 still applies — see below)
- *   3. an ENGAGED conversation wakes now: our side is in it, the agent or its principal,
- *      and you don't drop out of one you are in
+ *   3. an ENGAGED conversation wakes now: the agent holds the floor there, and you don't
+ *      drop out of one you are in. A conversation the principal holds the floor in is
+ *      theirs, and the agent is not in it
  *   4. otherwise the agent CHECKS the world every `digestMinutes`, counted from the last
  *      time it looked — the way you put the phone down and pick it up again
  *   5. or early, when `digestAfterMessages` have piled up across the whole world
+ *
+ * With the decision model on, a room's light answers before any rung that weighs the
+ * world, at every hour: green wakes now, wherever the floor is and asleep or not, and a
+ * room whose news is all lit is not woken for by the floor. So the judge is what lets a
+ * room pull in an agent that is not in it, or keeps one that is from answering a goodbye.
  *
  * Rungs 4 and 5 weigh the other side's words: a reaction, a deletion or a room's change is
  * a mark nobody is owed an answer for, so it is read when words make the digest due and
@@ -382,11 +388,11 @@ function attention(
   if (told.some((e) => e.type === "tool_result")) return "think";
   // holding the floor is the one question that is per-conversation — so the news is grouped
   // for it, and for nothing else: the two rules below weigh the world as one thing. With the
-  // decision model on, a room's light answers it: green wakes now, and a room whose news is
-  // all judged is not woken for by the floor, which the judge read. News no light covers yet
-  // (the judge failed, or has not run) is weighed by the floor, as with no model at all.
-  // Only the other side's lines ask anything: our own, the principal's typed or spoken
-  // ones included, are the floor, never a reason to wake on it
+  // decision model on, a room's light answers it: green wakes now, by day or night, and a
+  // room whose news is all judged is not woken for by the floor, which the judge read. News
+  // no light covers yet (the judge failed, or has not run) is weighed by the floor, as with
+  // no model at all. Only the other side's lines ask anything: our own, the principal's
+  // typed or spoken ones included, are the floor, never a reason to wake on it
   const lit = wake.decision?.enabled ? colorsOf(events, lights) : undefined;
   for (const conv of new Set(told.map((e) => e.envelope.conversation.address))) {
     const here = told.filter((e) =>
@@ -397,10 +403,11 @@ function attention(
     if (lit && here.every((e) => lit.has(e.id))) continue;
     if (engaged(conv, events, session, wake, now)) return "think";
   }
-  // ASLEEP: inside the span the ambient class wakes nobody, however deep the pile. The two
-  // classes above still do — the principal's own line at 3am is answered, and a conversation
-  // the agent is holding the floor in is one it is IN — so what sleeps is the world, which
-  // is the only class that was never addressed to anyone here. A stretched night interval
+  // ASLEEP: inside the span the ambient class wakes nobody, however deep the pile, and the
+  // agent makes no first move. The classes above still do — the principal's own line at 3am
+  // is answered, a conversation the agent holds the floor in is one it is IN, and a room the
+  // judge lit green cannot wait for the morning — so what sleeps is the world's digest, the
+  // one class that was never addressed to anyone here. A stretched night interval
   // (what this replaces) was a number tuned against a cache TTL nobody controls: past an
   // hour every wake pays a full uncached write anyway, so the three it bought cost more
   // than the ten they replaced, and each read a third of a night. Sleeping drops the
@@ -463,9 +470,10 @@ function colorsOf(events: Event[], lights: Lit[]): Map<string, Color> {
 
 /**
  * The rooms the decision model is owed a look at (§2), each with its news no light covers
- * yet. None when the model is off, for a named session, at night, or when something already
- * wakes the mind without it: a summons, an alarm or an update, after which the turn reads
- * every room anyway. A room's news is its words, as the digest weighs them: marks are owed
+ * yet, at every hour: at night a green is the one way the world wakes the mind. None when
+ * the model is off, for a named session, or when something already wakes the mind without
+ * it: a summons, an alarm or an update, after which the turn reads every room anyway. A
+ * room's news is its words, as the digest weighs them: marks are owed
  * no answer, a sign-out is the harness's line, not the room's, and the principal's own
  * words, typed or spoken in a note, are theirs to follow up.
  */
@@ -476,7 +484,7 @@ export function judgeable(
   now: number,
   lights: Lit[],
 ): { room: string; news: Event[] }[] {
-  if (!wake.decision?.enabled || session.id !== MIND || asleep(now, wake)) return [];
+  if (!wake.decision?.enabled || session.id !== MIND) return [];
   const news = heard(events, session, wake, now).filter((e) => !signedOutOf(e));
   const wakes = news.some((e) =>
     e.envelope.conversation.address === session.conversation ||
@@ -545,12 +553,12 @@ function lateWords(e: Event, events: Event[], looked: number, session: Session):
 }
 
 /**
- * Our side HOLDS THE FLOOR in the conversation ⇒ the agent is IN it: the last thing our
- * complex said there (`ownComplex`, either half) is recent, whether the agent said it or
- * its principal did, typing from their phone. Every reply refreshes the clock (the
- * ping-pong extension); silence lets it decay. A conversation the principal is carrying is
- * one the agent backs: a line there wanting an answer wakes it, and it takes on what it can
- * answer as they would and leaves them the rest (`send.md`).
+ * The agent HOLDS THE FLOOR in the conversation ⇒ it is IN it: the last thing our complex
+ * said there (`ownComplex`, either half) is the agent's own voice (`ownVoice`), and recent.
+ * Every reply refreshes the clock (the ping-pong extension); silence lets it decay. A line
+ * the principal typed or spoke there takes the floor at once: the conversation is theirs,
+ * and the agent stays out of it until it speaks there again, as when the principal asks it
+ * to at home, or until the judge lights the room green.
  */
 function engaged(
   conversation: string,
@@ -565,7 +573,7 @@ function engaged(
     if (
       e.type === "message" && ownComplex(e, session) &&
       e.envelope.conversation.address === conversation
-    ) return now - Date.parse(e.ts) < minutes * 60_000;
+    ) return ownVoice(e, session) && now - Date.parse(e.ts) < minutes * 60_000;
   }
   return false;
 }
@@ -629,6 +637,27 @@ function asleep(now: number, wake: Wake): boolean {
   const hour = Temporal.Instant.fromEpochMilliseconds(now)
     .toZonedDateTimeISO(wake.timezone ?? DEFAULT_TIMEZONE).hour;
   return from <= to ? hour >= from && hour < to : hour >= from || hour < to;
+}
+
+/** When the agent looks at the world next, as the judge is told it (§2): `digestMinutes`
+ *  after its last look, or the night's end (`dawn`) when that falls inside the span. */
+export function lookAhead(
+  events: Event[],
+  session: Session,
+  wake: Wake,
+  now: number,
+): { night: boolean; next: number; dawn: boolean } {
+  const night = asleep(now, wake);
+  const minutes = wake.digestMinutes ?? DEFAULT_DIGEST_MINUTES;
+  const due = Math.max(now, lastLook(events, session) + minutes * 60_000);
+  if (!asleep(due, wake)) return { night, next: due, dawn: false };
+  let hour = Temporal.Instant.fromEpochMilliseconds(due)
+    .toZonedDateTimeISO(wake.timezone ?? DEFAULT_TIMEZONE)
+    .round({ smallestUnit: "hour", roundingMode: "floor" });
+  for (let h = 0; h < 24 && asleep(hour.epochMilliseconds, wake); h++) {
+    hour = hour.add({ hours: 1 });
+  }
+  return { night, next: hour.epochMilliseconds, dawn: true };
 }
 
 /** Max consecutive `max_tokens` continuations — bounds a runaway generation (§2). */
@@ -1489,6 +1518,13 @@ async function lightUp(
   const today = await dayOn(config, ports, cascade, docs);
   const standing = standingOf(docs);
   const transport = ports.decision;
+  const now = Date.now();
+  const clock = {
+    now,
+    zone: config.timezone,
+    engagedMinutes: config.engagedMinutes ?? DEFAULT_ENGAGED_MINUTES,
+    ...lookAhead(events, session, config, now),
+  };
   const judged = await Promise.all(rooms.map(async ({ room, news }) => {
     const last = events.findLast((e) => e.envelope.conversation.address === room);
     const where = whereOf(room);
@@ -1499,8 +1535,7 @@ async function lightUp(
       new Set(news.map((e) => e.id)),
       session,
       today,
-      config.timezone,
-      Date.now(),
+      clock,
       aboutOf(docs, where),
     );
     const j = await judge(transport, d, instruction, slice, signal, standing);
