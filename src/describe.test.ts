@@ -259,21 +259,27 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   assertEquals(
     describeSendCard({
       conversation: { name: "Carlos Maglione", address: "5492615550101" },
-      last: { text: "Hola, ¿tienen turno esta semana?", at: "23 Sep 16:42" },
+      last: { from: "Carlos", text: "Hola, ¿tienen turno esta semana?", at: "23 Sep 16:42" },
       text: "Hola Carlos!\n\nLa doctora atiende **lunes y miércoles**.",
-      files: 4,
+      // each file by what it is and its name; a photo kept under its hash has none
+      files: [
+        { kind: "image" },
+        { kind: "image", name: "consultorio.jpg" },
+        { kind: "document", name: "horarios.pdf" },
+      ],
       location: "Dra. Soledad Suarez",
     }, labels),
     "**Conversación**: Carlos Maglione (5492615550101)\n\n" +
-      "**Último mensaje** (23 Sep 16:42):\nHola, ¿tienen turno esta semana?\n\n" +
+      "**Último mensaje** (Carlos, 23 Sep 16:42):\nHola, ¿tienen turno esta semana?\n\n" +
+      "**Adjuntos**:\n[imagen]\n[imagen] consultorio.jpg\n[documento] horarios.pdf\n\n" +
       // the reply keeps its rows: the judgment is over them as they will arrive
       "**Respuesta**:\nHola Carlos!\n\nLa doctora atiende **lunes y miércoles**.\n\n" +
-      "**Adjuntos**: 4 · **Ubicación**: Dra. Soledad Suarez",
+      "**Ubicación**: Dra. Soledad Suarez",
   );
   // nothing known but the address, and nothing but text: the card says only that
   assertEquals(
     describeSendCard(
-      { conversation: { address: "5491100000000" }, text: "hola", files: 0 },
+      { conversation: { address: "5491100000000" }, text: "hola" },
       labels,
     ),
     "**Conversación**: 5491100000000\n\n**Respuesta**:\nhola",
@@ -285,7 +291,6 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
       {
         conversation: { address: "5492615550103" },
         text: "hola",
-        files: 0,
         profile: { service: "whatsapp", ...profile },
       },
       labels,
@@ -306,7 +311,6 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
     describeSendCard(
       {
         conversation: { address: "5491100000000" },
-        files: 0,
         contacts: ["Carlos (+54 9 261 555-0101)", "Ana (+54 9 261 555-0102, 4251234)"],
       },
       labels,
@@ -317,11 +321,16 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   // a mail opening a thread: the subject is a row of its own, above the words
   assertEquals(
     describeSendCard(
-      { conversation: { address: "ana@x.com" }, subject: "Factura 42", text: "Hola Ana", files: 1 },
+      {
+        conversation: { address: "ana@x.com" },
+        subject: "Factura 42",
+        text: "Hola Ana",
+        files: [{ kind: "document", name: "factura-42.pdf" }],
+      },
       labels,
     ),
-    "**Conversación**: ana@x.com\n\n**Asunto**: Factura 42\n\n**Respuesta**:\nHola Ana\n\n" +
-      "**Adjuntos**: 1",
+    "**Conversación**: ana@x.com\n\n**Asunto**: Factura 42\n\n" +
+      "**Adjuntos**:\n[documento] factura-42.pdf\n\n**Respuesta**:\nHola Ana",
   );
   // a reaction in a group: the glyph is a row under the line it lands on, and the group
   // goes by its name — its address is the platform's key and tells the approver nothing
@@ -335,7 +344,6 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
         },
         last: { text: "Eeee yo quiero el de los mosquitos 🤪🤭", at: "30 Sep 16:46" },
         react: "🤣",
-        files: 0,
       },
       labels,
     ),
@@ -349,7 +357,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   const named = { text: "Muchas gracias", at: "21 Oct 9:00" };
   assertEquals(
     describeSendCard(
-      { conversation: ana, last: named, re: true, text: "de nada!", files: 0 },
+      { conversation: ana, last: named, re: true, text: "de nada!" },
       labels,
     ),
     "**Conversación**: Ana (5492615550102)\n\n**Mensaje** (21 Oct 9:00):\nMuchas gracias\n\n" +
@@ -357,7 +365,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   );
   assertEquals(
     describeSendCard(
-      { conversation: ana, last: named, re: true, action: "remove", react: "👍", files: 0 },
+      { conversation: ana, last: named, re: true, action: "remove", react: "👍" },
       labels,
     ),
     "**Conversación**: Ana (5492615550102)\n\n**Mensaje** (21 Oct 9:00):\nMuchas gracias\n\n" +
@@ -365,7 +373,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   );
   assertEquals(
     describeSendCard(
-      { conversation: ana, last: named, re: true, action: "edit", text: "Mil gracias", files: 0 },
+      { conversation: ana, last: named, re: true, action: "edit", text: "Mil gracias" },
       labels,
     ),
     "**Conversación**: Ana (5492615550102)\n\n**Mensaje a editar** (21 Oct 9:00):\nMuchas gracias\n\n" +
@@ -373,7 +381,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   );
   assertEquals(
     describeSendCard(
-      { conversation: ana, last: named, re: true, action: "delete", files: 0 },
+      { conversation: ana, last: named, re: true, action: "delete" },
       labels,
     ),
     "**Conversación**: Ana (5492615550102)\n\n**Mensaje a borrar** (21 Oct 9:00):\nMuchas gracias",
@@ -391,7 +399,6 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
           { text: "San Lorenzo 440", at: "12 Nov 9:30" },
         ],
         text: "Ahí van los padrones",
-        files: 0,
       },
       labels,
     ),
@@ -404,7 +411,7 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
   // a line that is not words says what it carried, ahead of whatever words it has
   const answering = (last: SendPreview["last"]) =>
     describeSendCard(
-      { conversation: { address: "5491100000000" }, last, text: "qué lindo!", files: 0 },
+      { conversation: { address: "5491100000000" }, last, text: "qué lindo!" },
       labels,
     );
   assertEquals(

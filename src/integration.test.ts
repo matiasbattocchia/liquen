@@ -950,7 +950,7 @@ Deno.test("send: a number typed with + and separators is the digits the wire spe
   }
 });
 
-Deno.test("a gated send carries its preview: where it lands, the other side's last word, the text", async () => {
+Deno.test("a gated send carries its preview: where it lands, the conversation's last line and who wrote it, what goes", async () => {
   const dir = await Deno.makeTempDir();
   const log = await orgLog(dir);
   await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
@@ -964,7 +964,7 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
       input: {
         to: "Carlos",
         text: "hola Carlos!\n\nlunes o miércoles",
-        files: ["fachada.jpg", "portero.jpg"],
+        files: ["fotos/fachada.jpg", "horarios.pdf"],
         location: { latitude: -32.9, longitude: -68.8, name: "Consultorio" },
         contacts: [{ name: "Dra. Suarez", phones: ["+54 9 261 555-0103", "4251234"] }],
       },
@@ -1019,8 +1019,24 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
   });
   try {
     await log.publish(patient("hola, tienen turno?", "2026-09-23T19:42:00Z"));
-    // the account's own hand, typed on the phone after — not the other side
+    // the account's own hand, typed on the phone after: the chat's last line, the account's
     await log.publish(patient("un momento", "2026-09-23T19:50:00Z", true));
+    // a send of ours that never went out is no line of the chat
+    const lost = await log.publish({
+      ts: "2026-09-23T19:55:00Z",
+      type: "message",
+      payload: { turn_id: "t-lost" },
+      agent: { id: "a1", session_id: "mind" },
+      envelope: {
+        service: "whatsapp",
+        connection_address: "5491100000000",
+        conversation: { address: "5492615550101", kind: "direct", name: "Carlos" },
+      },
+      parts: [{ type: "text", kind: "text", text: "te paso las fotos" }],
+    });
+    await log.setDelivery(lost!.id, {
+      status: { state: "failed", failed_at: "2026-09-23T19:55:01Z" },
+    });
     await log.publish(principalMsg("contestale a Carlos"));
     for (let i = 0; i < 6; i++) await xi(config, ports);
     const cards = await log.read({ types: ["permission_request"] });
@@ -1037,16 +1053,15 @@ Deno.test("a gated send carries its preview: where it lands, the other side's la
     );
     assertEquals(req.parts[0].data.send, {
       conversation: { name: "Carlos", address: "5492615550101", kind: "direct" },
-      last: { text: "hola, tienen turno?", at: "23 Sep 16:42" },
+      last: { from: "Sole", text: "un momento", at: "23 Sep 16:50" },
       text: "hola Carlos!\n\nlunes o miércoles",
-      files: 2,
+      files: [{ kind: "image", name: "fachada.jpg" }, { kind: "document", name: "horarios.pdf" }],
       location: "Consultorio",
       contacts: ["Dra. Suarez (+54 9 261 555-0103, 4251234)"],
     });
     assertEquals(stranger.parts[0].data.send, {
       conversation: { address: "5492615550103" },
       text: "hola",
-      files: 0,
       profile: { service: "whatsapp", exists: true, name: "Clinica Andina" },
     });
     // only the strangers were asked about, under the address the wire spells
@@ -1101,11 +1116,10 @@ Deno.test("a gated send that names its line carries that line and what it does t
     assert(req.type === "permission_request");
     assertEquals(req.parts[0].data.send, {
       conversation: { name: "Ana", address: "5492615550102", kind: "direct" },
-      last: { text: "Muchas gracias", at: "21 Oct 9:00" },
+      last: { from: "Ana", text: "Muchas gracias", at: "21 Oct 9:00" },
       re: true,
       action: "remove",
       react: "👍",
-      files: 0,
     });
   } finally {
     await log.close();
@@ -1177,8 +1191,8 @@ Deno.test("a gated send's last word is a line without text: what it carried, and
       e.type === "permission_request" ? e.parts[0].data.send?.last : undefined
     );
     assertEquals(sends, [
-      { text: "", carries: ["image"], at: "23 Sep 16:42" },
-      { text: "¿podemos el lunes?", carries: ["audio"], at: "23 Sep 16:44" },
+      { from: "Carlos", text: "", carries: ["image"], at: "23 Sep 16:42" },
+      { from: "Ana", text: "¿podemos el lunes?", carries: ["audio"], at: "23 Sep 16:44" },
     ]);
   } finally {
     await log.close();
@@ -1360,6 +1374,52 @@ Deno.test("a gated forward's card lists what it copies: each line, who wrote it 
       { from: "Carlos", text: "San Lorenzo 440", at: "12 Nov 9:18" },
     ]);
     assertEquals(card?.text, "ahí van");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a gated send's card names a kept file by the name it came with, and a nameless one by what it is", async () => {
+  const dir = await Deno.makeTempDir();
+  const { log } = await forwardWorld(dir);
+  // a document Carlos sent, kept under its content hash, arrived with a name
+  await log.publish({
+    ts: "2026-11-12T12:19:00Z",
+    type: "message",
+    envelope: {
+      service: "whatsapp",
+      connection_address: "5491100000000",
+      conversation: { address: "5492615550101", kind: "direct", name: "Carlos" },
+      sender: { address: "5492615550101", name: "Carlos" },
+      external_id: "wa:d1",
+    },
+    parts: [{
+      type: "file",
+      kind: "document",
+      file: { mime_type: "application/pdf", uri: "storage://media/9a1f.pdf", name: "contrato.pdf" },
+    }],
+  });
+  const { transport } = scripted([
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: {
+        to: "5491199999999",
+        connection: "sole",
+        files: ["storage://media/9a1f.pdf", "storage://media/padron.jpeg"],
+      },
+    }], "tool_use"),
+    ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
+  ]);
+  const config: AgentConfig = { ...CONFIG, gate: (name) => name === "send" ? "ask" : "allow" };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("pasale el contrato y la foto"));
+    for (let i = 0; i < 6; i++) await xi(config, ports);
+    const [ask] = await log.read({ types: ["permission_request"] });
+    const card = ask.type === "permission_request" ? ask.parts[0].data.send : undefined;
+    assertEquals(card?.files, [{ kind: "document", name: "contrato.pdf" }, { kind: "image" }]);
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
