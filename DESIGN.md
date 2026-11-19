@@ -156,11 +156,12 @@ decide(window) →
     news where someone is WRITING (`status.typing`), younger than  → held (the rest of the
       `TYPING_HOLD_MS`                                                thought is coming)
     a summons — the mind alias, or a local room                    → think (never waits)
-    a room the decision model lit green (`decision.enabled`)       → think (it cannot wait)
-    an engaged conversation — our side HOLDS THE FLOOR: our        → think (you don't drop
-      complex's last word there, the agent's or the principal's,     out mid-conversation)
-      is recent, and the other side's line came after it;
-      with the model on, only a room no light covers yet
+    a room the decision model lit green (`decision.enabled`),      → think (it cannot wait)
+      at any hour
+    an engaged conversation — the agent HOLDS THE FLOOR: our       → think (you don't drop
+      complex's last word there is the agent's own, recent, and      out mid-conversation)
+      the other side's line came after it; with the model on,
+      only a room no light covers yet
     asleep (`sleepHours`)                                          → ignore (the world waits)
     a transcript for a note already LOOKED at                      → think (the words are
                                                                       that note, arriving)
@@ -174,8 +175,14 @@ decide(window) →
 call that sorts the world before the ladder weighs it. Under the lease, before `decide`, xi
 judges each world room whose words no light covers yet (`judgeable`), one call per room
 (`judge.ts`). The principal's own words there, typed or spoken in a note, are not judged:
-nothing in them waits on the principal, and the judge reads them with the room. Each call reads the room's last lines with the news set off, who on our side
-spoke last there, and the day's calendar, under `system/decision.md`. It reads the
+nothing in them waits on the principal, and the judge reads them with the room. Each call reads the room's last lines with the news set off, the time and when
+the agent looks next (`lookAhead`: the digest after its last look, or the night's end), the
+day's calendar, and whose the room is, said outright: the principal holds the floor within
+`engagedMinutes` of their line, the assistant is carrying it within the hour of its own,
+and past that nobody holds it. It reads them under `system/decision.md`, whose rubric
+lights a room the principal holds red whatever it says, a conversation the assistant is
+carrying green when a line there wants an answer, by night too, and a quarrel or a
+personal matter only the principal can answer yellow at most. It reads the
 principal's standing word too, the same for every room: the agent's own instructions, its
 memories and the profiles that load always, the principal's among them. Those close the
 system prompt on a cache mark, so a burst of rooms reads them back. The profiles about the
@@ -188,8 +195,10 @@ a digest due nor counts toward one, read whenever something else opens a turn. T
 is something the judge reads, so a room whose news is all lit is not woken for by
 engagement; a room the judge has not lit, because the call failed or has not run, falls
 back to the engaged rung, and with the model off the ladder is as it stands above.
-Nothing is judged at night, for a named session, or when a summons, an alarm or an update
-already wakes the mind, since that turn reads every room. Lights are no news and no input:
+The judge works at every hour, so it is what lets a room pull in an agent that is not in
+it, and what keeps an engaged one from answering a goodbye; at night a green is the one way
+the world wakes the mind. Nothing is judged for a named session, or when a summons, an
+alarm or an update already wakes the mind, since that turn reads every room. Lights are no news and no input:
 xi sets them aside from the window before any rule reads it, so no positional rule,
 render or tool meets one, and `decide` reads them apart. The judge spends through the
 agent's meter (`kind: decision`) on the agent's own provider, past the keeper, whose ping
@@ -208,16 +217,16 @@ through the mirror's fan-in (§4), or in a room of the org's own, which a member
 the agent in it: nothing local is the world talking around it, so a peer's word wakes it
 at once, the night included. An owned account's sign-out (§5) lands in the mind room yet
 is the world's news, so only the night and the digest govern it. The rest is the world, and the world waits. An **engaged** conversation wakes immediately too, and
-engagement is **holding the floor**: the last thing our complex said there, the agent's own
-voice or the principal's from their phone, is younger than `engagedMinutes`. Every reply
-refreshes the clock (ping-pong), silence lets it decay. A conversation the principal is
-carrying is one the agent **backs**: the other side's next line wakes it, and it takes on
-what it can answer as the principal would (a fact, a time, a place, a confirmation),
-leaving them what only they can say and never repeating or contradicting them (`send.md`).
-Whether it can is the agent's call as it reads the room, made by whatever model it thinks
-with. The principal's own line is the floor and never a reason to wake. So the world can
-never pull the agent in without our side: it is only ever engaged where it or its
-principal is.
+engagement is **holding the floor**: the last thing our complex said there is the agent's
+own voice, younger than `engagedMinutes`. Every reply refreshes the clock (ping-pong),
+silence lets it decay. **When the principal is engaged, the agent is not**: a line the
+principal typed or spoke there takes the floor at once, the conversation is theirs, and the
+agent stays out of it until it speaks there again, as when the principal asks it to at
+home. The principal's own line is never a reason to wake either. Once they have stepped
+away, the agent takes on what it can answer as they would (a fact, a time, a place, a
+confirmation), leaving them what only they can say and never repeating or contradicting
+them (`send.md`). So the world never pulls the agent in by the ladder alone: it is engaged
+only where it spoke, and only the judge's green brings it into a room it is not in.
 Everything else is **ambient**, and the agent **checks the world** the way a person checks a
 phone: every `digestMinutes`, counted from **the last time it looked** — the stamp on its
 last closing message there. Not from the oldest unread, which is the difference between "I
@@ -249,11 +258,12 @@ floor in — informs about the room and wakes nobody. It is read when something 
 turn; in a local room that is the word the member who made the change says next.
 One look answers for every conversation because one look SEES every conversation: the turn
 reads a whole window, so the rooms it left alone were in front of the model too.
-Inside `sleepHours` ("23-8"-style on the org clock, null ⇒ never sleeps) it checks nothing:
-the ambient class wakes nobody until morning, however deep the pile.
-Sleep sits between the classes, not over them, so the two that were addressed to someone
-still land at 3am — the principal's own line to the session, and a conversation the agent is
-holding the floor in. What sleeps is the world. (It replaces a stretched night interval,
+Inside `sleepHours` ("23-8"-style on the org clock, null ⇒ never sleeps) it checks nothing
+and makes no first move: the ambient class wakes nobody until morning, however deep the
+pile. Sleep sits between the classes, not over them, so what was addressed to someone still
+lands at 3am — the principal's own line to the session, a conversation the agent holds the
+floor in (one it opened at the principal's word, say), and a room the judge lit green. What
+sleeps is the world's digest. (It replaces a stretched night interval,
 which was a number tuned against a cache TTL nobody controls: past an hour every wake pays
 a full uncached prefix write anyway, so three overnight wakes cost more than the ten they
 replaced and each read a third of a night. The night now arrives once, whole.)
@@ -380,9 +390,10 @@ no block for it (§5), and the REPL holds the deltas back until it knows which w
 read at all; a silence note is ours, and it is only the body that is absent.
 
 *(v0 has no `held`/park pre-check. **Coexistence** — the principal answering a customer
-directly — is the agent **backing** them (§2, the floor): it answers what it can as they
-would and leaves them the rest, by its own reading of the room, not by a state flag.
-Explicit **takeover/hold** is deferred, §10.)*
+directly — is the floor (§2): while they answer, the room is theirs and the agent stays
+out; once they step away, it answers what it can as they would and leaves them the rest,
+by its own reading of the room, not by a state flag. Explicit **takeover/hold** is
+deferred, §10.)*
 
 **No wake-rule.** The agent wakes on **everything it can read** — access (the per-principal
 readable filter / RLS, §6) *is* the wake filter. It decides relevance itself: act
@@ -1776,13 +1787,17 @@ before plus new rows, until a checkpoint moves the floor:
   where a read costs a tenth of input or less. So each mind has a keeper: a turn's call
   arms a replay of itself at `max_tokens: 0` 55 minutes after its start, which reads every
   entry the call's marks reach, answers nothing and starts the hour again. Each replay arms
-  the next, twenty in a row at most, some eighteen hours: the list prices put a write at 20
-  to 80 reads, so a run that never meets a turn costs at most one write more than the
-  lapse. The night is the gap it pays most across: the morning's first turn reads what the
-  evening's last one wrote. A call that answers takes the timer over, and a checkpoint arms
-  none, since the next turn renders past it. A call that fails read nothing, so the replay
-  armed before it stays armed. A replay due after its hour ran out, as on a machine that
-  slept through it, stands down: it would write the cache, not read it. A stopping process
+  the next until `warmHours` (eighteen by default) past the start of the session's last
+  call: the list prices put a write at 20 to 80 reads, so a run of some twenty replays that
+  never meets a turn costs at most one write more than the lapse. The night is the gap it
+  pays most across, so the run goes on through `sleepHours`: the morning's first turn reads
+  what the evening's last one wrote. A call that answers takes the timer over, and a
+  checkpoint arms none, since the next turn renders past it. A call that fails read
+  nothing, so the replay armed before it stays armed. A timer stands still while the
+  machine is suspended, so an armed keeper beats every minute on the wall clock: a laptop
+  that wakes with the hour still running sends the replay within a beat, and a beat that
+  lands late says how long the machine slept. A replay due after its hour ran out, as on a
+  machine that slept through it, stands down: it would write the cache, not read it. A stopping process
   leaves each mind's owed replay in `data/run/<agent>.keep.json`, and the next boot's
   keeper takes it up, so a restart inside the hour keeps the cache. A named session has
   none: its work ends, and the next brief may be days away. Only an Anthropic transport is
@@ -1791,7 +1806,8 @@ before plus new rows, until a checkpoint moves the floor:
   before it, the run's last carried over in the owed file, and the API answers where the
   two requests diverged: the tools, the system, the messages. The run log hears every call
   that read nothing back or changed its prefix, every ping that stood down past its hour,
-  and every ping a run left or took up, under `[cache] <agent>`. A lapse and a changed
+  every ping a run left or took up, a run `warmHours` ended, and a sleep a beat found, under
+  `[cache] <agent>`. A lapse and a changed
   prefix cost the same write and want opposite fixes, so the line says which it was.
 
 ### Media (kept like the rest, until the checkpoint)
@@ -2424,9 +2440,10 @@ with a time bound.
 - **Agent memory dropped**: the long-running session **is** the memory. Only org memory
   (shared) and conversation working-state (optional projection) remain (§8).
 - **Oversight & control are trivial** (one context per session; the principal reads and
-  steers directly). Undirected `stop` cancels the in-flight work. Coexistence = the agent
-  backs a conversation its principal is in, answering what it can as they would (§2);
-  explicit per-conversation takeover is deferred (§10).
+  steers directly). Undirected `stop` cancels the in-flight work. Coexistence = the floor:
+  a conversation the principal is answering in is theirs, and once they step away the agent
+  answers what it can as they would (§2); explicit per-conversation takeover is deferred
+  (§10).
 - **The limit + the deferral signal**: context capacity — the mind holds all world
   conversations, so it **dilutes at high volume**. Named sessions are the split for WORK
   (a coding task, a project thread); a subagent tree stays deferred until compaction

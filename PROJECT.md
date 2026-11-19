@@ -7409,6 +7409,49 @@ toward `digestAfterMessages`. On that morning the 11:37 look would have stood, a
 shop's 13:27 answer would have found the digest due and been read at once, yellow light
 and all.
 
+### When the principal is engaged the agent is not, the judge works all night, and the cache is kept 18 hours (2026-11-19) — LANDED, on in new
+
+On the evening of 18 Nov matias argued with Sol in their direct chat from 22:00 to 23:11,
+typing and in voice notes. The mind woke 35 times on that one room and answered 28 of them
+with silence, about $0.70. From 22:00 to 23:00 the judge lit 20 of Sol's bursts green, each
+reason citing the rubric's "a conversation the principal is carrying" (one even said only
+matias could answer it); from 23:00, inside `sleepHours`, nothing was judged, and his own
+lines held the floor for the agent, so the engaged rung woke it 11 times more. matias's
+rules, which the floor of 17 Nov had turned around:
+
+- inside `sleepHours` the agent makes no first move, and the digest is off; a conversation
+  it holds the floor in, as one it opened at his word, it still follows;
+- when the principal is engaged, the agent is not: his line takes the floor from it at once;
+- the judge works at every hour, and it is what can pull a disengaged agent in (green) or
+  keep an engaged one from answering (any other light).
+
+`engaged` again holds only for the agent's own voice. `judgeable` no longer skips the night.
+The judge's slice says the time and when the agent looks next (the night's end when the
+night holds the next digest), and says whose the room is outright: the principal holds the
+floor within `engagedMinutes` of his line, the assistant is carrying it within the hour of
+its own, nobody past that. Haiku read the minutes against "within the hour" badly when
+left to itself, taking a principal's line 18 minutes old for a floor he held. The rubric
+lights a room the principal holds red whatever it says, puts the assistant's conversation
+and the emergency rules green at any hour, and keeps a quarrel, a reproach or a personal
+matter yellow at most. `send.md` says to stay out of a conversation the principal is
+answering in, and to take on what it can once he has stepped away.
+
+Replayed on Haiku 5.5, `effort: low`, with matias's standing word, Sol's real lines at four
+moments and eight built cases: the old rubric lit the held moments green 4/4, 4/4 and 1/4
+(three yellow at 23:10); the new one, five calls a case, lit all 12 cases as wanted 5/5 —
+Sol's held moments red, her reproach at 22:31 (his line 27 minutes old, the next look at
+08:00) yellow, the shop's "A donde ?" green 18 minutes after the order and red 2 minutes
+after, a friend asking back 18 minutes later yellow, the agent's own conversation green by
+day and at 23:36, its goodbye red, a lunch invitation at 01:30 yellow, a neighbour's leak at
+02:09 green.
+
+The keep-alive ran twenty pings in a row; it now runs until `warmHours` (18) past the start
+of the mind's last call, through the night. Named sessions keep only the hour a call buys.
+A laptop closed at 13:39 and opened at 13:57 sent the 14:04 ping late, after the hour, since
+a timer stands still while the machine sleeps, and the next turn wrote 68k tokens, $0.54. An
+armed keeper now beats every minute on the wall clock, sends the ping within a beat of
+waking, and says `the machine slept N min`.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

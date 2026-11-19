@@ -302,10 +302,9 @@ What follows:
   decision, so no rule, render or tool meets one, and it arms no wake. The log holds the
   run, so a restart keeps it.
 - **A run ends when there is nothing to keep.** Each ping that read the cache names the
-  next, `WARM_MS` on. The run stops at night, after a ping that failed, and after a ping
-  that read nothing. The next turn starts a new one. No count bounds a run: DESIGN §10
-  keeps the bound by price as an optimization, a run ending once keeping the cache has
-  cost as much as letting it lapse.
+  next, `WARM_MS` on. The run goes on through the night, and stops `warmHours` past the
+  start of the session's last model call, after a ping that failed, and after a ping that
+  read nothing. The next turn starts a new one.
 - **The end settles the wake.** xi asks `decide` about the window it leaves, after an
   `ignore` and after work alike. Something still owed keeps the wake, due now: the
   checkpoint an over-budget window needs after a turn's own error is one. A moment named

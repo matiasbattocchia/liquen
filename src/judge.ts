@@ -84,19 +84,31 @@ export function aboutOf(docs: DocEntry[], where: Where): DocEntry[] {
   );
 }
 
-/** What one room shows the judge, as text: its name and kind, who holds the floor, the
- *  day, what the agent keeps about the room, and its last lines with the news set off
- *  below a rule. */
+/** The clock the judge reads a room by: the time, how long the principal's last line keeps
+ *  a room theirs (`engagedMinutes`), whether the principal's night has begun, and when the
+ *  agent looks at the world next, the night's end (`dawn`) when the night holds it. */
+export interface Clock {
+  now: number;
+  zone?: string;
+  engagedMinutes: number;
+  night: boolean;
+  next: number;
+  dawn: boolean;
+}
+
+/** What one room shows the judge, as text: its name and kind, the time and the agent's next
+ *  look, who holds the floor, the day, what the agent keeps about the room, and its last
+ *  lines with the news set off below a rule. */
 export function sliceOf(
   events: Event[],
   room: string,
   news: Set<string>,
   seat: Seat,
   today: string[],
-  zone?: string,
-  now = Date.now(),
+  clock: Clock,
   about: DocEntry[] = [],
 ): string {
+  const { zone } = clock;
   const lines = events.filter((e): e is MessageEvent =>
     e.type === "message" && e.envelope.conversation.address === room && !roomOnly(e)
   ).slice(-SLICE_LINES);
@@ -106,7 +118,8 @@ export function sliceOf(
     `Room: ${where?.name ?? room} (${where?.kind ?? "conversation"}, ${
       last?.envelope.service ?? "unknown"
     })`,
-    floorOf(lines, seat, now),
+    lookOf(clock),
+    floorOf(lines, seat, clock),
     today.length > 0 ? `Today:\n${today.join("\n")}` : "Today: nothing on the calendar.",
     ...about.map(({ header: h, body }) => `\nAbout this room [${h.name}]:\n${body!.trim()}`),
   ];
@@ -145,17 +158,41 @@ function transcribed(e: MessageEvent): boolean {
     e.parts.some((p) => p.type === "text" && p.kind === "transcript");
 }
 
-/** Who holds the floor: the last line our side said there, the agent's or the principal's. */
-function floorOf(lines: MessageEvent[], seat: Seat, now: number): string {
+/** The time, and when the agent looks next: within its digest by day, at the night's end
+ *  when the night holds the look. */
+function lookOf({ now, zone, night, next, dawn }: Clock): string {
+  const at = (ms: number) => hhmm(new Date(ms).toISOString(), zone);
+  const time = `Now ${at(now)}${night ? ", the principal's night" : ""}.`;
+  return dawn
+    ? `${time} The assistant looks next at ${at(next)}, when the night ends.`
+    : `${time} The assistant looks next around ${at(next)}.`;
+}
+
+/** How long the agent's last line keeps a conversation one it is carrying, for the judge:
+ *  the hour its digest runs on, so an answer that comes before the next look is waited for. */
+const CARRYING_MS = 60 * 60_000;
+
+/** Who spoke last on our side, and whose the room is, said outright so the judge never
+ *  reads the minutes itself: the principal holds the floor while their line is younger
+ *  than `engagedMinutes`, the agent carries the conversation within `CARRYING_MS` of its
+ *  own, and past that nobody holds it. */
+function floorOf(lines: MessageEvent[], seat: Seat, clock: Clock): string {
   for (let i = lines.length - 1; i >= 0; i--) {
     const e = lines[i];
     if (!ownComplex(e, seat)) continue;
-    const ago = Math.max(0, Math.round((now - Date.parse(e.ts)) / 60_000));
-    return ownVoice(e, seat)
-      ? `The agent spoke last on your side here, ${ago} min ago: it holds the floor.`
-      : `The principal spoke last on your side here, ${ago} min ago.`;
+    const ms = clock.now - Date.parse(e.ts);
+    const ago = Math.max(0, Math.round(ms / 60_000));
+    const agent = ownVoice(e, seat);
+    const spoke = `The ${
+      agent ? "agent" : "principal"
+    } spoke last on your side here, ${ago} min ago`;
+    if (agent && ms < CARRYING_MS) return `${spoke}: the assistant is carrying this conversation.`;
+    if (!agent && ms < clock.engagedMinutes * 60_000) {
+      return `${spoke}: the principal holds the floor.`;
+    }
+    return `${spoke}: nobody on your side holds the floor now.`;
   }
-  return "Nobody on your side has spoken here in these lines.";
+  return "Nobody on your side has spoken here in these lines: nobody on your side holds the floor.";
 }
 
 /** Ask the model for one room's light; nothing when the call fails or answers out of shape.

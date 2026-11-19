@@ -11,6 +11,7 @@ import {
   hushedOn,
   judgeable,
   type Lit,
+  lookAhead,
   relevant,
   specsOf,
   typingOn,
@@ -915,7 +916,7 @@ Deno.test("attention: engagement is HOLDING THE FLOOR — our word last, and rec
   assertEquals(decide([spoke(60), looked(1), world("slack:C1", 0)], SESSION, WAKE, NOON), "ignore");
 });
 
-Deno.test("attention: the principal speaking in a conversation holds the floor for the agent to back", () => {
+Deno.test("attention: the principal speaking in a conversation takes the floor, and the agent is out of it", () => {
   // A wire echo carries `agent.id` (the classifier stamps it from their grant) and NO
   // session_id — an unstamped row reads as the ROUTED session's, the one world traffic
   // belongs to (§4): the mind, which this session is.
@@ -936,14 +937,18 @@ Deno.test("attention: the principal speaking in a conversation holds the floor f
         & { conv?: string },
     );
   const look = looked(1, self); // recent, so rule 4 defers and only the floor can answer
-  // our word is 4 min old — engaged, and their line landing after it wakes the agent
+  // the agent's word is 4 min old — engaged, and their line landing after it wakes it
   assertEquals(decide([spoke(), look, world("slack:C1", 0)], s, WAKE, NOON), "think");
-  // the principal's word holds the floor just as well: the agent backs them there
-  assertEquals(decide([byHand(3), look, world("slack:C1", 0)], s, WAKE, NOON), "think");
-  // …but their own line is the floor, never a reason to wake on it
+  // the principal's word is the room theirs: the agent is not in it
+  assertEquals(decide([byHand(3), look, world("slack:C1", 0)], s, WAKE, NOON), "ignore");
+  // and it takes the floor from the agent at once, with no clock
+  assertEquals(decide([spoke(), byHand(3), look, world("slack:C1", 0)], s, WAKE, NOON), "ignore");
+  // their own line is never a reason to wake either
   assertEquals(decide([look, byHand(0)], s, WAKE, NOON), "ignore");
-  // and the floor decays with silence, whoever held it
-  assertEquals(decide([byHand(11), look, world("slack:C1", 0)], s, WAKE, NOON), "ignore");
+  // asleep, the agent still follows a conversation it holds the floor in, and only that one
+  const night: Wake = { ...WAKE, sleepHours: "0-24" };
+  assertEquals(decide([spoke(), look, world("slack:C1", 0)], s, night, NOON), "think");
+  assertEquals(decide([byHand(3), look, world("slack:C1", 0)], s, night, NOON), "ignore");
 });
 
 Deno.test("attention: the principal's own lines in the world never make the digest due, nor count toward its pile", () => {
@@ -1811,6 +1816,10 @@ Deno.test("attention: a green light wakes at once, and red news never makes the 
   assertEquals(decide([looked(16), news, later], SESSION, LIT, NOON, [], red), "think");
   // the latest light of a room wins
   assertEquals(decide([looked(1), news], SESSION, LIT, NOON, [], [...green, ...red]), "ignore");
+  // asleep, green still wakes, and yellow waits for the morning
+  const night: Wake = { ...LIT, sleepHours: "0-24" };
+  assertEquals(decide([looked(16), news], SESSION, night, NOON, [], green), "think");
+  assertEquals(decide([looked(16), news], SESSION, night, NOON, [], yellow), "ignore");
 });
 
 Deno.test("attention: with the model on, a judged room's floor wakes nobody, and an unjudged one is the floor's", () => {
@@ -1831,7 +1840,39 @@ Deno.test("attention: with the model on, a judged room's floor wakes nobody, and
   assertEquals(decide(window, SESSION, WAKE, NOON, [], red), "think");
 });
 
-Deno.test("judgeable: the rooms whose words no light covers — none when off, at night, or when the mind wakes anyway", () => {
+Deno.test("lookAhead: the next look is the digest after the last one, or the night's end", () => {
+  const wake: Wake = { digestMinutes: 60, sleepHours: "23-8", timezone: "UTC" };
+  const lastAt = (ts: string) =>
+    ev(
+      "message",
+      { ...SELF, conv: MIND, ts, payload: { turn_id: "T0" } } as
+        & Partial<Event>
+        & { conv?: string },
+    );
+  const day = Date.parse("2026-08-19T14:10:00Z");
+  assertEquals(lookAhead([lastAt("2026-08-19T13:40:00Z")], SESSION, wake, day), {
+    night: false,
+    next: Date.parse("2026-08-19T14:40:00Z"),
+    dawn: false,
+  });
+  // a digest long due is due now
+  assertEquals(lookAhead([lastAt("2026-08-19T09:00:00Z")], SESSION, wake, day).next, day);
+  // one the night would hold comes at its end
+  const late = Date.parse("2026-08-19T22:30:00Z");
+  assertEquals(lookAhead([lastAt("2026-08-19T22:20:00Z")], SESSION, wake, late), {
+    night: false,
+    next: Date.parse("2026-08-20T08:00:00Z"),
+    dawn: true,
+  });
+  const three = Date.parse("2026-08-20T03:00:00Z");
+  assertEquals(lookAhead([lastAt("2026-08-19T22:20:00Z")], SESSION, wake, three), {
+    night: true,
+    next: Date.parse("2026-08-20T08:00:00Z"),
+    dawn: true,
+  });
+});
+
+Deno.test("judgeable: the rooms whose words no light covers, at every hour — none when off, or when the mind wakes anyway", () => {
   const a = world("slack:C1", 0);
   const b = world("slack:C2", 0);
   const rooms = (events: Event[], wake: Wake, lit: Lit[] = [], now = NOON) =>
@@ -1850,9 +1891,9 @@ Deno.test("judgeable: the rooms whose words no light covers — none when off, a
     } as Partial<Event> & { conv?: string },
   );
   assertEquals(rooms([looked(1), a, home], LIT), []);
-  // asleep, the world waits for morning and nothing is judged
+  // asleep, the judge still reads the world: a green is the one way it wakes the mind
   const night = Date.parse("2026-08-19T03:00:00Z");
-  assertEquals(rooms([a], LIT, [], night), []);
+  assertEquals(rooms([a], LIT, [], night), ["slack:C1"]);
   // a mark is owed no answer, so it is never judged
   const reaction = ev(
     "message",

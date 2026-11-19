@@ -180,7 +180,8 @@ from the mind's window, which never draws the `light` it writes.
 | Item | Described in system | Note |
 |---|---|---|
 | `Room: <name> (<kind>, <service>)` | ✗ | |
-| `The agent spoke last on your side here, N min ago: it holds the floor.`, `The principal spoke last…`, `Nobody on your side has spoken here…` | ✓ | Who holds the floor |
+| `Now <time>.` or `Now <time>, the principal's night.`, then `The assistant looks next around <time>.` or `…at <time>, when the night ends.` | ✓ | The digest after the agent's last look, or the night's end when the night holds it (`lookAhead`) |
+| `The agent spoke last on your side here, N min ago: the assistant is carrying this conversation.`, `The principal spoke last…: the principal holds the floor.`, `…: nobody on your side holds the floor now.`, `Nobody on your side has spoken here…` | ✓ | Whose the room is: the principal's within `engagedMinutes` of their line, the agent's within the hour of its own, nobody's past that |
 | `Today:` and the calendar's lines, or `Today: nothing on the calendar.` | ✓ | The anchor's `today` and `tomorrow` lines |
 | `What the assistant keeps about the principal…`, then `[<doc name>]` and its body | ✓ | The system prompt's second block: the agent's instructions, memories and always-loaded profiles |
 | `About this room [<doc name>]:` and its body | ✓ | A profile whose `conversations` name the room |

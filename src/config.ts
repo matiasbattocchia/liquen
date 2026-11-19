@@ -72,9 +72,10 @@ export const DEFAULT_RULES: Rule[] = [
   { tool: "*", action: "allow" },
 ];
 // attention (§2). The baseline is that every message deserves a reaction; these four knobs
-// are the cooling, and each names one rule of the ladder. `engagedMinutes` — how long our
-// side's last word keeps a conversation hot, the agent's or the principal's: the agent
-// backs a conversation its principal is in. `digestMinutes` — how often the agent CHECKS the world,
+// are the cooling, and each names one rule of the ladder. `engagedMinutes` — how long the
+// agent's last word keeps a conversation hot, and how long the principal's keeps the agent
+// out of one: a conversation the principal holds the floor in is theirs.
+// `digestMinutes` — how often the agent CHECKS the world,
 // counted from the last time it looked, the way a person puts the phone down and picks it
 // up again. `digestAfterMessages` — how much unread has to pile up, across the whole world,
 // for it to check early.
@@ -85,9 +86,16 @@ export const DEFAULT_DIGEST_MINUTES = 15;
 // nobody at all, however deep the pile gets. A stretched interval was a number tuned
 // against a cache TTL nobody controls — past an hour every wake pays a full uncached write
 // anyway, so three of them cost more than the ten they replaced. Sleep drops the number:
-// the world waits until morning and arrives as one digest. What still wakes is what always
-// did — the mind alias, and a conversation the agent is holding the floor in.
+// the world waits until morning and arrives as one digest. The agent makes no first move at
+// night; what still wakes it is what is addressed to it — the mind alias, a conversation
+// the agent holds the floor in, and a room the judge lights green.
 export const DEFAULT_SLEEP_HOURS = "23-8";
+// A mind's cache is kept warm this long after its last model call (§5). A ping reads the
+// prefix at the cache-read rate, and a lapsed cache is written again at the hour's write
+// rate, which the list prices put at 20 to 80 reads: a run of eighteen hours, some twenty
+// pings, costs at most one write more than letting the cache lapse, and carries a night
+// and a quiet day.
+export const DEFAULT_WARM_HOURS = 18;
 // Someone writing in a conversation holds its news: the rest of the thought is on its way.
 // A stamp stands for `TYPING_FRESH_MS` after the wire said it, since a stop is not always
 // said (the phone drops, the message goes); and the hold lasts at most `TYPING_HOLD_MS`
@@ -187,6 +195,7 @@ export interface AgentDefaults {
   digestAfterMessages: number; //   a conversation hot · the ambient pile that forces a
   digestMinutes: number; //   wake · the ambient look interval
   sleepHours: string | null; // org-clock span "23-8"; null ⇒ never sleeps
+  warmHours: number; // the mind's cache (§5): kept warm this long after its last call
   presence: PresenceLevel; // what a surface hears of the mind at work (§9)
   mind: boolean; // false ⇒ no session runs (§4): a member with no agent, or an agent paused
 }
@@ -573,8 +582,8 @@ const AGENT: Entry[] = [
   {
     key: "engagedMinutes",
     value: DEFAULT_ENGAGED_MINUTES,
-    doc: "attention: a conversation stays hot this long after our side's last word, the " +
-      "agent's or the principal's",
+    doc: "attention: a conversation stays hot this long after the agent's last word there, " +
+      "and the principal's last word keeps the agent out of it as long",
   },
   {
     key: "digestAfterMessages",
@@ -590,6 +599,13 @@ const AGENT: Entry[] = [
     key: "sleepHours",
     value: DEFAULT_SLEEP_HOURS,
     doc: 'attention: org-clock span "from-to" the ambient world waits out; null ⇒ never sleeps',
+  },
+  {
+    key: "warmHours",
+    value: DEFAULT_WARM_HOURS,
+    doc: "the mind's cache is kept warm this long after its last model call, a ping every " +
+      "55 min at the cache-read rate; past it the cache lapses and the next call writes it " +
+      "again. Named sessions keep only the hour a call buys",
   },
   {
     key: "presence",
@@ -654,9 +670,9 @@ const DECISION: Entry[] = [
   {
     key: "enabled",
     value: false,
-    doc: "judge each room's news before the mind wakes: green wakes it at once, yellow " +
-      "waits for the next look, red is never what makes a digest due; off ⇒ the ladder " +
-      "alone, the engaged rung on engagedMinutes",
+    doc: "judge each room's news before the mind wakes, day and night: green wakes it at " +
+      "once, asleep or not, yellow waits for the next look, red is never what makes a " +
+      "digest due; off ⇒ the ladder alone, the engaged rung on engagedMinutes",
   },
   {
     key: "model",
@@ -1560,6 +1576,7 @@ function validateAgent(a: Partial<AgentDefaults>, path: string): void {
       ["engagedMinutes", a.engagedMinutes],
       ["digestAfterMessages", a.digestAfterMessages],
       ["digestMinutes", a.digestMinutes],
+      ["warmHours", a.warmHours],
     ] as const
   ) {
     if (v != null && !(v > 0)) {

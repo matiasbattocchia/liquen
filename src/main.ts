@@ -104,6 +104,7 @@ import {
   DEFAULT_BASH_WAIT_MS,
   DEFAULT_DEBOUNCE_MS,
   DEFAULT_PRESENCE,
+  DEFAULT_WARM_HOURS,
   disabled,
   findRoot,
   isDisabled,
@@ -621,7 +622,13 @@ export async function start(
     ...(derived ? { history: historyFor } : {}),
     transport: (agentId) => stock.get(agentId)!,
     warmth: (agentId) => {
-      const w = warmth({ owed: takeOwed(owedAt(agentId)), say: cacheSays(agentId) });
+      const w = warmth({
+        owed: takeOwed(owedAt(agentId)),
+        say: cacheSays(agentId),
+        horizonMs: () =>
+          (inCode.has(agentId) ? DEFAULT_WARM_HOURS : settingsOf(org, agentId).warmHours) *
+          3_600_000,
+      });
       keepers.set(agentId, w);
       return w;
     },
