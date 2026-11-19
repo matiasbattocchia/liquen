@@ -1,9 +1,9 @@
 # Next batch: wakes, the looks a session is owed
 
-Decided 17 and 18 Nov 2026, for Postgres: the database and short-lived functions, with no
+Decided 17 to 19 Nov 2026, for Postgres: the database and short-lived functions, with no
 process that must stay up. Any writer may insert into `events`, and it waits on nothing of
 liquen's. What follows a write is TypeScript, the same on both engines: the database
-stores rows and rings a bell. The eleven below are settled. What is still open closes the
+stores rows and rings a bell. The twelve below are settled. What is still open closes the
 file.
 
 1. A `wakes` table holds every look a session is owed.
@@ -23,6 +23,8 @@ file.
 10. A `looks` table keeps what each look cost in time and memory.
 11. A look builds what it runs with, and an attached session holds its provider, model
     and effort.
+12. DESIGN.md gains a glossary, and the batch takes its names from it: an invocation
+    carries out one step, `think`, `act` or `ignore`, and the `looks` table is `metrics`.
 
 ## 1. The wakes table
 
@@ -412,6 +414,27 @@ A look builds what it runs with, and keeps nothing for the next.
 - **The last hang-up ends it.** With no attachment left, the tune goes, and the next look
   runs on the row.
 
+## 12. Names
+
+DESIGN.md gains a glossary, grown from its §14: one entry for each term, under the name
+the code already uses. This batch, and every doc after it, takes its names from the
+glossary, so a thing that has a name is never given another.
+
+- **An invocation is one run of xi.** The ReAct loop is unrolled across invocations: each
+  reads the window, and `decide` picks the step it carries out.
+- **A step is a verdict carried out.** `think`, `act`, or `ignore`, which stops the loop.
+  An act is a step as a think is: it answers the calls the last think made.
+- **A turn is the loop.** It runs from the news that opens it to the `ignore` that stops
+  it, one step to an invocation, chained through `wakes` (§2).
+- **"Look" is no term.** Where this file says a look, the glossary's word is invocation.
+- **The lease answers in the code's words.** `acquire` returns `acquired`, `stolen` or
+  `held` (`store/lock.ts`). Where §2 says taken, it means acquired or stolen.
+- **The side table is `metrics`.** §10's table keeps what each invocation cost, and its
+  name says it is telemetry, not a part of the loop.
+- **A term is a compound noun.** A paragraph names a thing whole the first time it says
+  it: the cache keeper, the cache keepalive, the turn lease, the send report. Once it has,
+  the short form follows. CLAUDE.md states the rule.
+
 ## Open
 
 None of these is part of the batch until it is settled.
@@ -424,3 +447,6 @@ None of these is part of the batch until it is settled.
 - **The riders that keep state or take time.** The transcriber runs a command for each
   note, and presence remembers who asked for a stretch. Whether each is a step of a pass,
   or a consumer with a queue of its own.
+- **The steps that are no turn's.** `compact` and `warm` are verdicts that call the model,
+  and an unload opens a turn of its own. Whether each is a step, and what §8 and DESIGN
+  §14 call a model call, now that a step is a verdict and not a call.
