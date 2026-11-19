@@ -419,9 +419,9 @@ Deno.test("mirror fan-out: a send's card is laid out in rows, in the surface's t
           detail: "send(to: Vivian, text: hola! nos vemos)",
           send: {
             conversation: { name: "Vivian", address: "5492605550107" },
-            last: { text: "llegás?", at: "23 Sep 16:42" },
+            last: { from: "Vivian", text: "llegás?", at: "23 Sep 16:42" },
             text: "hola!\nnos vemos",
-            files: 1,
+            files: [{ kind: "image", name: "mapa.png" }],
           },
         },
       }],
@@ -431,9 +431,9 @@ Deno.test("mirror fan-out: a send's card is laid out in rows, in the surface's t
       textOf((await inConv("D1"))[0]),
       "`[agent asks]` approve **send**\n\n" +
         "**Conversation**: Vivian (5492605550107)\n\n" +
-        "**Last message** (23 Sep 16:42):\nllegás?\n\n" +
+        "**Last message** (Vivian, 23 Sep 16:42):\nllegás?\n\n" +
+        "**Attachments**:\n[image] mapa.png\n\n" +
         "**Reply**:\nhola!\nnos vemos\n\n" +
-        "**Attachments**: 1\n\n" +
         "`reply /y to approve · /n <reason> to refuse · or react 👍 / 👎 · 🤖 approves the whole conversation`",
     );
   });

@@ -643,12 +643,12 @@ export type Carried = MediaKind | "location" | "contacts";
 
 export interface SendPreview {
   conversation: { name?: string; address: string; kind?: Conversation["kind"] };
-  /** The line the send answers: the referent when it replies, else the other side's
-   *  last word in that conversation. `at` is already on the org's clock. `text` is every
-   *  word the line has — caption, pin label, card name, a voice note's transcript — and
-   *  may be empty; `carries` names what came beside the words, so a photo alone still
-   *  reads as a line. */
-  last?: { text: string; at: string; carries?: Carried[] };
+  /** The line the send answers: the referent when it replies, else the conversation's last
+   *  message, whoever wrote it. `from` is its author: the other side by their name, our side
+   *  by the account's. `at` is already on the org's clock. `text` is every word the line
+   *  has — caption, pin label, card name, a voice note's transcript — and may be empty;
+   *  `carries` names what came beside the words, so a photo alone still reads as a line. */
+  last?: { from?: string; text: string; at: string; carries?: Carried[] };
   /** The send names its line (`send(re:)`), so `last` quotes that line, whatever came
    *  after it. */
   re?: true;
@@ -660,7 +660,8 @@ export interface SendPreview {
   /** The glyph a `send(react:)` puts on the line `last` quotes, or takes off it. */
   react?: string;
   text?: string;
-  files: number;
+  /** Each file the send attaches: what it is, and its name when it has one worth reading. */
+  files?: { kind: Carried; name?: string }[];
   location?: string;
   /** Each card the send shares, as its name and numbers. */
   contacts?: string[];

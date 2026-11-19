@@ -98,7 +98,7 @@ import { momentOf } from "./moment.ts";
 import { calendarEntries, dayOf, daySection, docEntries, docName, nextDay } from "./agenda.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import type { Sweeper } from "./store/sweep.ts";
-import type { Files, MediaBlock, MediaLoader } from "./store/media.ts";
+import { type Files, kindOf, type MediaBlock, type MediaLoader, mimeOf } from "./store/media.ts";
 import { isStored } from "./store/storage.ts";
 import type {
   BinDir,
@@ -2394,7 +2394,6 @@ async function answerer(
                       target,
                       self,
                       ports,
-                      session,
                       config.timezone,
                     ),
                   }
@@ -4230,7 +4229,6 @@ async function sendPreviewOf(
   target: Target | undefined,
   self: { id: string },
   ports: XiPorts,
-  session: SessionRef,
   zone?: string,
 ): Promise<SendPreview> {
   const input = use.parts[0].data.input;
@@ -4242,23 +4240,41 @@ async function sendPreviewOf(
   const address = who?.address ?? target?.conversation ?? to;
   const recent = await ports.log.read({ conversation: address, types: ["message"], limit: 50 });
   const profile = recent.length === 0 ? await profileOf(address, target, self, ports) : undefined;
+  // the line named, else what the chat shows last, whoever wrote it: a send that never
+  // went out, failed or taken back, is no line of it
   const answered = a.re !== undefined
     ? await referent(ports, address, String(a.re)).catch(() => undefined)
     : recent.findLast((e) =>
-      spoken(e as MessageEvent) && !ownVoice(e, session) &&
-      e.envelope.sender?.address !== e.envelope.connection_address
+      spoken(e as MessageEvent) && e.envelope.status !== "failed" &&
+      e.envelope.status !== "withdrawn"
     );
-  const heard = answered ? lineOf(answered, recent) : undefined;
+  // who wrote a line, as the card names them: the other side by their name, our side by
+  // the account's, whichever of us held it
+  const accountNames = new Map(
+    (await ports.log.connections()).flatMap((c) =>
+      typeof c.extra?.name === "string" && c.extra.name ? [[c.address, c.extra.name]] : []
+    ),
+  );
+  const fromOf = (e: MessageEvent): string | undefined =>
+    ownSide(e)
+      ? accountNames.get(e.envelope.connection_address) ?? e.envelope.sender?.name
+      : e.envelope.sender?.name ?? e.envelope.sender?.address;
+  const lineAt = (e: Event, rows: Event[]) => {
+    const line = lineOf(e, rows);
+    const from = fromOf(e as MessageEvent);
+    return line && { ...(from ? { from } : {}), ...line, at: hhmm(e.ts, zone) };
+  };
+  const last = answered ? lineAt(answered, recent) : undefined;
   // what a forward copies, as the approver weighs it: each line and who wrote it. Best
   // effort like the rest: a line the call names wrong drops out, and the call says why
   const forward = Array.isArray(a.forward)
-    ? (await originalsOf(a.forward.map(String), ports).catch(() => [])).flatMap((o) => {
-      const line = lineOf(o, []);
-      const from = ownSide(o) ? undefined : o.envelope.sender?.name ?? o.envelope.sender?.address;
-      return line ? [{ ...(from ? { from } : {}), ...line, at: hhmm(o.ts, zone) }] : [];
-    })
+    ? (await originalsOf(a.forward.map(String), ports).catch(() => [])).flatMap((o) =>
+      lineAt(o, []) ?? []
+    )
     : [];
-  const files = Array.isArray(a.files) ? a.files.length : 0;
+  const files = Array.isArray(a.files)
+    ? await Promise.all(a.files.map((f) => attachmentOf(String(f), ports)))
+    : [];
   const loc = a.location && typeof a.location === "object" && !Array.isArray(a.location)
     ? a.location as Record<string, unknown>
     : undefined;
@@ -4277,7 +4293,7 @@ async function sendPreviewOf(
       address,
       ...(who?.kind ? { kind: who.kind } : {}),
     },
-    ...(answered && heard ? { last: { ...heard, at: hhmm(answered.ts, zone) } } : {}),
+    ...(last ? { last } : {}),
     ...(a.re !== undefined ? { re: true as const } : {}),
     ...(a.action === "edit" || a.action === "delete" || a.action === "remove"
       ? { action: a.action }
@@ -4285,7 +4301,7 @@ async function sendPreviewOf(
     ...(typeof a.subject === "string" && a.subject ? { subject: a.subject } : {}),
     ...(typeof a.react === "string" && a.react ? { react: a.react } : {}),
     ...(typeof a.text === "string" && a.text ? { text: a.text } : {}),
-    files,
+    ...(files.length > 0 ? { files } : {}),
     ...(loc
       ? {
         location: typeof loc.name === "string" && loc.name
@@ -4296,6 +4312,26 @@ async function sendPreviewOf(
     ...(cards.length > 0 ? { contacts: cards } : {}),
     ...(forward.length > 0 ? { forward } : {}),
     ...(profile ? { profile } : {}),
+  };
+}
+
+/** A file a send names, as its card row shows it: what it is, and its name when it has one
+ *  worth reading. A path goes by its file's name; a kept object by the name it arrived
+ *  with, since its key is a content hash. Read off the reference and the log, never the
+ *  bytes: the card is drawn before anything is kept. */
+async function attachmentOf(
+  ref: string,
+  ports: XiPorts,
+): Promise<{ kind: Carried; name?: string }> {
+  const base = ref.slice(ref.lastIndexOf("/") + 1);
+  if (!isStored(ref)) return { kind: kindOf(mimeOf(ref) ?? ""), ...(base ? { name: base } : {}) };
+  const kept = (await ports.log.read({ uri: ref, limit: 5 }))
+    .flatMap((e) => (e as MessageEvent).parts ?? [])
+    .filter((p): p is FilePart => p.type === "file" && p.file.uri === ref);
+  const named = kept.find((p) => p.file.name && p.file.name !== base);
+  return {
+    kind: kept[0]?.kind ?? kindOf(mimeOf(ref) ?? ""),
+    ...(named ? { name: named.file.name } : {}),
   };
 }
 

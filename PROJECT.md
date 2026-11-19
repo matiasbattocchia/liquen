@@ -7492,6 +7492,19 @@ it went to. The approval card lists each line forwarded, who wrote it and when.
 The bytes still go up again. WhatsApp's own forward reuses the CDN copy, which would need
 the bridge to keep every received message's media keys.
 
+### The send card quotes the chat's last line and lists its files (2026-11-19) — LANDED, on in new
+
+matias asked for two changes to the approval card. "Último mensaje" was the other side's
+last word, skipping our own side's lines; it is now the conversation's last message,
+whoever wrote it, and it says who: the other side by their name, our side by the account's
+(`extra.name` on the connection, since an agent's send carries no sender name). A send of
+ours that failed or was taken back is no line of the chat and is skipped. A line named by
+`re` reads the same way. "Adjuntos" was a count; it is now a line per file, its kind in
+the surface's word and its name when it has one worth reading: a workspace file's, or the
+name a kept file arrived with, read off the log, since a `storage://` key is a content
+hash. The card reads the reference and the log, never the bytes, as nothing is kept until
+the send runs. The files block stands above the text that captions the first of them.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

@@ -130,9 +130,10 @@ const BUILTIN: Record<string, Describe> = {
 
 /** The send CARD (§9): the one-line form says what was typed; this says what the person
  *  on the other end will get. The text keeps its line breaks — a payment block is twelve
- *  rows, and the judgment is over those rows — and what is not text is counted beside
- *  it, so a card never reads as text alone when files or a pin ride along. Labels are
- *  the surface's tongue; the values are the call's. */
+ *  rows, and the judgment is over those rows — and what is not text is listed beside it,
+ *  each file by what it is and its name, so a card never reads as text alone when files
+ *  or a pin ride along. Every line it quotes says who wrote it and when. Labels are the
+ *  surface's tongue; the values are the call's. */
 export function describeSendCard(p: SendPreview, labels: SendCardLabels): string {
   const { address, kind } = p.conversation;
   // a first contact goes by the name its wire shows, like any conversation that has one
@@ -141,9 +142,14 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
   // and by what they wrote about themselves there, the line under their name
   const about = p.profile?.about ? `\n_${p.profile.about}_` : "";
   const rows = [`**${labels.conversation}**: ${who}${about}`];
+  // what a thing is, in the surface's word: `[imagen]` ahead of its words or its name
+  const tagged = (carries: Carried[] = [], words = "") =>
+    [...carries.map((c) => `[${labels.carried[carriedWord(c)]}]`), words]
+      .filter((s) => s !== "").join(" ");
+  // who wrote a line and when, the way every quoted line reads
+  const stamp = (l: { from?: string; at: string }) =>
+    `(${[l.from, l.at].filter((s) => s !== undefined).join(", ")})`;
   if (p.last) {
-    const things = (p.last.carries ?? []).map((c) => `[${labels.carried[carriedWord(c)]}]`);
-    const line = [...things, p.last.text].filter((s) => s !== "").join(" ");
     // the line is named for what the send does to it: an edit or a delete takes it over
     const label = p.action === "edit"
       ? labels.toEdit
@@ -152,24 +158,24 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
       : p.re
       ? labels.message
       : labels.last;
-    rows.push(`**${label}** (${p.last.at}):\n${line}`);
+    rows.push(`**${label}** ${stamp(p.last)}:\n${tagged(p.last.carries, p.last.text)}`);
   }
   // what a forward copies, a line per message as it reads, with who wrote it and when
   if (p.forward?.length) {
-    const lines = p.forward.map((f) => {
-      const things = (f.carries ?? []).map((c) => `[${labels.carried[carriedWord(c)]}]`);
-      const line = [...things, f.text].filter((s) => s !== "").join(" ");
-      return `${line} (${[f.from, f.at].filter((s) => s !== undefined).join(", ")})`;
-    });
+    const lines = p.forward.map((f) => `${tagged(f.carries, f.text)} ${stamp(f)}`);
     rows.push(`**${labels.forward}**:\n${lines.join("\n")}`);
   }
   if (p.subject) rows.push(`**${labels.subject}**: ${p.subject}`);
   if (p.react) {
     rows.push(`**${p.action === "remove" ? labels.unreact : labels.react}**: ${p.react}`);
   }
+  // each file as it goes, what it is and its name, above the words that caption the first
+  if (p.files?.length) {
+    const lines = p.files.map((f) => tagged([f.kind], f.name));
+    rows.push(`**${labels.files}**:\n${lines.join("\n")}`);
+  }
   if (p.text) rows.push(`**${p.action === "edit" ? labels.newText : labels.reply}**:\n${p.text}`);
   const extras = [
-    ...(p.files > 0 ? [`**${labels.files}**: ${p.files}`] : []),
     ...(p.location ? [`**${labels.location}**: ${p.location}`] : []),
     ...(p.contacts?.length ? [`**${labels.contacts}**: ${p.contacts.join(", ")}`] : []),
   ];
