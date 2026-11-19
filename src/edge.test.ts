@@ -12,6 +12,8 @@ import {
   socketOf,
 } from "./edge.ts";
 import { serveIngest, serveLeg, serveSocket } from "./connect/serve.ts";
+import { saveMedia, serveMedia, signMediaPath } from "./store/media.ts";
+import { fileStorage } from "./store/storage.ts";
 
 const BASE = "https://acme.example.com";
 
@@ -109,6 +111,38 @@ Deno.test("createEdge: forwards to the sockets with query and body, keeps a redi
   } finally {
     await ingest.shutdown();
     await door.shutdown();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("createEdge: a signed media path, resolved against the ingest's address as the service resolves it, reaches the ingest that serves it", async () => {
+  const root = await Deno.makeTempDir();
+  const storage = fileStorage(root);
+  const file = await saveMedia(storage, new TextEncoder().encode("bytes"), {
+    mime_type: "image/png",
+  });
+  const path = await signMediaPath(file.uri, "s3cret");
+  const ingest = await serveIngest(
+    root,
+    "whatsapp",
+    async (req) =>
+      await serveMedia(req, storage, () => "s3cret") ?? new Response("not media", { status: 400 }),
+  );
+  try {
+    const edge = createEdge(root);
+    for (const base of [BASE, localBase(8787)]) {
+      const res = await edge(new Request(new URL(path, ingestAddress(base, "whatsapp"))));
+      assertEquals(res.status, 200);
+      assertEquals(await res.text(), "bytes");
+    }
+    // a base with a path prefix keeps it: the path is relative to the ingest's address
+    const prefixed = `${BASE}/org`;
+    assertEquals(
+      new URL(path, ingestAddress(prefixed, "whatsapp")).href,
+      `${prefixed}/whatsapp/${path}`,
+    );
+  } finally {
+    await ingest.shutdown();
     await Deno.remove(root, { recursive: true });
   }
 });

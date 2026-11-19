@@ -15,7 +15,7 @@
  *                                            → the connections map (the frontier event,
  *                                            §4; the state the anchor reports, §5)
  *
- * The entry adds a fourth route the bridge dials at the same address — `GET /m/<signed>`,
+ * The entry adds a fourth route the bridge dials at the same address — `GET /media/<signed>`,
  * the outbound bytes the dispatch process minted a path for (`store/media.ts`). Inbound
  * media is PUSHED to us and outbound is PULLED from us, but both legs use this one door,
  * so the bridge is told where liquen is exactly once — at pairing, as the session's
@@ -1032,7 +1032,7 @@ export async function runIngest(): Promise<() => Promise<void>> {
     bridgeToken: bridgeTokenOf(Deno.env.get("WA_BRIDGE_TOKEN")),
   });
   const { serveIngest } = await import("../serve.ts");
-  // One door in: the bridge's own address serves the outbound bytes too. `/m/<signed>` is
+  // One door in: the bridge's own address serves the outbound bytes too. `/media/<signed>` is
   // minted by the dispatch process and verified here from the vault's key — the signature
   // IS the authorization, so the route sits BEFORE the bridge-token check.
   const server = await serveIngest(

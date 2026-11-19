@@ -361,10 +361,13 @@ whatsmeow bridge, Twilio's `MediaUrl`, the Cloud API's `link`), and that link ha
 point back at liquen. It names a kept object: a file of the agent's workspace is put in
 the object store first.
 
-It points back **relatively**. `signMediaPath` (`store/media.ts`) mints `/m/<payload>.<mac>`
-— the object's key and an expiry, HMAC'd with a key in the vault — and the service
-resolves it against the address it already delivers to. That address is the connector's
-own ingest: the same door the service posts events at serves `/m/…`, so the ingest's
+It points back **relatively**. `signMediaPath` (`store/media.ts`) mints
+`ingest/media/<payload>.<mac>` — the object's key and an expiry, HMAC'd with a key in the
+vault — and the service resolves it against the address it already delivers to. That
+address is the connector's own ingest, `<base>/<service>/ingest`; a relative reference
+replaces its last segment, so the path names `ingest` again and lands at
+`<base>/<service>/ingest/media/…`, a prefix in the base included. The edge hands the ingest
+`/media/…`, and the same door the service posts events at serves it, so the ingest's
 address is said once, not once per leg. Who says it is the pairing door: the whatsmeow
 bridge is one sidecar for many orgs, and `liquen connect whatsapp` registers this org's
 ingest as the session's `webhook_url`, which the bridge keeps with the session and dials

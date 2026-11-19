@@ -7452,6 +7452,24 @@ a timer stands still while the machine sleeps, and the next turn wrote 68k token
 armed keeper now beats every minute on the wall clock, sends the ping within a beat of
 waking, and says `the machine slept N min`.
 
+### A file the agent sends reaches the bridge through the edge (2026-11-19) — LANDED, on in new
+
+At 12:09 on 19 Nov the agent sent José four photos Carlos had sent matias on 12 Nov, and
+the send failed with `fetch media: storage responded 404`, a permanent 422. It was the first
+kept file an agent sent over WhatsApp: the vault's `media:sign` row was written in that same
+send. The bridge resolved the signed path `/m/<signed>` against the session's receiver,
+`http://localhost:8787/whatsapp/ingest`. A path from the root replaces the receiver's whole
+path, so the bridge dialed `http://localhost:8787/m/<signed>`, and the edge, which has no
+such route, answered `no such door`. The same path under `/whatsapp/ingest` served the
+82 KB photo. No agent's file could have reached WhatsApp since the edge took the port on
+28 Sep. The agent read the failure, told matias, and sent José the numbers as text.
+
+`signMediaPath` mints `ingest/media/<signed>`, relative to the ingest's address. A relative
+reference replaces the address's last segment, so it names `ingest` again and lands at
+`<base>/whatsapp/ingest/media/<signed>`, keeping any prefix in `publicUrl` or `ingestUrl`.
+The ingest serves `/media/`. A test in `edge.test.ts` resolves a minted path against the
+ingest's address and fetches it through the edge.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

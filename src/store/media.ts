@@ -261,13 +261,20 @@ export async function mediaSecret(creds: Credentials): Promise<string> {
   return (await creds.get(MEDIA_SECRET_KEY))!.value.secret;
 }
 
+/** The route an ingest serves signed media on, as its own server sees the path: the edge
+ *  hands an ingest the path under `/<service>/ingest`. */
+export const MEDIA_ROUTE = "/media/";
+
 /** Mint the path a service fetches outbound bytes from, for a kept object. The capability
  *  IS the url — `<expiry>:<key>`, HMAC'd — so verification holds no state and survives a
  *  restart (an in-memory token map does not, and a bridge retry after one would 404).
  *
  *  RELATIVE on purpose. The service already knows where liquen is: liquen's address is the one
- *  IT delivers to. Resolving `/m/…` against that base is the whole reason liquen never has
- *  to be told its own host — the inbound leg's address, reused. */
+ *  IT delivers to, the ingest's, `<base>/<service>/ingest`. The path is relative to that
+ *  address, so liquen never has to be told its own host — the inbound leg's address, reused.
+ *  A relative reference replaces the address's last segment, so the path names `ingest`
+ *  again: `ingest/media/<signed>` resolves to `<base>/<service>/ingest/media/<signed>`
+ *  whatever prefix the base carries, and the edge hands the ingest `/media/<signed>`. */
 export async function signMediaPath(
   uri: string,
   secret: string,
@@ -276,7 +283,7 @@ export async function signMediaPath(
   if (!isStored(uri)) throw new Error(`only a kept object is signed: ${uri}`);
   const payload = `${expiresAt}:${keyOf(uri)}`;
   const mac = encodeBase64Url(await sign(secret, payload));
-  return `/m/${encodeBase64Url(new TextEncoder().encode(payload))}.${mac}`;
+  return `ingest${MEDIA_ROUTE}${encodeBase64Url(new TextEncoder().encode(payload))}.${mac}`;
 }
 
 /** Serve a signed path, or null when the request is not one — the caller's own routes
@@ -289,9 +296,9 @@ export async function serveMedia(
   secret: () => string | Promise<string>, // lazy: the key is only read for OUR route
 ): Promise<Response | null> {
   const path = new URL(req.url).pathname;
-  if (!path.startsWith("/m/")) return null;
+  if (!path.startsWith(MEDIA_ROUTE)) return null;
   const gone = new Response("gone", { status: 404 });
-  const [body, mac] = path.slice(3).split(".");
+  const [body, mac] = path.slice(MEDIA_ROUTE.length).split(".");
   if (!body || !mac) return gone;
   let payload: string;
   try {

@@ -12,7 +12,7 @@
  * WhatsApp itself (encrypt + CDN push are ITS job — the multi-device protocol has no
  * send-by-link, so whoever sends must hold the plaintext). A kept `storage://` part needs
  * a url the bridge can reach: the `mediaUrl` seam mints a RELATIVE signed path
- * (`/m/<payload>.<mac>`, `store/media.ts`) which the bridge resolves against the
+ * (`ingest/media/<payload>.<mac>`, `store/media.ts`) which the bridge resolves against the
  * session's receiver — our ingest, registered at pairing — and fetches there. An external `http(s)` part passes
  * through as-is. The token and the files stay broker-side (§9).
  *

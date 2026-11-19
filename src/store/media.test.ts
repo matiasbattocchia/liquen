@@ -246,7 +246,9 @@ Deno.test("extension-less media classifies by its bytes — whole pipeline, not 
 
 /* ── the pull leg: signed, relative, stateless ─────────────────────────────── */
 
-const req = (path: string) => new Request(`http://ingest${path}`);
+/** The request an ingest receives: the edge hands it the path under `/<service>/ingest`, so
+ *  a minted `ingest/media/…` arrives as `/media/…` (edge.test.ts goes the whole way). */
+const req = (path: string) => new Request(`http://ingest${path.replace(/^ingest\//, "/")}`);
 
 Deno.test("signed media path: minted relative, served by any process holding the key", async () => {
   const root = await Deno.makeTempDir();
@@ -258,9 +260,9 @@ Deno.test("signed media path: minted relative, served by any process holding the
     });
     const secret = "s3cret";
     const path = await signMediaPath(file.uri, secret);
-    // relative on purpose: the fetching service resolves it against liquen's own address,
+    // relative on purpose: the fetching service resolves it against the ingest's address,
     // which is the one it already delivers to — liquen never states its host
-    assert(path.startsWith("/m/"));
+    assert(path.startsWith("ingest/media/"));
     const res = await serveMedia(req(path), storage, () => secret);
     assertEquals(res?.status, 200);
     assertEquals(res?.headers.get("content-type"), "image/png");
@@ -286,8 +288,8 @@ Deno.test("signed media path: another path is not one, a forged one is gone", as
     // a different key, a tampered mac, a tampered payload, a shape that is not one
     assertEquals((await serve(path, "other"))?.status, 404);
     assertEquals((await serve(`${path}x`))?.status, 404);
-    assertEquals((await serve("/m/bm90aGluZw.bWFj"))?.status, 404);
-    assertEquals((await serve("/m/"))?.status, 404);
+    assertEquals((await serve("/media/bm90aGluZw.bWFj"))?.status, 404);
+    assertEquals((await serve("/media/"))?.status, 404);
     // expired ⇒ gone, however well signed
     const stale = await signMediaPath(file.uri, "s3cret", Date.now() - 1);
     assertEquals((await serve(stale))?.status, 404);
