@@ -42,6 +42,12 @@ what they said.
 - files: file paths to attach, or storage:// paths. A relative path resolves from your
   shell's cwd; a file is kept as it is when you send it, and your line shows it by its
   storage:// path
+- forward: message `id`s to pass on here, in order. Each goes as the message it is (its
+  words, its files with their captions, a pin, contact cards) and is marked forwarded, as a
+  line that wears `action="forward"` is: its sender passed it on, and the words are not
+  theirs. To pass on what someone sent, forward it rather than attaching its files again.
+  WhatsApp conversations only. Only `text` rides with it, sent after them as a message of
+  your own
 - location: a map pin, sent as its own message after any text or files. WhatsApp
   conversations only
   - name: the label the pin shows

@@ -1209,8 +1209,13 @@ function renderMessages(
     const id = e.payload?.ref_external_id;
     if (!id) return { attr: "" };
     const target = byExternal.get(id);
+    // a forward's original stands in another conversation: pointed at where the window
+    // draws it, never pulled into this one, and unnamed where it is not drawn
+    const forward = e.payload?.action === "forward";
     const shown = target !== undefined &&
-      (rendered.has(target.id) || pulled.has(target.id) || (pull && pullable(target)));
+      (rendered.has(target.id) || pulled.has(target.id) ||
+        (pull && !forward && pullable(target)));
+    if (forward && !shown) return { attr: "" };
     return { attr: ` re="${shown ? shortId(target.id) : "?"}"`, target, shown };
   };
   const rank = ranksOf(pool, rows);
@@ -2003,6 +2008,8 @@ export function renderHits(
     const id = e.payload?.ref_external_id;
     if (!id) return { attr: "" };
     const target = byExternal.get(id);
+    // a forward's original, in another conversation, is named only when the page holds it
+    if (!target && e.payload?.action === "forward") return { attr: "" };
     return { attr: ` re="${target ? shortId(target.id) : "?"}"`, target, shown: !!target };
   };
   const clusters: ConnectionCluster[] = [];
@@ -2036,7 +2043,8 @@ export function renderHits(
 }
 
 /** One world message line — the deviation marked (§3, §5): `<msg>` carries text
- *  (`action="edit"` = replacement content, `action="delete"` = the removed content),
+ *  (`action="edit"` = replacement content, `action="delete"` = the removed content,
+ *  `action="forward"` = content its sender forwarded from elsewhere),
  *  `<reaction>` carries the glyph (`action="remove"` = an un-react), `<transcript>` carries
  *  the derived words of the audio its `re` points at, in that audio's author's name. A DATA
  *  part renders as its kind's own
@@ -2209,6 +2217,8 @@ function msgLine(
     return `<reaction ${react}${re}${removed}>${escText(glyph)}</reaction>`;
   }
 
+  // a message its sender forwarded from elsewhere: words that are not theirs
+  const fwd = action === "forward" ? ' action="forward"' : "";
   // a failure says why, in the dispatcher's words: what the service refused is what to fix
   // one taken back is withdrawn, whatever a post already in flight stamped after
   const why = e.status?.error?.replace(/^\w*Error: /, "");
@@ -2225,7 +2235,7 @@ function msgLine(
   const file = e.parts?.length === 1 && e.parts[0].type === "file" && textOf(e) === ""
     ? e.parts[0]
     : undefined;
-  if (file) return mediaMarker(file, `${head}${re}${failed}`);
+  if (file) return mediaMarker(file, `${head}${re}${fwd}${failed}`);
   // canonical addresses (the text wears the display form) — `#` keeps its sigil,
   // a person's address rides bare
   const mentions = e.payload?.mentions?.length
@@ -2242,7 +2252,7 @@ function msgLine(
     ...filesOf(e).map((p) => mediaMarker(p)),
     ...datasOf(e).map((p) => dataEl(p, "", zone)),
   ].filter((s) => s.length > 0).join(" ");
-  return `<msg ${head}${re}${failed}${mentions}>${body}</msg>`;
+  return `<msg ${head}${re}${fwd}${failed}${mentions}>${body}</msg>`;
 }
 
 /** A data part's element (§5): the part's KIND names the tag — `<location>`, `<contacts>`,
@@ -2285,7 +2295,9 @@ function dataLine(
   flag = "",
 ): string {
   const action = e.payload?.action;
-  const act = action === "edit" || action === "delete" ? ` action="${action}"` : "";
+  const act = action === "edit" || action === "delete" || action === "forward"
+    ? ` action="${action}"`
+    : "";
   const voiceless = e.envelope.conversation.kind === "broadcast" &&
     e.envelope.sender === undefined;
   const voice = voiceless ? "" : author;

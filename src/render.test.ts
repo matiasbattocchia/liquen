@@ -3534,6 +3534,57 @@ Deno.test("<before>: a reply's referent is pulled however far back, once, with t
   assertEquals(text.split('re="a00"').length - 1, 2); // both replies point at it
 });
 
+Deno.test('a forward wears action="forward"; ours points at its original where the window draws it, and pulls nothing into the room it went to', () => {
+  const carlos = { address: "222", kind: "direct" as const, name: "Carlos" };
+  const jose = { address: "333", kind: "direct" as const, name: "José" };
+  // Carlos's photo as it came in, alone: the marker is the line
+  const photo: MessageEvent = {
+    ...worldMsg("p01", "2026-07-19T10:10:00Z", carlos, { address: "222", name: "Carlos" }, ""),
+    parts: [{
+      type: "file",
+      kind: "image",
+      file: { mime_type: "image/jpeg", uri: "storage://media/padron.jpeg" },
+    }],
+  };
+  photo.envelope.external_id = "wa:photo";
+  // the same photo, passed on to José by us
+  const ours = (id: string, mm: string): MessageEvent => ({
+    ...worldMsg(id, `2026-07-19T10:${mm}:00Z`, jose, null, ""),
+    parts: photo.parts,
+    payload: { turn_id: `t-${id}`, action: "forward", ref_external_id: "wa:photo" },
+  });
+  // words José passed on from someone else: the wire says only that they are forwarded
+  const passed: MessageEvent = {
+    ...worldMsg("j01", "2026-07-19T10:30:00Z", jose, { address: "333", name: "José" }, "2x1"),
+    payload: { action: "forward" },
+  };
+  const at = { docs: [], session: SESSION, zone: "UTC", now: "2026-07-19T11:00:00Z" };
+
+  const drawn = userText(
+    render({ ...at, events: pastWindow(photo, ours("f01", "20"), passed) }).messages,
+  );
+  assertStringIncludes(
+    drawn,
+    '<image id="f01" self at="19 Jul 10:20" re="p01" action="forward" path="storage://media/padron.jpeg"/>',
+  );
+  assertStringIncludes(
+    drawn,
+    '<msg id="j01" external="José" address="333" at="19 Jul 10:30" action="forward">2x1</msg>',
+  );
+
+  // the original below the floor, where a reply's would be pulled: the forward names none,
+  // and José's room draws no line of Carlos's
+  const pool: BeforePool = { rows: [], refs: [photo], between: {}, home: [] };
+  const far = userText(
+    render({ ...at, events: pastWindow(ours("f02", "40")), before: pool }).messages,
+  );
+  assertStringIncludes(
+    far,
+    '<image id="f02" self at="19 Jul 10:40" action="forward" path="storage://media/padron.jpeg"/>',
+  );
+  assert(!far.includes("p01"));
+});
+
 Deno.test("<before>: pass 2 spends what the cap left; a cut room gets none, and the lines keep their bytes", () => {
   const busy = { address: "222", kind: "group" as const, name: "Equipo" };
   const loud = Array.from(

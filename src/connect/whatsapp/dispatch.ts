@@ -145,14 +145,17 @@ interface Outbound {
 
 /** liquen parts → the bridge's one-content-per-call shape. Text joins into one; a reaction
  *  is its own content (kind + re_message_id); the first file carries the text as its
- *  caption, later files go bare; a location, then the contact cards, close the send as
- *  contents of their own, each taking `re` only when nothing before it did. `re` travels
- *  in `extra.whatsapp.re` (the ingest's convention) with the `whatsapp:` prefix stripped
- *  back to the raw wmw id. */
+ *  caption, and every file its own caption, the one a received file came with; a location,
+ *  then the contact cards, close the send as contents of their own, each taking `re` only
+ *  when nothing before it did. `re` travels in `extra.whatsapp.re` (the ingest's
+ *  convention) with the `whatsapp:` prefix stripped back to the raw wmw id. A forward's
+ *  contents are each marked `forwarded` and quote nothing: its referent is the message it
+ *  copies, in another conversation. */
 function outbound(event: MessageEvent): Outbound | null {
   if (!event.envelope.connection_address || !event.envelope.conversation.address) return null;
 
-  const re = reOf(event);
+  const forwarded = event.payload?.action === "forward";
+  const re = forwarded ? undefined : reOf(event);
   const texts = event.parts.filter((p): p is TextPart => p.type === "text");
   const files = event.parts.filter((p): p is FilePart => p.type === "file");
   // the canonical reaction is the DataPart (§3: what was added/removed rides the part,
@@ -207,6 +210,8 @@ function outbound(event: MessageEvent): Outbound | null {
     });
   }
   files.forEach((f, i) => {
+    // the caption seat: the send's text on the first file, then the file's own
+    const caption = [i === 0 ? text : "", f.text ?? ""].filter((s) => s !== "").join("\n");
     contents.push({
       content: {
         version: "1",
@@ -218,7 +223,7 @@ function outbound(event: MessageEvent): Outbound | null {
           ...(f.file.name ? { name: f.file.name } : {}),
           ...(f.file.size !== undefined ? { size: f.file.size } : {}),
         },
-        ...(i === 0 && text ? { text } : {}), // the caption seat
+        ...(caption ? { text: caption } : {}),
         ...(i === 0 && re ? { re_message_id: re } : {}),
       },
     });
@@ -246,6 +251,7 @@ function outbound(event: MessageEvent): Outbound | null {
       },
     });
   }
+  if (forwarded) { for (const c of contents) c.content.forwarded = true; }
   return contents.length ? { contents } : null;
 }
 

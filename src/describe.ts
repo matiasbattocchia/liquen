@@ -108,6 +108,8 @@ const BUILTIN: Record<string, Describe> = {
     if (typeof a.text === "string" && a.text !== "") bits.push(`text: ${value(a.text, opts)}`);
     const files = Array.isArray(a.files) ? a.files.length : 0;
     if (files > 0) bits.push(`files: ${files}`);
+    const forwards = Array.isArray(a.forward) ? a.forward.length : 0;
+    if (forwards > 0) bits.push(`forward: ${forwards}`);
     // the pin, as the approver would say it: its label when it has one, else the degrees
     const loc = a.location;
     if (loc && typeof loc === "object" && !Array.isArray(loc)) {
@@ -152,6 +154,15 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
       : labels.last;
     rows.push(`**${label}** (${p.last.at}):\n${line}`);
   }
+  // what a forward copies, a line per message as it reads, with who wrote it and when
+  if (p.forward?.length) {
+    const lines = p.forward.map((f) => {
+      const things = (f.carries ?? []).map((c) => `[${labels.carried[carriedWord(c)]}]`);
+      const line = [...things, f.text].filter((s) => s !== "").join(" ");
+      return `${line} (${[f.from, f.at].filter((s) => s !== undefined).join(", ")})`;
+    });
+    rows.push(`**${labels.forward}**:\n${lines.join("\n")}`);
+  }
   if (p.subject) rows.push(`**${labels.subject}**: ${p.subject}`);
   if (p.react) {
     rows.push(`**${p.action === "remove" ? labels.unreact : labels.react}**: ${p.react}`);
@@ -180,6 +191,7 @@ export interface SendCardLabels {
   files: string;
   location: string;
   contacts: string;
+  forward: string;
   carried: Record<CarriedWord, string>;
 }
 

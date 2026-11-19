@@ -664,6 +664,9 @@ export interface SendPreview {
   location?: string;
   /** Each card the send shares, as its name and numbers. */
   contacts?: string[];
+  /** The messages a `send(forward:)` copies here, each as its line reads (`last`'s shape)
+   *  and who wrote it. */
+  forward?: { from?: string; text: string; at: string; carries?: Carried[] }[];
   /** A first contact's account as its wire shows it (`ContactPort.profile`): the wire's
    *  name, whether an account answers there and the name it goes by, when the wire says. */
   profile?: { service: string; exists: boolean; name?: string; about?: string };

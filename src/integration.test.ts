@@ -1241,6 +1241,131 @@ Deno.test("send `location`: a pin is a part of its own on WhatsApp, and nowhere 
   }
 });
 
+/** A forward's world: Sole's account, and Carlos's photo and words in his own chat. */
+async function forwardWorld(dir: string) {
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }, { agentId: "a2", mind: "mind@a2" }]);
+  await log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const from = (ts: string, parts: Part[], id: string) =>
+    log.publish({
+      ts,
+      type: "message",
+      envelope: {
+        service: "whatsapp",
+        connection_address: "5491100000000",
+        conversation: { address: "5492615550101", kind: "direct", name: "Carlos" },
+        sender: { address: "5492615550101", name: "Carlos" },
+        external_id: id,
+      },
+      parts,
+    });
+  // a photo as it comes in, its caption on the file
+  const photo: Part = {
+    type: "file",
+    kind: "image",
+    file: { mime_type: "image/jpeg", uri: "storage://media/padron.jpeg" },
+    text: "el de ATM",
+  };
+  const words: Part = { type: "text", kind: "text", text: "San Lorenzo 440" };
+  const p = await from("2026-11-12T12:17:00Z", [photo], "wa:p1");
+  const w = await from("2026-11-12T12:18:00Z", [words], "wa:w1");
+  return { log, photo, words, handles: [shortId(p!.id), shortId(w!.id)] };
+}
+
+Deno.test("send `forward`: each message named goes as it is, pointing at its original, then the agent's own words; on WhatsApp only", async () => {
+  const dir = await Deno.makeTempDir();
+  const { log, photo, words, handles } = await forwardWorld(dir);
+  const to = { to: "5491199999999", connection: "sole" };
+  const { transport } = scripted([
+    ok(
+      [{ kind: "tool_use", name: "send", input: { ...to, forward: handles, text: "ahí van" } }],
+      "tool_use",
+    ),
+    // the local channel marks nothing forwarded
+    ok(
+      [{ kind: "tool_use", name: "send", input: { to: "mind@a2", forward: handles } }],
+      "tool_use",
+    ),
+    // nothing but words rides with a forward
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { ...to, forward: handles, location: { latitude: -32.9, longitude: -68.8 } },
+    }], "tool_use"),
+    // an id no line wears
+    ok([{ kind: "tool_use", name: "send", input: { ...to, forward: ["ffffff"] } }], "tool_use"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("pasale a este número lo que mandó Carlos"));
+    for (let i = 0; i < 12; i++) await xi(CONFIG, ports);
+    const sent = (await log.read({ types: ["message"] })).filter((e) =>
+      e.agent && e.payload?.turn_id && e.envelope.service === "whatsapp"
+    ) as MessageEvent[];
+    assertEquals(
+      sent.map((
+        e,
+      ) => [
+        e.envelope.conversation.address,
+        e.payload?.action,
+        e.payload?.ref_external_id,
+        e.parts,
+      ]),
+      [
+        ["5491199999999", "forward", "wa:p1", [photo]],
+        ["5491199999999", "forward", "wa:w1", [words]],
+        ["5491199999999", undefined, undefined, [{ type: "text", kind: "text", text: "ahí van" }]],
+      ],
+    );
+    const results = await log.read({ types: ["tool_result"] });
+    const outputOf = (i: number) =>
+      String((results[i].parts[0] as { data: { output: string } }).data.output);
+    assertStringIncludes(outputOf(0), `sent · ids ${sent.map((e) => shortId(e.id)).join(", ")}`);
+    assertStringIncludes(outputOf(1), "a forward rides WhatsApp only");
+    assertStringIncludes(outputOf(2), "only `text` rides with it");
+    assertStringIncludes(outputOf(3), 'no message "ffffff"');
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a gated forward's card lists what it copies: each line, who wrote it and when", async () => {
+  const dir = await Deno.makeTempDir();
+  const { log, handles } = await forwardWorld(dir);
+  const { transport } = scripted([
+    ok([{
+      kind: "tool_use",
+      name: "send",
+      input: { to: "5491199999999", connection: "sole", forward: handles, text: "ahí van" },
+    }], "tool_use"),
+    ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
+  ]);
+  const config: AgentConfig = {
+    ...CONFIG,
+    gate: (name) => name === "send" ? "ask" : "allow",
+    timezone: "America/Argentina/Mendoza",
+  };
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport };
+  try {
+    await log.publish(principalMsg("pasale a este número lo que mandó Carlos"));
+    for (let i = 0; i < 6; i++) await xi(config, ports);
+    const [ask] = await log.read({ types: ["permission_request"] });
+    const card = ask.type === "permission_request" ? ask.parts[0].data.send : undefined;
+    assertEquals(card?.forward, [
+      { from: "Carlos", text: "el de ATM", carries: ["image"], at: "12 Nov 9:17" },
+      { from: "Carlos", text: "San Lorenzo 440", at: "12 Nov 9:18" },
+    ]);
+    assertEquals(card?.text, "ahí van");
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("send `contacts`: the harness shapes the cards, on WhatsApp only", async () => {
   const dir = await Deno.makeTempDir();
   const log = await orgLog(dir);

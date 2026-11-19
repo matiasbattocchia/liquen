@@ -204,6 +204,48 @@ Deno.test("a reaction maps to its own content with the raw wmw re_message_id", a
   assertEquals(records[1].content.data, { action: "removed" });
 });
 
+Deno.test("a forward: every content marked forwarded, none quoting, a received file's caption kept", async () => {
+  const records: WADispatchRecord[] = [];
+  let n = 0;
+  const { log } = harness((r) => {
+    records.push(r);
+    return Promise.resolve(`wmw.out.${++n}`);
+  });
+  // a photo as it came in: the caption rides the file part. The original, in another
+  // conversation, is the referent; the wire is told only that it is forwarded
+  const original = { action: "forward" as const, ref_external_id: externalId("wmw.in.9") };
+  log.push(outboundMessage({
+    payload: original,
+    parts: [{
+      type: "file",
+      kind: "image",
+      file: { mime_type: "image/jpeg", uri: "file:///a.jpg" },
+      text: "el de ATM",
+    }],
+  }));
+  log.push(outboundMessage({
+    payload: original,
+    parts: [{ type: "text", kind: "text", text: "San Lorenzo 440" }],
+  }));
+  // a message of our own after it stays ours
+  log.push(outboundMessage());
+  await settle();
+
+  assertEquals(records.length, 3);
+  assertEquals(records[0].content.type, "file");
+  assertEquals(records[0].content.text, "el de ATM");
+  assertEquals(records[0].content.forwarded, true);
+  assertEquals(records[0].content.re_message_id, undefined);
+  assertEquals(records[1].content, {
+    version: "1",
+    type: "text",
+    kind: "text",
+    text: "San Lorenzo 440",
+    forwarded: true,
+  });
+  assertEquals(records[2].content.forwarded, undefined);
+});
+
 Deno.test("a location is its own content, last, and the pin's data goes verbatim", async () => {
   const records: WADispatchRecord[] = [];
   let n = 0;

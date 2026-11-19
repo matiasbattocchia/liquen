@@ -106,6 +106,7 @@ import type {
   ContactsPart,
   FilePart,
   LocationPart,
+  Part,
   SendPreview,
 } from "./types.ts";
 import {
@@ -3663,6 +3664,11 @@ async function execute(
     // the only dispatch path (§9): directed message + sent result (two appends on
     // files — atomic pair on DB later; the steal-sweep covers the crash window)
     let to = String(args.to);
+    // the messages a forward copies, found before any room is opened or row recorded: a
+    // wrong id is the model's to fix while nothing has happened yet
+    const originals = Array.isArray(args.forward)
+      ? await originalsOf(args.forward.map(String), ports)
+      : [];
     // the name a conversation opens under: a mail thread's subject — and on a local list,
     // the room's name, what makes the list a group or a channel rather than a direct room
     const subject = args.subject === undefined ? "" : String(args.subject).trim();
@@ -3874,7 +3880,23 @@ async function execute(
     }
     if (action === "edit" && !body) throw new Error("`edit` needs the replacement text");
     if (action === "remove" && !glyph) throw new Error("`remove` needs the reaction it lifts");
-    if (!action && !glyph && !body && files.length === 0 && !location && !contacts) {
+    // a forward is the messages it names, as they are: WhatsApp marks each forwarded, and
+    // the agent's own words ride after them as a message of their own
+    if (originals.length > 0) {
+      if (envelope.service !== "whatsapp") {
+        throw new Error(`a forward rides WhatsApp only — ${to} is on ${envelope.service}`);
+      }
+      if (target || glyph || named !== undefined || files.length || location || contacts) {
+        throw new Error(
+          "a forward sends the messages it names as they are — only `text` rides with it, " +
+            "after them, as a message of your own",
+        );
+      }
+    }
+    if (
+      !action && !glyph && !body && files.length === 0 && !location && !contacts &&
+      originals.length === 0
+    ) {
       throw new Error("nothing to send");
     }
     const msg: Draft<MessageEvent> = {
@@ -3913,12 +3935,33 @@ async function execute(
       // the paths the files were named by, per uri: the parts name what was sent
       ...(Object.keys(paths).length ? { extra: { paths } } : {}),
     };
-    const sent = await ports.log.publish(msg); // a full draft (parts present) always stores
+    // a forward is a row per message it names, in that order, each pointing at its original
+    // (§3 `forward`), then the agent's own words when it has some
+    const forwards = originals.map((o): Draft<MessageEvent> => ({
+      ts: msg.ts,
+      type: "message",
+      payload: {
+        turn_id: use.payload.turn_id,
+        ref_id: use.id,
+        ...(o.envelope.external_id ? { ref_external_id: o.envelope.external_id } : {}),
+        action: "forward",
+      },
+      agent: self,
+      envelope,
+      parts: forwardable(o),
+    }));
+    const drafts = originals.length > 0 ? [...forwards, ...(body ? [msg] : [])] : [msg];
+    const ids: string[] = [];
+    for (const d of drafts) {
+      // stamped as each is recorded, so the rows' times keep the order they go out in
+      const sent = await ports.log.publish({ ...d, ts: new Date().toISOString() });
+      ids.push(shortId(sent!.id)); // a full draft (parts present) always stores
+    }
     // The answer in words (`SendResult`): the word the instructions use, the line's handle,
     // and what comes next. A wire row is born an offer (store/events.ts `offerOf`): its
     // dispatcher delivers it after this answer, and an update says so when it never will.
     // Whatever a send tells late is the world's tale like any reply: quiet
-    const said = `sent · id ${shortId(sent!.id)}`;
+    const said = `sent · ${ids.length === 1 ? "id" : "ids"} ${ids.join(", ")}`;
     return envelope.service === "local"
       ? { output: `${said} — delivered`, files: [], quiet: true }
       : {
@@ -4206,6 +4249,15 @@ async function sendPreviewOf(
       e.envelope.sender?.address !== e.envelope.connection_address
     );
   const heard = answered ? lineOf(answered, recent) : undefined;
+  // what a forward copies, as the approver weighs it: each line and who wrote it. Best
+  // effort like the rest: a line the call names wrong drops out, and the call says why
+  const forward = Array.isArray(a.forward)
+    ? (await originalsOf(a.forward.map(String), ports).catch(() => [])).flatMap((o) => {
+      const line = lineOf(o, []);
+      const from = ownSide(o) ? undefined : o.envelope.sender?.name ?? o.envelope.sender?.address;
+      return line ? [{ ...(from ? { from } : {}), ...line, at: hhmm(o.ts, zone) }] : [];
+    })
+    : [];
   const files = Array.isArray(a.files) ? a.files.length : 0;
   const loc = a.location && typeof a.location === "object" && !Array.isArray(a.location)
     ? a.location as Record<string, unknown>
@@ -4242,6 +4294,7 @@ async function sendPreviewOf(
       }
       : {}),
     ...(cards.length > 0 ? { contacts: cards } : {}),
+    ...(forward.length > 0 ? { forward } : {}),
     ...(profile ? { profile } : {}),
   };
 }
@@ -4372,6 +4425,44 @@ async function referent(
   return target;
 }
 
+/** `send(forward:)` → the messages it names, each one the agent can read and the wire still
+ *  holds, carrying something a message carries again. A miss throws, and the tool_result
+ *  sends the model back to its window rather than forwarding the wrong message. */
+async function originalsOf(ids: string[], ports: XiPorts): Promise<MessageEvent[]> {
+  const out: MessageEvent[] = [];
+  for (const id of ids) {
+    const matches = (await ports.log.read({ handle: id, types: ["message"] }))
+      .filter((e) => shortId(e.id) === id) as MessageEvent[];
+    if (matches.length === 0) {
+      throw new Error(`no message "${id}" — forward takes the ids your window shows`);
+    }
+    if (matches.length > 1) throw new Error(`"${id}" names ${matches.length} messages — ambiguous`);
+    const [o] = matches;
+    if (o.envelope.status === "deleted") {
+      throw new Error(`message "${id}" was deleted — nothing to forward`);
+    }
+    // an edit, a delete, a reaction or a transcript acts on a message, and is none itself
+    const action = o.payload?.action;
+    if (action !== undefined && action !== "reply" && action !== "forward") {
+      throw new Error(`"${id}" acts on another message — forward the message itself`);
+    }
+    if (forwardable(o).length === 0) {
+      throw new Error(`message "${id}" carries nothing a message can carry again`);
+    }
+    out.push(o);
+  }
+  return out;
+}
+
+/** What of a message a forward carries again: its words, its files with their captions, a
+ *  pin, contact cards. A voice note's transcript rides an event of its own and stays here. */
+function forwardable(e: MessageEvent): Part[] {
+  return (e.parts ?? []).filter((p) =>
+    (p.type === "text" && p.kind === "text") || p.type === "file" ||
+    (p.type === "data" && (p.kind === "location" || p.kind === "contacts"))
+  );
+}
+
 /** How many matches a search page holds when the model names no `limit`, and the most it
  *  may name: a few to find where something was said, and a page to read past that. */
 const SEARCH_LIMIT = 5;
@@ -4386,8 +4477,10 @@ const SEARCH_PAGE_BYTES = 16 * 1024;
  *  several. */
 const SEARCH_PHRASES = 10;
 
-/** The most files one send attaches, cards it carries, and numbers one card holds. */
+/** The most files one send attaches, messages it forwards, cards it carries, and numbers
+ *  one card holds. */
 const SEND_FILES = 10;
+const SEND_FORWARDS = 10;
 const SEND_CARDS = 10;
 const CARD_PHONES = 5;
 
@@ -5034,6 +5127,7 @@ export const OWN_TOOLS: ToolShape[] = [
           react: { type: "string" },
           action: { type: "string", enum: ACTIONS },
           files: { type: "array", items: { type: "string" }, maxItems: SEND_FILES },
+          forward: { type: "array", items: { type: "string" }, maxItems: SEND_FORWARDS },
           location: {
             type: "object",
             properties: {
