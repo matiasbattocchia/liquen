@@ -43,11 +43,15 @@
  * line they write in each conversation (`sender_about`, `bio.ts`). A member writing to an
  * owned account in a direct chat has that chat recorded on the account's row as
  * `mirrors.dms`: a principal's DM there is their agent's mind surface (§4).
+ *
+ * An account kept to steering is heard only in its chat with itself and its direct chats
+ * with roster members: a line anywhere else is not mapped, its file not fetched, its
+ * chat's history not imported (`heard`).
  */
 
 import { SENDER_ABOUT, SENDER_SAVED } from "../../sender.ts";
 import type { Appender, Reader } from "../../store/log.ts";
-import { type Connections, mirrorsOf } from "../../store/connections.ts";
+import { type Connections, forSteering, mirrorsOf } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
 import { saveMedia } from "../../store/media.ts";
@@ -523,6 +527,22 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
     }
   };
 
+  /** On an account kept to steering (§4), whether a chat may be one of its mind surfaces:
+   *  its chat with itself, or a direct chat with a roster member, kept by the publish
+   *  (`steered`) while that member steers the account's agent. Asked before a line is
+   *  mapped, so the account's other chats cost no file and no about text. On any other
+   *  account, every chat may. */
+  const heard = async (chat: TgPeer): Promise<boolean> => {
+    if (!deps.store || !forSteering(await deps.store.connection(SERVICE, connection))) {
+      return true;
+    }
+    if (chat.id === connection) return true;
+    if (chat.kind !== "user") return false;
+    if ((await deps.store.connection(SERVICE, chat.id))?.agentId) return true;
+    const members = (await deps.store.agents?.()) ?? [];
+    return members.some((a) => sameHandle(a.phone, chat.phone));
+  };
+
   /** Whether the account's row still stands: once it is removed, the log takes nothing
    *  more of it, and a publish it refuses is refused for good. */
   const standing = async () =>
@@ -640,13 +660,14 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
       if (deps.signedIn === undefined) return true;
       for (const chat of await deps.wire.dialogs()) {
         if (stopped) return false;
-        if (!followed(chat)) await importChat(chat, since);
+        if (!followed(chat) && await heard(chat)) await importChat(chat, since);
       }
       return !stopped;
     },
     async handle(event) {
       switch (event.type) {
         case "message": {
+          if (!(await heard(event.message.chat))) return;
           const d = await mapMessage(event.message);
           if (!d) return;
           await classify([d], phonesOf([event.message]));
@@ -654,6 +675,7 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
           return publish([d]);
         }
         case "edit": {
+          if (!(await heard(event.message.chat))) return;
           const d = mapEdit(event.message);
           if (!d) return;
           await classify([d], phonesOf([event.message]));
@@ -662,6 +684,7 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
         case "delete":
           return publish(await mapDelete(event.ids, event.chat));
         case "reactions":
+          if (!(await heard(event.chat))) return;
           try {
             return await publish(await mapReactions(event));
           } catch (err) {

@@ -16,6 +16,9 @@ through, are set up at the terminal.
   the agent in `for` owns. Omit it for a new account
 - for: the agent the grant is for, when it is not you. It lands only as the account their row
   names: their email, or their phone for WhatsApp and Telegram. A token has no account to match
+- steering: WhatsApp and Telegram, an account its owner only steers you from: its chat with
+  itself and its principals' direct chats reach you, nothing else on it does, and you send
+  nothing through it. Without it a new account is yours whole; `account` keeps how it was kept
 - token: with service `token`, an API's token for the person to paste: what it is for, and the
   only places it is sent. The page shows them all before the paste. Asking again under the same
   name replaces it

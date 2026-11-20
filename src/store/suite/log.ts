@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import type { Log } from "../log.ts";
-import type { Draft, Event, MessageEvent } from "../../types.ts";
+import type { Draft, Event, MessageEvent, Service } from "../../types.ts";
 import { cast, type Substrate, withStore } from "./mod.ts";
 
 export function logSuite(s: Substrate): void {
@@ -591,6 +591,75 @@ export function logSuite(s: Substrate): void {
 
       await log.publish(msg("03", "mind@m", "local needs no grant")); // the exempt service
       assertEquals((await log.read()).length, 3);
+    });
+  });
+
+  Deno.test("the publish gate: an account kept to steering takes a line on its mind surfaces alone (§4)", async () => {
+    await withLog(async (log) => {
+      await cast(log);
+      await log.upsertConnections([
+        {
+          service: "telegram",
+          address: "700",
+          agentId: "matias",
+          extra: { mirrors: { self: "700" }, steering: true },
+        },
+        {
+          service: "whatsapp",
+          address: "549115550001",
+          agentId: "matias",
+          extra: { steering: true },
+        },
+      ]);
+      const on = (service: Service, account: string, id: string, chat: string) => {
+        const d = msg(id, chat, "hola");
+        d.envelope.service = service;
+        d.envelope.connection_address = account;
+        return d;
+      };
+
+      await log.publish(on("telegram", "700", "01", "700")); // Saved Messages
+      await log.publish(on("telegram", "700", "02", "connect")); // the door's grant note
+      await log.publish(on("whatsapp", "549115550001", "03", "549115550001")); // the self-chat
+      await assertRejects(
+        () => log.publish(on("telegram", "700", "04", "555")),
+        Error,
+        "telegram:700 is connected for steering: 555 is not one of its mind surfaces",
+      );
+      // a batch with one line off the surfaces lands none of it
+      await assertRejects(
+        () =>
+          log.publish([
+            on("whatsapp", "549115550001", "05", "549115550001"),
+            on("whatsapp", "549115550001", "06", "120363@g.us"),
+          ]),
+        Error,
+        "is connected for steering",
+      );
+      assertEquals((await log.read()).map((e) => e.id), ["01", "02", "03"]);
+
+      // a patch stamps a row already in, wherever it is addressed
+      const read = {
+        ts: "2026-07-16T00:01:00Z",
+        type: "message",
+        envelope: {
+          service: "telegram",
+          connection_address: "700",
+          conversation: { address: "" },
+          external_id: "telegram:700.9",
+        },
+        status: { state: "read" },
+      } as unknown as Draft;
+      assertEquals(await log.publish(read), null);
+
+      // a sign-in without the mark gives the agent the whole account
+      await log.upsertConnections([{
+        service: "telegram",
+        address: "700",
+        extra: { steering: null },
+      }]);
+      await log.publish(on("telegram", "700", "07", "555"));
+      assertEquals((await log.read()).length, 4);
     });
   });
 

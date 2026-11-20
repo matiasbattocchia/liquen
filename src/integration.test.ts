@@ -4609,6 +4609,18 @@ Deno.test("the surfaces: the prefix names them, the anchor lists the ones that a
       },
       { service: "slack", address: "T1" }, // the stub: gates ingest, nobody's voice
       { service: "google", address: "other@x.io", agentId: "a2" }, // another agent's
+      // a1's, kept to steering, and down: no voice, but its owner's lines stop there
+      {
+        service: "telegram",
+        address: "700",
+        agentId: "a1",
+        extra: {
+          steering: true,
+          mirrors: { self: "700" },
+          state: "signed_out",
+          signed_out_at: "2026-09-07T15:00:00Z",
+        },
+      },
     ]);
     await log.publish(principalMsg("hola"));
     await xi(config, ports);
@@ -4619,9 +4631,11 @@ Deno.test("the surfaces: the prefix names them, the anchor lists the ones that a
     );
     assert(!env.includes("T1 ("), "the stub is not a surface");
     assert(!env.includes("other@x.io"), "another agent's grant is not this agent's surface");
+    assert(!env.includes("telegram"), "an account kept to steering is no surface to speak on");
     const anchor = JSON.stringify(last?.messages.at(-1)?.content);
-    assertStringIncludes(anchor, "down — 1 connection:");
+    assertStringIncludes(anchor, "down — 2 connections:");
     assertStringIncludes(anchor, "· 549 — whatsapp, signed out since 7 Sep 14:02");
+    assertStringIncludes(anchor, "· 700 — telegram, signed out since 7 Sep 15:00");
     assert(!anchor.includes("slack"), "an up surface is not listed — silence means up");
   } finally {
     await log.close();

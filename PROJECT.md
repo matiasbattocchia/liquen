@@ -7505,6 +7505,35 @@ name a kept file arrived with, read off the log, since a `storage://` key is a c
 hash. The card reads the reference and the log, never the bytes, as nothing is kept until
 the send runs. The files block stands above the text that captions the first of them.
 
+### An account kept to steering (2026-11-20) — LANDED
+
+matias asked to connect his Telegram for steering alone, with no outside traffic, and
+the same wherever it applies. `liquen connect telegram|whatsapp --steering` (and the
+`connect` tool's `steering`) marks the owned account's row `extra.steering`; each sign-in
+says it anew. Such an account is its owner's mind surfaces and nothing more, both ways:
+
+- The log's frontier gate takes a new row on it only in one of its surfaces (the `aliases`
+  view) or in `connect`, on both engines; a patch passes, since it stamps a row already in.
+  It refuses an agent's send there as it refuses an ingest's line.
+- Its ingest publishes through `steered`, which leaves out what the gate would refuse, so
+  a publish tried again never meets a refusal. Telegram's ingest skips the account's other
+  chats before mapping: no file fetched, no about text read, no history imported for them.
+- `speaksThrough` leaves it out, so the agent's send, book and rooms never reach it. It
+  still makes its agent a person's, steered by itself.
+
+A WhatsApp row is now made by main alone, when the pairing lands: the bridge's session
+events move only the state of a row that stands, and the batches it posts first are
+refused at the gate and posted again (a 500 is retried for five minutes). So the mark is
+on the row before the first line of the history. The bridge pushes a file before its
+message and names no chat with it, so a stranger's file on a steering number is kept
+until the unreferenced sweep lets it go, a day later; no row ever names it.
+
+Applies to WhatsApp and Telegram (`STEERED`): an owned account there has a chat with
+itself. A Slack member already steers through their DM with the shared bot, with no grant
+of their own. Microsoft is left: a Teams self-chat steers, but the account is also its
+mail, calendar and the Graph token the agent's shell is handed, and keeping it to
+steering means holding all three back.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

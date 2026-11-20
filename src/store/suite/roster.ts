@@ -101,6 +101,27 @@ export function rosterSuite(s: Substrate): void {
     });
   });
 
+  Deno.test("an account kept to steering is its owner's mind surfaces and no voice: still a person's agent, steered by itself", async () => {
+    const agents: AgentPut[] = [{ agentId: "matias", mind: "mind@matias" }];
+    const connections: ConnectionRow[] = [
+      {
+        service: "telegram",
+        address: "700",
+        agentId: "matias",
+        extra: { mirrors: { self: "700" }, steering: true },
+      },
+      { service: "whatsapp", address: "549115550001", credentialKey: "whatsapp:549115550001" },
+    ];
+    assertEquals(speaksThrough(agents[0], connections).map((c) => c.address), ["549115550001"]);
+    await withRoster(agents, connections, async (log) => {
+      assertEquals(await log.principalsOf("matias"), ["matias"]);
+      assertEquals(
+        (await log.aliases()).map((a) => [a.service, a.connection, a.conversation]),
+        [["telegram", "700", "700"]],
+      );
+    });
+  });
+
   Deno.test("slack: a member's DM with the shared bot, recorded on the workspace stub, is their own agent's surface, when it runs and counts them", async () => {
     const agents: AgentPut[] = [
       { agentId: "matias", mind: "mind@matias", principals: ["matias"] },

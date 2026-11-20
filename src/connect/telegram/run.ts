@@ -17,7 +17,8 @@
  * grant note, and the note whose history is in sits beside the cache (`historyPath`), so a
  * restart resumes and a new sign-in imports again.
  *
- * Every line is published through the room marks (`connect/marks.ts`).
+ * Every line is published through the room marks (`connect/marks.ts`), and on an account
+ * kept to steering only on its mind surfaces (`connect/steering.ts`).
  *
  * The body runs under `entry` (§9): a boot that cannot go on is a refusal in a sentence.
  */
@@ -27,6 +28,7 @@ import { entry } from "../../entry.ts";
 import type { Reader } from "../../store/log.ts";
 import { heartbeat, setState } from "../health.ts";
 import { createMarks, marked } from "../marks.ts";
+import { steered } from "../steering.ts";
 import { logDirectory } from "../mentions.ts";
 import { exitOnStop } from "../stop.ts";
 import { createAccounts, type Opened, RECONCILE_MS } from "./accounts.ts";
@@ -87,7 +89,7 @@ export async function runTelegram(): Promise<() => Promise<void>> {
   // the room knobs asked per batch, and an account's own as its session opens
   const knobs = await liveKnobs<TelegramConfig>(root, SPEC, log);
   const read: Reader["read"] = (q) => log.read(q);
-  const publish = marked(log.publish, createMarks({ read, knobs }));
+  const publish = steered(marked(log.publish, createMarks({ read, knobs })), log);
 
   const app = await creds.get(APP_KEY);
   if (!app?.value.api_id || !app.value.api_hash) {

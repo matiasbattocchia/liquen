@@ -18,6 +18,8 @@
  *     one `for` owns, or a shared one. The grant keeps the row's owner.
  *   • a token names itself (`token`), and is the caller's or `for`'s: capability, not
  *     identity, so there is no handle to match and no connection to reconnect.
+ *   • `steering` keeps a WhatsApp or Telegram account to its owner's mind surfaces (§4).
+ *     A reconnect keeps the account as it was kept unless the call says.
  *
  * WhatsApp goes by pairing code alone, since a QR rotates too fast for a chat: the number
  * is the account's for a reconnect, else the phone on the row the grant is for.
@@ -26,7 +28,7 @@
 import type { ExecTool } from "../xi.ts";
 import type { Json } from "../types.ts";
 import type { Registry } from "../store/agents.ts";
-import type { Connections } from "../store/connections.ts";
+import { type Connections, forSteering } from "../store/connections.ts";
 import type { SignInAsk, SignIns, Word } from "../connect/signin.ts";
 import type { TokenArgs } from "../connect/token/grant.ts";
 import { describeCall } from "../describe.ts";
@@ -42,6 +44,7 @@ export function connectSpec(services: string[]) {
         service: { type: "string", enum: services },
         account: { type: "string" },
         for: { type: "string" },
+        steering: { type: "boolean" },
         token: {
           type: "object",
           properties: {
@@ -89,10 +92,12 @@ export async function askOf(
   if (!row) throw new Error(`no agent "${target}"`);
   const account = typeof input.account === "string" ? input.account.trim() : "";
 
+  const steering = typeof input.steering === "boolean" ? input.steering : undefined;
   if (service === "token") {
     if (account) {
       throw new Error("a token is no connection: ask again under its name, and it is replaced");
     }
+    if (steering) throw new Error("a token is no account: nothing to keep to steering");
     return { service, agent: target, token: tokenOf(input.token) };
   }
   if (input.token !== undefined) throw new Error("`token` goes with service `token` alone");
@@ -106,15 +111,18 @@ export async function askOf(
     if (owner && owner !== deps.agentId && owner !== other) {
       throw new Error(`${service} ${conn.address} is ${owner}'s: only a call for them signs it in`);
     }
+    // a sign-in again keeps the account as it was kept, unless the call says
+    const kept = steering ?? forSteering(conn);
     return {
       service,
       ...(owner ? { agent: owner } : {}),
       account: conn.address,
       ...(service === "whatsapp" ? { pair: conn.address } : {}),
+      ...(kept ? { steering: true } : {}),
     };
   }
 
-  const ask: SignInAsk = { service, agent: target };
+  const ask: SignInAsk = { service, agent: target, ...(steering ? { steering } : {}) };
   if (other) {
     if (service === "github") {
       throw new Error("GitHub takes no `for`: its account carries no handle the row keeps");

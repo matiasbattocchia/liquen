@@ -295,6 +295,32 @@ calendar, holds no Teams subscription, and hosts no room.
 The store merges `extra` as an RFC 7396 patch, so a connector writes only the key it
 learns — `{ mirrors: { dms: { sol: "D77" } } }` — and removes one by patching it to `null`.
 
+### An account kept to steering: `extra.steering`
+
+A door that signs in an owned account may keep it to steering (`--steering`, the `connect`
+tool's `steering`, `STEERED` in `connect/steering.ts`): the row says `extra.steering: true`,
+and each sign-in says it anew, `null` when it does not. The account is then its owner's
+mind surfaces and nothing more. The log's gate takes a new row on it only in one of them
+(the `aliases` view) or in `connect`, the grant note's conversation, whoever writes it;
+a patch, which stamps a row already in, passes. So an ingest on such an account publishes
+through `steered` beside `marked`:
+
+```ts
+const publish = steered(marked(log.publish, createMarks({ read, knobs })), log);
+```
+
+which leaves out what the gate would refuse, by the same rows, so a publish tried again
+never meets a refusal. Skip the rest of the account before mapping it where the wire
+costs something: Telegram's ingest maps only the account's chat with itself and its
+direct chats with roster members, so nothing else has its file fetched, its stranger's
+about text read or its history imported. The agent does not speak through the account
+(`speaksThrough`), so no send, book or room reaches it.
+
+A row must say it before its first line lands. Telegram's door writes the row before the
+process opens the session. A WhatsApp row is made by main when the pairing lands
+(`landWhatsApp`); the bridge's session events only move the state of a row that stands,
+and the batches it sends before then are refused at the gate and sent again.
+
 ### The address book: the service keeps it, the name carries it
 
 A service that keeps an address book — the phone's, behind WhatsApp; Google Contacts —
@@ -1023,8 +1049,9 @@ signs an account in: a QR code to scan (Settings → Devices → Link Desktop De
 `--phone` the code Telegram sends, then the two-step password when the account has one.
 It writes the session string to the vault as `telegram:<user id>`, one connection row at
 the user id, and the grant's note; an owned account's Saved Messages is its
-`mirrors.self`. A running process takes the account up when that note lands, and leaves
-every other account's session as it was.
+`mirrors.self`. With `--steering` the row keeps the account to its owner's mind surfaces
+(§1, an account kept to steering). A running process takes the account up when that note
+lands, and leaves every other account's session as it was.
 
 **The accounts follow the store** (`accounts.ts`). The sessions the process holds are the
 live rows with a session in the vault, brought in line at boot, on a door's note, and
