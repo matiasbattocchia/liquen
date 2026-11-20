@@ -82,7 +82,7 @@ import type { Appender, Reader } from "./store/log.ts";
 import type { AgentRow, Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { ConnectionRow, Connections } from "./store/connections.ts";
-import { SILENT_AFTER_MS } from "./store/connections.ts";
+import { forSteering, SILENT_AFTER_MS } from "./store/connections.ts";
 import type { DocContext, DocEntry, DocHeader, Docs, Where } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { digits, sameHandle, speaksThrough } from "./store/roster.ts";
@@ -1564,11 +1564,12 @@ async function think(
   // is STATE, not history — the transcript already closed those calls with
   // `pending_approval`, so the only place they belong is the block that is rewritten every
   // turn. It also self-corrects: an ask that gets answered simply stops being listed.
-  const surfaces = await surfacesOf(config, ports);
+  const held = await heldOf(config, ports);
+  const surfaces = surfacesIn(held);
   const org = await company(config, ports);
   const ambient = [
     ...(ports.ambient ? await ports.ambient() : []),
-    ...downOn(surfaces, config.timezone, Date.now(), machine.since()),
+    ...downOn(held, config.timezone, Date.now(), machine.since()),
     ...(await dayOn(config, ports, cascade, docs)),
     ...waitingOn(
       await ports.log.gates({ agentId: config.agentId, sessionId: config.sessionId }),
@@ -1774,13 +1775,21 @@ const NO_FILES: Files = {
  *  `cancel`, `pid` for `kill`. A conversation's handle is its name, which `send` and
  *  `search` both take, so its slot carries the one flag that changes whether to open it. */
 
-/** The surfaces this agent speaks through (§4, §6): the connections it OWNS — it speaks as
- *  its principal there — and the org's credentialed ones, where it speaks as the org. A
- *  stub row (no owner, no credential) only gates ingest and is nobody's voice. */
-async function surfacesOf(config: AgentConfig, ports: XiPorts): Promise<ConnectionRow[]> {
+/** The accounts this agent holds (§4, §6): the connections it OWNS and the org's
+ *  credentialed ones. A stub row (no owner, no credential) only gates ingest. What is down
+ *  among them is the anchor's to say, an account kept to steering included: its owner's
+ *  lines there stop reaching the mind. */
+async function heldOf(config: AgentConfig, ports: XiPorts): Promise<ConnectionRow[]> {
   return (await ports.log.connections()).filter((c) =>
     c.agentId === config.agentId || (!c.agentId && !!c.credentialKey)
   );
+}
+
+/** The surfaces this agent speaks through (§4, §6), by `speaksThrough`'s rule, among what
+ *  it holds: it speaks as its principal on the accounts it owns, and as the org on the
+ *  org's, save an account kept to steering, which is its owner's mind surfaces alone. */
+function surfacesIn(held: ConnectionRow[]): ConnectionRow[] {
+  return held.filter((c) => !forSteering(c));
 }
 
 /** A surface as the env states it: the service, the address it was shown — or the account's
@@ -4544,7 +4553,7 @@ async function searchView(config: AgentConfig, ports: XiPorts): Promise<SearchVi
       principals: await ports.log.principalsOf(config.agentId),
     },
     connections: Object.fromEntries(
-      (await surfacesOf(config, ports)).flatMap((c) =>
+      surfacesIn(await heldOf(config, ports)).flatMap((c) =>
         typeof c.extra?.name === "string" && c.extra.name ? [[c.address, c.extra.name]] : []
       ),
     ),

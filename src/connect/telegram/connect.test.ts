@@ -64,6 +64,7 @@ Deno.test("telegram connect: a member's sign-in writes the vault, one owned row 
       name: "Ana Paz",
       username: "anapaz",
       mirrors: { self: "700100" },
+      steering: null,
     },
   }]);
   assertEquals(h.memberships, [
@@ -73,6 +74,32 @@ Deno.test("telegram connect: a member's sign-in writes the vault, one owned row 
   // the note is what a running connection takes the account up by
   assertEquals(h.published[0].envelope.conversation.address, "connect");
   assertEquals(h.published[0].envelope.sender?.address, "telegram-connect");
+});
+
+Deno.test("telegram connect: --steering keeps the account to its owner's mind, and says so", async () => {
+  const h = harness({ steering: true });
+  await connectTelegram(h.deps);
+  assertEquals(h.connections[0].extra?.steering, true);
+  assertEquals(h.connections[0].extra?.mirrors, { self: "700100" });
+  const note = h.published[0].parts[0];
+  assertEquals(
+    note.type === "text" && note.text,
+    "Telegram connected: @anapaz (700100) → ana, for steering",
+  );
+});
+
+Deno.test("telegram connect: a shared account is kept to steering by nobody, before any sign-in", async () => {
+  let signedIn = false;
+  const h = harness({
+    principal: undefined,
+    steering: true,
+    signIn: () => {
+      signedIn = true;
+      return Promise.resolve({ session: "s", self: SELF });
+    },
+  });
+  await assertRejects(() => connectTelegram(h.deps), Error, "a shared account has no owner");
+  assertEquals([signedIn, h.vault, h.connections, h.published], [false, [], [], []]);
 });
 
 Deno.test("telegram connect: a shared account is owned by nobody and mirrors no mind", async () => {

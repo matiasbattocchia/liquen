@@ -31,6 +31,7 @@ import { disabled } from "../config.ts";
 import { socketOf } from "../edge.ts";
 import { MIND } from "../session.ts";
 import { serveSocket } from "./serve.ts";
+import { steeringRefused } from "./steering.ts";
 import { type TokenArgs, tokenKey } from "./token/grant.ts";
 
 /** How long a link lives. */
@@ -55,6 +56,9 @@ export interface SignInAsk {
   scopes?: string[];
   /** WhatsApp: the number a pairing code is minted for; absent, a QR. */
   pair?: string;
+  /** WhatsApp and Telegram: keep the account to its owner's mind surfaces (§4). Each
+   *  sign-in says it anew: one without it gives the agent the whole account. */
+  steering?: boolean;
   /** A pasted token: what it is for, and where it may be spent. */
   token?: TokenArgs;
   /** The tool call to tell the outcome to. */
@@ -396,6 +400,8 @@ export function createSignIns(
       if (ask.agent && !(await log.agents()).some((a) => a.agentId === ask.agent)) {
         throw new Error(`no agent "${ask.agent}": a grant binds to an agent on the roster`);
       }
+      const unsteered = ask.steering ? steeringRefused(ask) : undefined;
+      if (unsteered) throw unsteered;
       await sweep();
       const prepared = await flow.prepare(ask, ctx);
       const { caller, ...rest } = ask;

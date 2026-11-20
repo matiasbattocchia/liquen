@@ -1134,6 +1134,14 @@ acts as must be the agent's alone: a person also running that number on WhatsApp
 would read the mind's traffic and could write into it. That is a deployment rule, not a
 classifier's — it cannot be checked, only kept.
 
+**An account kept to steering.** An owned WhatsApp or Telegram account may be connected
+for steering alone (`extra.steering`, set by the sign-in): it is its owner's mind surfaces
+and nothing more. The log's frontier gate takes a new row on it only in one of those
+surfaces or in the grant note's conversation, whoever writes it, so nothing else the wire
+says on the account lands and no agent sends through it; the agent does not speak through
+it, and its ingest leaves out the rest before the gate is asked. It is still the agent's
+account, so the agent is a person's and steers itself.
+
 **Who steers.** Derived from the same rows when the entry says nothing: an agent that owns
 an account — a revoked one included — is a person's, and steers itself; an agent that
 owns none is an org agent, and the org's people steer it — every member who owns an

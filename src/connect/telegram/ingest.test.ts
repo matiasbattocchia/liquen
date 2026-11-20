@@ -869,3 +869,95 @@ Deno.test("telegram ingest: the session's state lands on the account's row", asy
   ]);
   assertEquals(published, []);
 });
+
+/** The account kept to steering, owned by ana, with lu a member by her phone. */
+function steering(over: Partial<TelegramIngestDeps> = {}) {
+  const row: ConnectionRow = {
+    service: "telegram",
+    address: SELF.id,
+    agentId: "ana",
+    extra: { mirrors: { self: SELF.id }, steering: true },
+  };
+  return harness({
+    store: {
+      connection: (_service, address) => Promise.resolve(address === SELF.id ? row : null),
+      connections: () => Promise.resolve([row]),
+      upsertConnections: () => Promise.resolve(),
+      publish: keeper().publish,
+      agents: () =>
+        Promise.resolve([
+          { agentId: "ana", mind: "mind@ana" },
+          { agentId: "lu", mind: "mind@lu", phone: "+54 9 261 555-0300" },
+        ]),
+    },
+    ...over,
+  });
+}
+
+const LU: TgPeer = { id: "700300", kind: "user", name: "Lu", phone: "5492615550300" };
+
+Deno.test("telegram ingest: an account kept to steering hears its Saved Messages and its members' DMs, and maps nothing else", async () => {
+  let fetched = 0;
+  const asked: string[] = [];
+  const file = {
+    kind: "image" as const,
+    mime: "image/jpeg",
+    name: "obra.jpg",
+    bytes: () => {
+      fetched++;
+      return Promise.resolve(new Uint8Array([1]));
+    },
+  };
+  const { ingest, published } = steering({
+    storage: memoryStorage(),
+    bios: {
+      of: (user: string) => {
+        asked.push(user);
+        return Promise.resolve<string | undefined>("Arquitecta.");
+      },
+      stop: () => {},
+    },
+  });
+  await ingest.handle({ type: "message", message: message({ id: 1, file }) }); // a stranger
+  await ingest.handle({ type: "message", message: message({ id: 2, chat: TEAM, file }) });
+  await ingest.handle({
+    type: "edit",
+    message: message({ id: 1, edited: "2026-11-13T15:05:00.000Z", text: "editada" }),
+  });
+  await ingest.handle({
+    type: "reactions",
+    chat: TEAM,
+    id: 2,
+    reactions: [{ by: SOL, emoji: "👍", date: NOW }],
+  });
+  assertEquals([published, fetched, asked], [[], 0, []]);
+
+  await ingest.handle({
+    type: "message",
+    message: message({ id: 3, chat: SELF, sender: SELF, out: true, text: "nota" }),
+  });
+  await ingest.handle({ type: "message", message: message({ id: 4, chat: LU, sender: LU }) });
+  assertEquals(published.map((d) => d.envelope.conversation.address), [SELF.id, LU.id]);
+});
+
+Deno.test("telegram ingest: an account kept to steering imports the history of its surfaces alone", async () => {
+  const wire = fakeWire({
+    dialogs: () => Promise.resolve([SOL, TEAM, SELF, LU]),
+    since: (chat: string) =>
+      Promise.resolve([
+        message({
+          id: 1,
+          chat: chat === SELF.id ? SELF : LU,
+          sender: chat === SELF.id ? SELF : LU,
+          date: "2026-10-01T00:00:00.000Z",
+        }),
+      ]),
+  });
+  const { ingest, published } = steering({ wire, signedIn: "2026-11-14T10:00:00.000Z" });
+  assertEquals(await ingest.backfill("2026-09-15T10:00:00.000Z"), true);
+  assertEquals(
+    wire.calls.filter((c) => c.op === "since").map((c) => c.args[0]),
+    [SELF.id, LU.id],
+  );
+  assertEquals(published.map((d) => d.envelope.conversation.address), [SELF.id, LU.id]);
+});

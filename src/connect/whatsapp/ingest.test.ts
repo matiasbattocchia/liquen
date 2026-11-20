@@ -1204,27 +1204,47 @@ Deno.test("a muted or archived chat stamps its state per message — the silenci
   assertEquals(edit.extra, { muted: true });
 });
 
-Deno.test("sessions/events: connected upserts the connection row (the gate)", async () => {
-  const { store, upserts } = fakeStore();
-  const { handler } = harness({ store });
-  const res = await handler(
-    post("/whatsapp-web-management/sessions/events", {
-      event: "connected",
-      organization_id: "org-1",
-      address: "5491100000000",
-      agent_id: "matias",
-    }),
+Deno.test("sessions/events: connected moves the row the pairing made, and makes none", async () => {
+  const connected = {
+    event: "connected",
+    organization_id: "org-1",
+    address: "5491100000000",
+    agent_id: "matias",
+  };
+  // the pairing has not landed yet: the row is main's to make, with whether the number is
+  // kept to steering, so the bridge's word is taken and left
+  const none = fakeStore();
+  const early = await harness({ store: none.store }).handler(
+    post("/whatsapp-web-management/sessions/events", connected),
+  );
+  assertEquals(early.status, 200);
+  assertEquals(none.upserts, []);
+
+  const { store, upserts } = fakeStore({
+    service: "whatsapp",
+    address: "5491100000000",
+    agentId: "matias",
+    extra: { state: "unavailable", steering: true },
+  });
+  const res = await harness({ store }).handler(
+    post("/whatsapp-web-management/sessions/events", connected),
   );
   assertEquals(res.status, 200);
   assertEquals(upserts.length, 1);
   assertEquals(upserts[0].service, "whatsapp");
   assertEquals(upserts[0].address, "5491100000000");
-  assertEquals(upserts[0].agentId, "matias"); // personal session ⇒ the grant binds
+  assertEquals(upserts[0].agentId, "matias");
   assertEquals(upserts[0].extra?.state, "connected");
+  assertEquals("steering" in (upserts[0].extra ?? {}), false); // the pairing's word stands
 });
 
 Deno.test("sessions/events: a drop, a logout and a ban record the map's words, stamped — what the anchor reads", async () => {
-  const { store, upserts } = fakeStore();
+  const { store, upserts } = fakeStore({
+    service: "whatsapp",
+    address: "5491100000000",
+    agentId: "matias",
+    extra: { state: "connected" },
+  });
   const { handler } = harness({ store });
   for (const event of ["disconnected", "logged_out", "temporary_ban"]) {
     const res = await handler(

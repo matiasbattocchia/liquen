@@ -72,7 +72,15 @@ import {
 } from "./agents.ts";
 import { CREDENTIALS_DDL } from "./credentials.ts";
 import { createStanding, RULES_DDL, type Standing } from "./rules.ts";
-import { type Connections, CONNECTIONS_DDL, createConnections, UNPREFIX } from "./connections.ts";
+import {
+  type Connections,
+  CONNECTIONS_DDL,
+  createConnections,
+  exempt,
+  offSurface,
+  STEERING,
+  UNPREFIX,
+} from "./connections.ts";
 import { createGates, type Gates, GATES_DDL } from "./gates.ts";
 import { createSweeper, type Sweeper } from "./sweep.ts";
 import { bindRoster, ROSTER_VIEWS } from "./roster.ts";
@@ -657,9 +665,14 @@ export async function openLog(
   );
   // the frontier gate (§4): only a REGISTERED (and live) connection may log — an event on
   // an unknown or soft-deleted account is refused before anything lands. `local` is the
-  // substrate's own service (minds, DMs), not a connected account: exempt.
+  // substrate's own service (minds, DMs), not a connected account: exempt. An account kept
+  // to steering takes a line on its mind surfaces alone
   const registered = db.prepare(
-    "SELECT 1 AS x FROM connections WHERE service = ? AND address = ? AND deleted_at IS NULL",
+    `SELECT json_extract(extra, '$.${STEERING}') IS 1 AS steering FROM connections
+      WHERE service = ? AND address = ? AND deleted_at IS NULL`,
+  );
+  const surface = db.prepare(
+    "SELECT 1 AS x FROM aliases WHERE service = ? AND connection = ? AND conversation = ?",
   );
   const mark = db.prepare(
     `UPDATE events SET
@@ -804,9 +817,15 @@ export async function openLog(
   ): Promise<Event | Event[] | null> => {
     const drafts = Array.isArray(one) ? one : [one];
     for (const d of drafts) {
-      const { service, connection_address: address } = d.envelope;
-      if (service !== "local" && registered.get(service, address) === undefined) {
-        throw new Error(`connection not registered: ${service}:${address}`);
+      const { service, connection_address: address, conversation } = d.envelope;
+      if (service === "local") continue;
+      const row = registered.get(service, address) as { steering: number } | undefined;
+      if (row === undefined) throw new Error(`connection not registered: ${service}:${address}`);
+      if (
+        row.steering && !exempt(d) &&
+        surface.get(service, address, conversation.address) === undefined
+      ) {
+        throw offSurface(service, address, conversation.address);
       }
     }
     const now = new Date().toISOString();

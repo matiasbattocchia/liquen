@@ -15,6 +15,7 @@ const CONNECTIONS: ConnectionRow[] = [
   { service: "google", address: "ana@example.com", agentId: "ana" },
   { service: "google", address: "team@example.com", credentialKey: "google:team@example.com" },
   { service: "whatsapp", address: "5492610000009", agentId: "matias" },
+  { service: "telegram", address: "700100", agentId: "matias", extra: { steering: true } },
 ];
 
 const log = {
@@ -83,6 +84,42 @@ Deno.test("askOf: a reconnect is a connection the caller may sign in, keeping it
     () => ask({ service: "google", account: "nobody@example.com" }),
     Error,
     "no connection here",
+  );
+});
+
+Deno.test("askOf: steering asks for an account kept to its owner's mind; a reconnect keeps how it was kept unless told", async () => {
+  assertEquals(await ask({ service: "telegram", steering: true }), {
+    service: "telegram",
+    agent: "matias",
+    steering: true,
+  });
+  assertEquals(await ask({ service: "telegram", steering: false }), {
+    service: "telegram",
+    agent: "matias",
+  });
+  assertEquals(await ask({ service: "telegram", account: "700100" }), {
+    service: "telegram",
+    agent: "matias",
+    account: "700100",
+    steering: true,
+  });
+  assertEquals(await ask({ service: "telegram", account: "700100", steering: false }), {
+    service: "telegram",
+    agent: "matias",
+    account: "700100",
+  });
+  assertEquals(await ask({ service: "whatsapp", account: "5492610000009", steering: true }), {
+    service: "whatsapp",
+    agent: "matias",
+    account: "5492610000009",
+    pair: "5492610000009",
+    steering: true,
+  });
+  await assertRejects(
+    () =>
+      ask({ service: "token", steering: true, token: { name: "crm", env: "CRM", hosts: "x.io" } }),
+    Error,
+    "nothing to keep to steering",
   );
 });
 

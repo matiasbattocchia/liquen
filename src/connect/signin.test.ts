@@ -430,6 +430,25 @@ Deno.test("open: a grant for a name off the roster is refused in a sentence", as
   }
 });
 
+Deno.test("open: steering is asked of an owned account on a service that keeps one, or refused before any ticket", async () => {
+  const h = await harness({ svc: linkFlow(), whatsapp: linkFlow() });
+  try {
+    await assertRejects(
+      () => h.signIns.open({ service: "svc", agent: "ana", steering: true }),
+      Error,
+      "svc keeps no account to steering: telegram and whatsapp do",
+    );
+    await assertRejects(
+      () => h.signIns.open({ service: "whatsapp", steering: true }),
+      Error,
+      "a shared account has no owner",
+    );
+    assertEquals(await h.creds.tickets(), []);
+  } finally {
+    await h.close();
+  }
+});
+
 Deno.test("resume: open tickets are served again; a call left with no ticket is told lost", async () => {
   const use = {
     id: "u-gone",

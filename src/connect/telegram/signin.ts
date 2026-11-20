@@ -152,6 +152,7 @@ export function createTelegramSignIn(
         await connectTelegram({
           signIn: () => Promise.resolve({ session, self }),
           ...(verdict.agent ? { principal: verdict.agent } : {}),
+          steering: t.extra.steering === true,
           creds: ctx.creds,
           store: ctx.log,
           publish: ctx.log.publish,

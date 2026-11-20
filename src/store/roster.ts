@@ -15,7 +15,7 @@
 
 import type { DatabaseSync } from "node:sqlite";
 import type { AgentRow } from "./agents.ts";
-import type { ConnectionRow } from "./connections.ts";
+import { type ConnectionRow, forSteering } from "./connections.ts";
 
 /** A phone as the wire spells it: digits only. A declared handle may carry `+`, spaces or
  *  dashes; a WhatsApp address never does. */
@@ -34,10 +34,12 @@ export function sameHandle(a: string | undefined, b: string | undefined): boolea
 
 /** The connections an agent speaks through (§4, §6): the ones it owns, where it speaks as
  *  their owner, and every shared account that holds a credential, where it speaks as the org.
- *  An ownerless row without a credential is a registration stub and nobody's voice. */
+ *  An ownerless row without a credential is a registration stub and nobody's voice, and an
+ *  account kept to steering is its owner's mind surfaces alone. */
 export function speaksThrough(agent: AgentRow, connections: ConnectionRow[]): ConnectionRow[] {
   return connections.filter((c) =>
-    c.agentId === agent.agentId || (c.agentId === undefined && !!c.credentialKey)
+    !forSteering(c) &&
+    (c.agentId === agent.agentId || (c.agentId === undefined && !!c.credentialKey))
   );
 }
 

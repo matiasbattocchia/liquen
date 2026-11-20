@@ -101,6 +101,7 @@ export function createWhatsappSignIn(
       if ("refused" in verdict) return;
       await landWhatsApp(state.address, {
         ...(verdict.agent ? { principal: verdict.agent } : {}),
+        steering: t.extra.steering === true,
         organizationId: tenant,
         store: ctx.log,
         publish: ctx.log.publish,

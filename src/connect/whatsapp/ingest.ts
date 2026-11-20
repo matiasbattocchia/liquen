@@ -12,8 +12,8 @@
  *                                            bridge then references that uri in a FilePart
  *                                            (media crosses BEFORE its message)
  *   POST …/whatsapp-web-management/sessions/events — connected | disconnected | logged_out
- *                                            → the connections map (the frontier event,
- *                                            §4; the state the anchor reports, §5)
+ *                                            → the state of the row the pairing made
+ *                                            (the state the anchor reports, §5)
  *
  * The entry adds a fourth route the bridge dials at the same address — `GET /media/<signed>`,
  * the outbound bytes the dispatch process minted a path for (`store/media.ts`). Inbound
@@ -74,6 +74,7 @@ import { roomPart } from "../../room.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { entry } from "../../entry.ts";
 import { createMarks, marked } from "../marks.ts";
+import { steered } from "../steering.ts";
 import { signedOutLine } from "../health.ts";
 
 /* ── the bridge's wire shapes (openbsp.go is the source of truth — the bridge's own
@@ -265,8 +266,8 @@ export interface WhatsAppWebhookDeps {
   /** → the EventLog (the connection's only write). A batch publishes as ONE transaction. */
   publish: Appender["publish"];
   /** The classifier + map-writer seam (§4): grant rows and the registry's declared handles
-   *  resolve senders; session events write the connection row (the frontier gate publish
-   *  checks). Absent ⇒ pure mapping. */
+   *  resolve senders; session events write the state of the connection row the pairing
+   *  made. Absent ⇒ pure mapping. */
   store?: Pick<Connections, "connection" | "upsertConnections"> & Partial<Pick<Registry, "agents">>;
   /** The media seam (§5, §9): where the /media route keeps the bytes the bridge already
    *  fetched and decrypted, and the `uri` it answers goes back to the bridge for the
@@ -949,15 +950,18 @@ function session(
     if (!e.address || !e.event) return text(400, "missing address or event");
     const state: ConnectionState | undefined = STATE_OF[e.event];
     if (!state) return text(400, `unknown session event ${e.event}`);
-    // `connected` is the moment the paired number becomes KNOWN — the row it writes is
-    // the frontier gate the very next publish checks (§4). The other events only record
-    // state, stamped `<state>_at` when the row moves to it — what the anchor reads to say
-    // a surface is down, and since when (§5): the gate stays open (history stays
-    // readable), and a reconnect or re-pairing revives by upsert. An owned number that
-    // moves to `signed_out` tells its owner, as `setState` does.
+    // The row is main's to make, when the pairing lands (`landWhatsApp`), with whose the
+    // number is and whether it is kept to steering: an event for a number with no row is
+    // taken and left, and the batches behind it are refused at the gate until the row is
+    // there, which the bridge posts again. On a row, every event records state, stamped
+    // `<state>_at` when the row moves to it — what the anchor reads to say a surface is
+    // down, and since when (§5): the gate stays open (history stays readable), and a
+    // reconnect or re-pairing revives by upsert. An owned number that moves to
+    // `signed_out` tells its owner, as `setState` does.
     if (!deps.store) return json(200, {});
     const prior = await deps.store.connection(SERVICE, e.address);
-    const moved = prior?.extra?.state !== state;
+    if (!prior) return json(200, {});
+    const moved = prior.extra?.state !== state;
     const at = now();
     await deps.store.upsertConnections([{
       service: SERVICE,
@@ -970,7 +974,7 @@ function session(
         ...(e.extra ?? {}),
       },
     }]);
-    const owner = e.agent_id ?? prior?.agentId;
+    const owner = e.agent_id ?? prior.agentId;
     if (moved && state === "signed_out" && owner) {
       await deps.publish(
         signedOutLine({ service: SERVICE, address: e.address, agentId: owner }, at),
@@ -1024,8 +1028,9 @@ export async function runIngest(): Promise<() => Promise<void>> {
 
   const handler = createWhatsAppWebhook({
     // a group's facts meet the connection's knobs before the batch lands: the crowd rule,
-    // and a line for the account, the account's address being the connection's own
-    publish: marked(log.publish, createMarks({ read: (q) => log.read(q), knobs })),
+    // and a line for the account, the account's address being the connection's own. A
+    // number kept to steering keeps only its mind surfaces' lines
+    publish: steered(marked(log.publish, createMarks({ read: (q) => log.read(q), knobs })), log),
     store: log, // connections live on the Log (§4) — session events write the map
     storage,
     read: (q) => log.read(q),
