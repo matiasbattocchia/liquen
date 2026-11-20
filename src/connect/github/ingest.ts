@@ -537,7 +537,7 @@ function text(status: number, message: string): Response {
 
 /* ── local entry: the thin Deno server (the edge wrapper is the same shape) ────────────
  *
- *   deno task run:github        # serves data/run/github.sock, publishing into the org log
+ *   deno task run:github        # serves data/run/ingest/github.sock, publishing into the org log
  *   gh webhook forward --repo=you/repo \
  *     --events=issue_comment,pull_request,pull_request_review_comment \
  *     --url=http://localhost:8787/github/ingest   # the edge; dev: add --secret (the app row's)

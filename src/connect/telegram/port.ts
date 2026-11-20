@@ -5,9 +5,9 @@
  * An account's session is one connection, and the connector's process holds it: a second
  * client on the same session costs the account the session. So main's ports hold no
  * session of their own. They ask the connector, over a Unix socket under the org's own
- * folder, `data/run/telegram.port.sock`. A service's name takes letters, digits and
- * dashes, so the dot keeps the path out of the edge's grammar: nothing the internet dials
- * reaches it, and the file opens for its owner alone, as main's own socket does.
+ * folder, `data/run/telegram.port.sock`. It sits beside the edge's two leg folders, never
+ * in one, so nothing the internet dials reaches it (edge.ts), and the file opens for its
+ * owner alone, as main's own socket does.
  *
  * `servePort` is the connector's side: one `POST /<leg>` per call, the request's JSON in
  * and the answer's JSON out, a refusal as its HTTP class with Telegram's words. The two

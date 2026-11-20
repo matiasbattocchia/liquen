@@ -123,15 +123,21 @@ Deno.test("startOnly: what a process reads only at its start, and nothing it rea
   assertEquals(changed(catalog({ connections: { google: { listen: ["mail"] }, slack: {} } })), [
     "google",
   ]);
-  // the edge's port is the edge's; its public address moves no process of these
+  // the edge's port is the edge's, and so are the public address and the tunnel, which say
+  // where it listens
   assertEquals(
     changed(catalog({ connections: base.connections, edge: { ...base.edge, port: 1 } })),
     [
       "edge",
     ],
   );
+  const published = { ...base.edge, publicUrl: "https://acme.example.com" };
+  assertEquals(changed(catalog({ connections: base.connections, edge: published })), ["edge"]);
   const tunnel = { ...base.edge, tunnel: ["cloudflared"] };
-  assertEquals(changed(catalog({ connections: base.connections, edge: tunnel })), ["tunnel"]);
+  assertEquals(changed(catalog({ connections: base.connections, edge: tunnel })), [
+    "edge",
+    "tunnel",
+  ]);
   // where the store is, every liquen process but the edge's
   const deployment = { ...base.deployment, database: "postgres://x" };
   assertEquals(changed(catalog({ connections: base.connections, deployment })), [

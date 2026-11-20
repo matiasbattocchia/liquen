@@ -3,6 +3,9 @@ import {
   callbackAddress,
   createEdge,
   ingestAddress,
+  keepLegs,
+  legDir,
+  listensOn,
   localBase,
   pageAddress,
   pagesSocket,
@@ -34,8 +37,8 @@ Deno.test("the address grammar: one base, the service first, the leg after", () 
     "https://ref.supabase.co/functions/v1/microsoft/ingest",
   );
   // the sockets behind the edge, under the org's own folder
-  assertEquals(socketOf("/o", "github", "ingest"), "/o/data/run/github.sock");
-  assertEquals(socketOf("/o", "google", "oauth"), "/o/data/run/google-oauth.sock");
+  assertEquals(socketOf("/o", "github", "ingest"), "/o/data/run/ingest/github.sock");
+  assertEquals(socketOf("/o", "google", "oauth"), "/o/data/run/oauth/google.sock");
 });
 
 Deno.test("routeOf: an ingest is handed the path under its root, a door the path as it came, anything else is no route", () => {
@@ -98,7 +101,7 @@ Deno.test("createEdge: forwards to the sockets with query and body, keeps a redi
     assertEquals(down.status, 502);
     assertStringIncludes(
       await down.text(),
-      "microsoft's ingest is not listening (data/run/microsoft.sock)",
+      "microsoft's ingest is not listening (data/run/ingest/microsoft.sock)",
     );
 
     // a door no sign-in holds open answers the person, not with a socket
@@ -179,15 +182,116 @@ Deno.test("createEdge: a page's path goes to main's pages socket as it came, and
   }
 });
 
+Deno.test("createEdge: only a connector the org has is forwarded to; any other name is a 404, said once, whatever socket answers under it", async () => {
+  const root = await Deno.makeTempDir();
+  const said: string[] = [];
+  // the org's own sockets beside the leg folders, a server somebody put in one, and a
+  // connector of the org's own
+  const main = await serveSocket(`${root}/data/run/main.sock`, () => new Response("main"));
+  const run = await serveSocket(`${root}/data/run/liquen.sock`, () => new Response("run"));
+  const stray = await serveIngest(root, "buscador", () => new Response("a site"));
+  await Deno.mkdir(`${root}/connectors/acme`, { recursive: true });
+  const acme = await serveIngest(root, "acme", () => new Response("acme", { status: 202 }));
+  try {
+    const edge = createEdge(root, (line) => said.push(line));
+    for (
+      const path of [
+        "/main/ingest",
+        "/main/ingest/sign-in",
+        "/liquen/ingest",
+        "/buscador/ingest",
+        "/buscador/oauth/start",
+      ]
+    ) {
+      const res = await edge(new Request(`${BASE}${path}`, { method: "POST", body: "{}" }));
+      assertEquals(res.status, 404, path);
+      assertEquals(await res.text(), "no such door");
+    }
+    assertEquals(said, [
+      "refused /main/ingest: no connector is named main",
+      "refused /liquen/ingest: no connector is named liquen",
+      "refused /buscador/ingest: no connector is named buscador",
+    ]);
+    const own = await edge(new Request(`${BASE}/acme/ingest`, { method: "POST", body: "{}" }));
+    assertEquals(own.status, 202);
+    assertEquals(await own.text(), "acme");
+  } finally {
+    for (const s of [main, run, stray, acme]) await s.shutdown();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("keepLegs: a leg's folder keeps only the sockets named for a connector, and what else is there or appears is removed and said", async () => {
+  const root = await Deno.makeTempDir();
+  const said: string[] = [];
+  const stray = await serveIngest(root, "buscador", () => new Response("a site"));
+  const kept = await serveIngest(root, "github", () => new Response("ok"));
+  const stop = await keepLegs(root, (line) => said.push(line));
+  let late: Deno.HttpServer | undefined;
+  try {
+    assertEquals(said, ["removed data/run/ingest/buscador.sock: no connector is named buscador"]);
+    assertEquals(await exists(socketOf(root, "buscador", "ingest")), false);
+
+    late = await serveLeg(root, "site", "oauth", () => new Response("a site"));
+    // a connector's name on a link to the org's own socket
+    await Deno.symlink(`${root}/data/run/main.sock`, socketOf(root, "whatsapp", "ingest"));
+    await Deno.writeTextFile(`${legDir(root, "ingest")}/notes.txt`, "x");
+    await until(() => said.length === 4);
+    assertEquals(
+      new Set(said.slice(1)),
+      new Set([
+        "removed data/run/oauth/site.sock: no connector is named site",
+        "removed data/run/ingest/whatsapp.sock: a link, not a socket",
+        "removed data/run/ingest/notes.txt: not a connector's socket",
+      ]),
+    );
+    assertEquals(await exists(socketOf(root, "site", "oauth")), false);
+    assertEquals(await exists(socketOf(root, "whatsapp", "ingest")), false);
+    assertEquals((await Deno.lstat(socketOf(root, "github", "ingest"))).isSocket, true);
+  } finally {
+    stop();
+    for (const s of [stray, kept, late]) await s?.shutdown();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("listensOn: loopback when what dials the edge is on this machine, every interface when something the org does not run publishes it", () => {
+  assertEquals(listensOn({ publicUrl: null, tunnel: null }), ["127.0.0.1", "::1"]);
+  assertEquals(
+    listensOn({ publicUrl: BASE, tunnel: ["cloudflared", "tunnel", "run", "acme"] }),
+    ["127.0.0.1", "::1"],
+  );
+  assertEquals(listensOn({ publicUrl: BASE, tunnel: null }), ["::"]);
+});
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.lstat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function until(done: () => boolean, ms = 3_000): Promise<void> {
+  const by = Date.now() + ms;
+  while (!done()) {
+    if (Date.now() > by) throw new Error("timed out");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 Deno.test("reached: an ingest names itself through the edge, and anything else is said", async () => {
   const root = await Deno.makeTempDir();
+  await Deno.mkdir(`${root}/connectors/acme`, { recursive: true });
   const ingest = await serveIngest(root, "acme", () => new Response("posted"));
-  const edge = Deno.serve({ port: 0, onListen: () => {} }, createEdge(root));
+  const edge = Deno.serve({ port: 0, onListen: () => {} }, createEdge(root, () => {}));
   const base = `http://127.0.0.1:${(edge.addr as Deno.NetAddr).port}`;
   try {
     assertEquals(await reached(ingestAddress(base, "acme"), "acme"), null);
     assertStringIncludes(await reached(ingestAddress(base, "acme"), "other") ?? "", '"acme"');
-    assertStringIncludes(await reached(ingestAddress(base, "nobody"), "nobody") ?? "", "502");
+    assertStringIncludes(await reached(ingestAddress(base, "github"), "github") ?? "", "502");
+    assertStringIncludes(await reached(ingestAddress(base, "nobody"), "nobody") ?? "", "404");
   } finally {
     await edge.shutdown();
     await ingest.shutdown();

@@ -96,14 +96,18 @@ their app, bot, and grants there) or, for a local bridge, in env (`WA_BRIDGE_TOK
 
 A connector is reached through the org's edge (DESIGN §9, `src/edge.ts`), and it listens
 where it lives: `serveIngest(root, name, handler)` serves the ingest on
-`data/run/<name>.sock`, where the edge forwards `<base>/<name>/ingest` with the prefix
-stripped, and `serveDoor(root, name, handler)` serves a sign-in on
-`data/run/<name>-oauth.sock`, handed `<base>/<name>/oauth/…` as it came — so a connector,
+`data/run/ingest/<name>.sock`, where the edge forwards `<base>/<name>/ingest` with the
+prefix stripped, and `serveDoor(root, name, handler)` serves a sign-in on
+`data/run/oauth/<name>.sock`, handed `<base>/<name>/oauth/…` as it came — so a connector,
 shipped or the org's own, is on the internet the moment the org is, with nothing to
 declare, no port of its own and nothing to add to the edge. The edge routes by the
-grammar, not by a table, so the connection's name is the route: lowercase letters, digits
-and dashes, starting with a letter, which boot checks. A listener on a TCP port of its own
-is not behind the edge. An org's own sign-in door is `serveDoor` over a handler that
+grammar, so the connection's name is the route: lowercase letters, digits and dashes,
+starting with a letter, which boot checks. And it routes only for a connector the org
+has, shipped or a folder under `connectors/`: any other name is a 404 the edge's log
+names, and a socket under such a name in a leg's folder, or a link there in place of a
+socket, is removed as it appears and said. Those two folders are the edge's alone to
+forward into: nothing else is served there, and a socket the org keeps for itself lives
+beside them in `data/run`. A listener on a TCP port of its own is not behind the edge. An org's own sign-in door is `serveDoor` over a handler that
 answers `/start` and `/callback` by suffix, wrapped in `oneShot` so the door returns when
 the first callback lands; `doorAddress` reads the start link off the registered callback
 and says whether it is this machine's browser (`openBrowser`) or a link to send.
@@ -1035,8 +1039,8 @@ stand as they are.
 **One process holds each session.** A second client on the same session costs the account
 the session, so `run.ts` opens every account's once and shares it: the ingest listens on
 it, the dispatcher posts through it, and main's ports ask it across
-`data/run/telegram.port.sock` (`port.ts`). A service's name takes no dot, so the edge
-never forwards there, and the file opens for its owner alone.
+`data/run/telegram.port.sock` (`port.ts`). It sits beside the edge's leg folders, so the
+edge never forwards there, and the file opens for its owner alone.
 
 **The SDK stops at `client.ts`.** It fills the plain shapes of `wire.ts` (a peer, a
 message, an entity, a service message) and one interface, `TgWire`. Every other file

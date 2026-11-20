@@ -73,7 +73,7 @@ import { conflictLines, readConfig } from "./org.ts";
 import { entry, REFUSAL } from "./entry.ts";
 import { claim, holder, MAIN, SUPERVISOR } from "./stop.ts";
 import { applied, moved, type Moves, type Owed, owedLines, runSocket } from "./reload.ts";
-import { RUNNING, SHIPPED } from "./connect/connect.ts";
+import { RUNNING, SHIPPED } from "./connect/shipped.ts";
 import { helpFlag } from "./connect/help.ts";
 import { serveSocket } from "./connect/serve.ts";
 import { openRunLog, RUN_LOG, type RunLog, sayConsole } from "./runlog.ts";
@@ -256,7 +256,8 @@ export async function specOf(proc: Proc): Promise<ConnectorSpec | undefined> {
 }
 
 /** What a process reads only at its start, by path, each value as JSON: every liquen
- *  process reads where the store is; the edge its port; the tunnel is its argv; and a
+ *  process reads where the store is; the edge its port, and the publicUrl and tunnel that
+ *  say where it listens (`listensOn`, edge.ts); the tunnel is its argv; and a
  *  connection the keys its spec names (`ConnectorSpec.start`). Everything else every
  *  process reads on each use. */
 export function startOnly(
@@ -266,7 +267,7 @@ export function startOnly(
 ): Record<string, string> {
   const at = (paths: string[]) =>
     Object.fromEntries(paths.map((p) => [p, JSON.stringify(valueAt(cfg, p, spec) ?? null)]));
-  if (name === "edge") return at(["edge.port"]);
+  if (name === "edge") return at(["edge.port", "edge.publicUrl", "edge.tunnel"]);
   if (name === "tunnel") return at(["edge.tunnel"]);
   return at(["deployment", ...(spec?.start ?? [])]);
 }

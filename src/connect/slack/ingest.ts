@@ -1743,7 +1743,7 @@ export function slackSocket(
 /* ── local entry: Socket Mode carriers (from the vault) or HTTP ─────────────
  *
  *   deno task run:slack       # xapp in the vault → socket mode; else HTTP on
- *                             # data/run/slack.sock behind the edge
+ *                             # data/run/ingest/slack.sock behind the edge
  *
  * Env: none — everything comes from the vault. Socket carriers are the app-level
  * tokens `liquen connect slack app` stored, one socket per app (§4). No carrier ⇒ HTTP
