@@ -51,7 +51,7 @@ import {
 } from "../events.ts";
 import { newId } from "../id.ts";
 import { keptIn } from "../storage.ts";
-import { exempt, offSurface, STEERING } from "../connections.ts";
+import { exempt, offSelf, SELF_ONLY } from "../connections.ts";
 import type { Draft, Envelope, Event, EventId } from "../../types.ts";
 import { compile, connect, count, type Db, rows, scrub, type Sql } from "./sql.ts";
 import { prepare } from "./schema.ts";
@@ -316,27 +316,28 @@ export async function openPgLog(
     opts: PublishOptions = {},
   ): Promise<Event | Event[] | null> => {
     const drafts = (Array.isArray(one) ? one : [one]).map(scrub);
-    // the frontier gate (§4): a live row, and on an account kept to steering a mind surface
+    // the frontier gate (§4): a live row, and on a self-only account its chat with itself
     for (const d of drafts) {
       const { service, connection_address: address, conversation } = d.envelope;
       if (service === "local") continue;
-      const [row] = await rows<{ steering: boolean }>(
+      const [row] = await rows<{ self_only: boolean }>(
         sql,
-        `SELECT flag(extra, '${STEERING}') AS steering FROM connections
+        `SELECT flag(extra, '${SELF_ONLY}') AS self_only FROM connections
           WHERE service = $1::text AND address = $2::text AND deleted_at IS NULL`,
         [service, address],
       );
       if (row === undefined) throw new Error(`connection not registered: ${service}:${address}`);
       if (
-        row.steering && !exempt(d) &&
+        row.self_only && !exempt(d) &&
         (await rows(
             sql,
             `SELECT 1 FROM aliases
-              WHERE service = $1::text AND connection = $2::text AND conversation = $3::text`,
+              WHERE service = $1::text AND connection = $2::text AND conversation = $3::text
+                AND principal = agent_id`,
             [service, address, conversation.address],
           )).length === 0
       ) {
-        throw offSurface(service, address, conversation.address);
+        throw offSelf(service, address, conversation.address);
       }
     }
     const cuts: string[] = [];

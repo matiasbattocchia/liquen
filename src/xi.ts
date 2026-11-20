@@ -82,7 +82,7 @@ import type { Appender, Reader } from "./store/log.ts";
 import type { AgentRow, Registry } from "./store/agents.ts";
 import type { RememberedRule, Standing } from "./store/rules.ts";
 import type { ConnectionRow, Connections } from "./store/connections.ts";
-import { forSteering, SILENT_AFTER_MS } from "./store/connections.ts";
+import { selfOnly, SILENT_AFTER_MS } from "./store/connections.ts";
 import type { DocContext, DocEntry, DocHeader, Docs, Where } from "./store/docs.ts";
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { digits, sameHandle, speaksThrough } from "./store/roster.ts";
@@ -1777,8 +1777,8 @@ const NO_FILES: Files = {
 
 /** The accounts this agent holds (§4, §6): the connections it OWNS and the org's
  *  credentialed ones. A stub row (no owner, no credential) only gates ingest. What is down
- *  among them is the anchor's to say, an account kept to steering included: its owner's
- *  lines there stop reaching the mind. */
+ *  among them is the anchor's to say, a self-only account included: its owner's lines there
+ *  stop reaching the mind. */
 async function heldOf(config: AgentConfig, ports: XiPorts): Promise<ConnectionRow[]> {
   return (await ports.log.connections()).filter((c) =>
     c.agentId === config.agentId || (!c.agentId && !!c.credentialKey)
@@ -1787,9 +1787,9 @@ async function heldOf(config: AgentConfig, ports: XiPorts): Promise<ConnectionRo
 
 /** The surfaces this agent speaks through (§4, §6), by `speaksThrough`'s rule, among what
  *  it holds: it speaks as its principal on the accounts it owns, and as the org on the
- *  org's, save an account kept to steering, which is its owner's mind surfaces alone. */
+ *  org's, save a self-only account, which is its owner's chat with itself alone. */
 function surfacesIn(held: ConnectionRow[]): ConnectionRow[] {
-  return held.filter((c) => !forSteering(c));
+  return held.filter((c) => !selfOnly(c));
 }
 
 /** A surface as the env states it: the service, the address it was shown — or the account's

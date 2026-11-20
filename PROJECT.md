@@ -7505,34 +7505,53 @@ name a kept file arrived with, read off the log, since a `storage://` key is a c
 hash. The card reads the reference and the log, never the bytes, as nothing is kept until
 the send runs. The files block stands above the text that captions the first of them.
 
-### An account kept to steering (2026-11-20) — LANDED
+### An account kept to its chat with itself, and a sign-in's history from where the listening stopped (2026-11-20) — LANDED
 
-matias asked to connect his Telegram for steering alone, with no outside traffic, and
-the same wherever it applies. `liquen connect telegram|whatsapp --steering` (and the
-`connect` tool's `steering`) marks the owned account's row `extra.steering`; each sign-in
-says it anew. Such an account is its owner's mind surfaces and nothing more, both ways:
+matias asked to connect his Telegram only to steer from, with no outside traffic and no
+history, and the same wherever it applies. `liquen connect telegram|whatsapp --self` (and
+the `connect` tool's `self`) marks the owned account's row `extra.self_only`; each sign-in
+says it anew. Such an account is its owner's chat with itself and nothing more, both ways:
 
-- The log's frontier gate takes a new row on it only in one of its surfaces (the `aliases`
-  view) or in `connect`, on both engines; a patch passes, since it stamps a row already in.
-  It refuses an agent's send there as it refuses an ingest's line.
-- Its ingest publishes through `steered`, which leaves out what the gate would refuse, so
-  a publish tried again never meets a refusal. Telegram's ingest skips the account's other
-  chats before mapping: no file fetched, no about text read, no history imported for them.
-- `speaksThrough` leaves it out, so the agent's send, book and rooms never reach it. It
-  still makes its agent a person's, steered by itself.
+- The log's frontier gate takes a new row on it only in its self chat (the `aliases`
+  view's self row) or in `connect`, on both engines; a patch passes, since it stamps a row
+  already in. It refuses an agent's send elsewhere as it refuses an ingest's line.
+- Its ingest publishes through `keptToSelf`, which leaves out what the gate would refuse,
+  so a publish tried again never meets a refusal. Telegram's ingest maps nothing but Saved
+  Messages: no other file fetched, no about text read.
+- It imports no history: Telegram's import is skipped, a WhatsApp pairing asks the phone
+  for none, and the ingest drops a history batch on the row whatever the bridge sends.
+- `speaksThrough` leaves it out, so the agent's send, book and rooms never reach it; the
+  anchor still says when it is down. It still makes its agent a person's, steered by
+  itself.
 
-A WhatsApp row is now made by main alone, when the pairing lands: the bridge's session
-events move only the state of a row that stands, and the batches it posts first are
-refused at the gate and posted again (a 500 is retried for five minutes). So the mark is
-on the row before the first line of the history. The bridge pushes a file before its
-message and names no chat with it, so a stranger's file on a steering number is kept
-until the unreferenced sweep lets it go, a day later; no row ever names it.
+A WhatsApp row is made by main alone, when the pairing lands: the bridge's session events
+move only the state of a row that stands, and the batches it posts first are refused at
+the gate and posted again (a 500 is retried for five minutes). So the mark is on the row
+before the first line. The bridge pushes a file before its message and names no chat with
+it, so a stranger's file on a self-only number is kept until the unreferenced sweep lets
+it go, a day later; no row ever names it.
 
-Applies to WhatsApp and Telegram (`STEERED`): an owned account there has a chat with
-itself. A Slack member already steers through their DM with the shared bot, with no grant
-of their own. Microsoft is left: a Teams self-chat steers, but the account is also its
-mail, calendar and the Graph token the agent's shell is handed, and keeping it to
-steering means holding all three back.
+A sign-in imports what the log is missing and no more (`connect/history.ts`): from the
+newest line the wire brought before it, never further back than `historyDays`. What lands
+whether the wire is up or not says nothing of where it stopped: imported history, the
+mirror's copies, an agent's sends, the door's note, and the account's own mind surfaces,
+which a self-only account goes on hearing while the rest of it is not heard. Telegram's
+import reads every chat from there. WhatsApp gains `connections.whatsapp.historyDays`
+(60), and a pairing names the range to the bridge (`history_since`, or `no_history`) for
+the number it will most likely land as: the one it names, the phone on its agent's row,
+or the one number its agent owns; a QR pairing that names none asks the whole window. The
+bridge (open-bsp-whatsmeow, `historyask.go`) registers the pairing with device props
+asking the phone for the whole days back to that moment, through the pairing client's own
+payload hook so other pairings keep the default, and posts no message older; with
+`no_history` it posts nothing of the sync, contact names included. The ask lives with the
+session for the bridge process's life: a session a restart brings back posts whatever
+history still comes, limited by what its phone was asked.
+
+Applies to WhatsApp and Telegram (`SELF_SERVICES`): an owned account there has a chat
+with itself. A Slack member already steers through their DM with the shared bot, with no
+grant of their own. Microsoft is left: a Teams self-chat steers, but the account is also
+its mail, calendar and the Graph token the agent's shell is handed, and keeping it to its
+self chat means holding all three back.
 
 ### What is open (2026-10-20)
 

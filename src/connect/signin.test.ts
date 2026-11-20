@@ -87,6 +87,8 @@ async function harness(
           ["ana", "bo"].map((agentId) => ({ agentId, mind: `mind@${agentId}` })),
         ),
       connections: () => Promise.resolve(opts.connections ?? []),
+      aliases: () => Promise.resolve([]),
+      read: () => Promise.resolve([]),
       upsertConnections: () => Promise.resolve(),
       upsertMemberships: () => Promise.resolve(),
       unended: () => Promise.resolve(opts.unended ?? []),
@@ -430,16 +432,16 @@ Deno.test("open: a grant for a name off the roster is refused in a sentence", as
   }
 });
 
-Deno.test("open: steering is asked of an owned account on a service that keeps one, or refused before any ticket", async () => {
+Deno.test("open: self is asked of an owned account on a service with a chat with itself, or refused before any ticket", async () => {
   const h = await harness({ svc: linkFlow(), whatsapp: linkFlow() });
   try {
     await assertRejects(
-      () => h.signIns.open({ service: "svc", agent: "ana", steering: true }),
+      () => h.signIns.open({ service: "svc", agent: "ana", self: true }),
       Error,
-      "svc keeps no account to steering: telegram and whatsapp do",
+      "svc keeps no account to its chat with itself: telegram and whatsapp do",
     );
     await assertRejects(
-      () => h.signIns.open({ service: "whatsapp", steering: true }),
+      () => h.signIns.open({ service: "whatsapp", self: true }),
       Error,
       "a shared account has no owner",
     );

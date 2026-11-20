@@ -1212,7 +1212,7 @@ Deno.test("sessions/events: connected moves the row the pairing made, and makes 
     agent_id: "matias",
   };
   // the pairing has not landed yet: the row is main's to make, with whether the number is
-  // kept to steering, so the bridge's word is taken and left
+  // kept to its chat with itself, so the bridge's word is taken and left
   const none = fakeStore();
   const early = await harness({ store: none.store }).handler(
     post("/whatsapp-web-management/sessions/events", connected),
@@ -1224,7 +1224,7 @@ Deno.test("sessions/events: connected moves the row the pairing made, and makes 
     service: "whatsapp",
     address: "5491100000000",
     agentId: "matias",
-    extra: { state: "unavailable", steering: true },
+    extra: { state: "unavailable", self_only: true },
   });
   const res = await harness({ store }).handler(
     post("/whatsapp-web-management/sessions/events", connected),
@@ -1235,7 +1235,24 @@ Deno.test("sessions/events: connected moves the row the pairing made, and makes 
   assertEquals(upserts[0].address, "5491100000000");
   assertEquals(upserts[0].agentId, "matias");
   assertEquals(upserts[0].extra?.state, "connected");
-  assertEquals("steering" in (upserts[0].extra ?? {}), false); // the pairing's word stands
+  assertEquals("self_only" in (upserts[0].extra ?? {}), false); // the pairing's word stands
+});
+
+Deno.test("a history batch for a number kept to its chat with itself lands nothing; a live one is the ingest's as ever", async () => {
+  const { store } = fakeStore({
+    service: "whatsapp",
+    address: "5491100000000",
+    agentId: "matias",
+    extra: { self_only: true },
+  });
+  const { handler, published } = harness({ store });
+  const old = await handler(
+    post("/whatsapp-web-webhook", batch({ history: true, messages: [textMessage()] })),
+  );
+  assertEquals(old.status, 200);
+  assertEquals(published, []);
+  await handler(post("/whatsapp-web-webhook", batch({ messages: [textMessage()] })));
+  assertEquals(published.length, 1);
 });
 
 Deno.test("sessions/events: a drop, a logout and a ban record the map's words, stamped — what the anchor reads", async () => {

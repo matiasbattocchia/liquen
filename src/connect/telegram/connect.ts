@@ -33,8 +33,8 @@ import { entry } from "../../entry.ts";
 import { declared } from "../declare.ts";
 import { terminalUser } from "../door.ts";
 import { linked } from "../health.ts";
-import { noSteeringShared } from "../steering.ts";
-import { STEERING } from "../../store/connections.ts";
+import { noSelfShared } from "../self.ts";
+import { SELF_ONLY } from "../../store/connections.ts";
 import { APP_KEY, GRANT_SENDER, sessionKey, SPEC } from "./config.ts";
 import { SERVICE, type TgPeer } from "./wire.ts";
 
@@ -59,8 +59,9 @@ export interface TelegramConnectDeps {
   signIn: () => Promise<{ session: string; self: TgPeer }>;
   /** The member whose account this is. Absent: the org's own account. */
   principal?: string;
-  /** Keep the account to steering: its owner's mind surfaces and nothing else (§4). */
-  steering?: boolean;
+  /** Keep the account to its chat with itself, its owner's to steer from, and nothing
+   *  else (§4). */
+  self?: boolean;
   creds: Pick<Credentials, "put">;
   store: Pick<Connections, "upsertConnections" | "upsertMemberships">;
   publish: Appender["publish"];
@@ -71,7 +72,7 @@ export interface TelegramConnectDeps {
  *  does. */
 export async function connectTelegram(deps: TelegramConnectDeps): Promise<{ account: TgPeer }> {
   const now = deps.now ?? (() => new Date().toISOString());
-  if (deps.steering && !deps.principal) throw noSteeringShared();
+  if (deps.self && !deps.principal) throw noSelfShared();
   const { session, self } = await deps.signIn();
   const address = self.id;
   const key = sessionKey(address);
@@ -93,7 +94,7 @@ export async function connectTelegram(deps: TelegramConnectDeps): Promise<{ acco
       // an owned account's chat with itself is a face of its owner's mind (§4)
       ...(deps.principal ? { mirrors: { self: address } } : {}),
       // each sign-in says it anew: an account signed in without it is the agent's whole
-      [STEERING]: deps.steering ? true : null,
+      [SELF_ONLY]: deps.self ? true : null,
     },
   }]);
   if (deps.principal) {
@@ -102,7 +103,7 @@ export async function connectTelegram(deps: TelegramConnectDeps): Promise<{ acco
     ]);
   }
   const who = self.username ? `@${self.username}` : self.name ?? address;
-  const whose = `${deps.principal ?? "the org"}${deps.steering ? ", for steering" : ""}`;
+  const whose = `${deps.principal ?? "the org"}${deps.self ? ", its chat with itself alone" : ""}`;
   const note: Draft<MessageEvent> = {
     ts: now(),
     type: "message",
@@ -123,7 +124,7 @@ export async function connectTelegram(deps: TelegramConnectDeps): Promise<{ acco
 }
 
 const USAGE = `usage: liquen connect telegram app
-       liquen connect telegram [agent] [--steering] [--phone <number>]
+       liquen connect telegram [agent] [--self] [--phone <number>]
        liquen connect telegram --shared [--phone <number>]
 
   Sign a Telegram account in over MTProto; knobs: connections.telegram.
@@ -131,8 +132,8 @@ const USAGE = `usage: liquen connect telegram app
   app               store the application's api id and api hash (my.telegram.org →
                     API development tools); once per org, before any account
   [agent]           the roster member whose account this is (default: your OS username)
-  --steering        keep the account to steering: its Saved Messages and its principals'
-                    DMs reach the agent, and nothing else crosses either way; a sign-in
+  --self            keep the account to its Saved Messages, where you steer the agent:
+                    nothing else crosses either way, and no history is imported; a sign-in
                     without it gives the agent the whole account
   --shared          a shared account: owned by nobody, read by every agent
   --phone <number>  the code flow for that number (international, with or without +);
@@ -149,10 +150,10 @@ if (import.meta.main) {
     const flags = new Map<string, string>();
     const positional: string[] = [];
     let shared = false;
-    let steering = false;
+    let self = false;
     for (let i = 0; i < org.args.length; i++) {
       if (org.args[i] === "--shared") shared = true;
-      else if (org.args[i] === "--steering") steering = true;
+      else if (org.args[i] === "--self") self = true;
       else if (org.args[i].startsWith("--")) flags.set(org.args[i].slice(2), org.args[++i] ?? "");
       else positional.push(org.args[i]);
     }
@@ -182,7 +183,7 @@ if (import.meta.main) {
       if (shared && positional.length > 0) {
         throw new Error("--shared signs in an account nobody owns: no agent to name");
       }
-      if (shared && steering) throw noSteeringShared();
+      if (shared && self) throw noSelfShared();
       const principal = shared ? undefined : positional[0] ?? terminalUser();
       if (principal) {
         const member = (await readConfig(root)).agents[principal];
@@ -205,14 +206,14 @@ if (import.meta.main) {
       const qrcode = (await import("qrcode-terminal")).default;
       console.error(
         `Connecting Telegram as ${principal ? `agent "${principal}"` : "the org"}` +
-          `${steering ? ", for steering" : ""}: ` +
+          `${self ? ", its chat with itself alone" : ""}: ` +
           `${phone ? `a code sent to ${phone}` : "QR"}.\n`,
       );
       const log = await store.log();
       try {
         const { account } = await connectTelegram({
           principal,
-          steering,
+          self,
           creds,
           store: log,
           publish: log.publish,

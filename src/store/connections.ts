@@ -68,21 +68,21 @@ export function mirrorsOf(row: ConnectionRow): Mirrors {
   return typeof m === "object" && m !== null ? m as Mirrors : {};
 }
 
-/** The key of `extra` that keeps an account to steering (§4): true, and the account is a
- *  face of its owner's mind and nothing more. A line lands on it only in one of its mind
- *  surfaces (the `aliases` view) or in the conversation its door writes the grant note in,
+/** The key of `extra` that keeps an account to its chat with itself (§4): true, and the
+ *  account is its owner's self chat and nothing more. A line lands on it only there (the
+ *  `aliases` view's self row) or in the conversation its door writes the grant note in,
  *  whichever side wrote it: its ingest, the mirror, an agent. */
-export const STEERING = "steering";
+export const SELF_ONLY = "self_only";
 
 /** The conversation a door writes the grant note in. */
 export const GRANT_NOTES = "connect";
 
-/** Whether a connection's row keeps the account to steering. */
-export function forSteering(row: Pick<ConnectionRow, "extra"> | null | undefined): boolean {
-  return row?.extra?.[STEERING] === true;
+/** Whether a connection's row keeps the account to its chat with itself. */
+export function selfOnly(row: Pick<ConnectionRow, "extra"> | null | undefined): boolean {
+  return row?.extra?.[SELF_ONLY] === true;
 }
 
-/** Whether a draft lands on a steering account wherever it is addressed: the grant note,
+/** Whether a draft lands on a self-only account wherever it is addressed: the grant note,
  *  or a patch, which names a row by its id, carries no parts and stamps only a row already
  *  in. */
 export function exempt(
@@ -92,11 +92,11 @@ export function exempt(
     (d.parts === undefined && !!d.envelope.external_id);
 }
 
-/** The refusal of a line on a steering account outside its surfaces. */
-export function offSurface(service: string, address: string, conversation: string): Error {
+/** The refusal of a line on a self-only account outside its chat with itself. */
+export function offSelf(service: string, address: string, conversation: string): Error {
   return new Error(
-    `${service}:${address} is connected for steering: ${conversation || "that conversation"} ` +
-      "is not one of its mind surfaces",
+    `${service}:${address} is connected for its chat with itself alone: ` +
+      `${conversation || "that conversation"} is not that chat`,
   );
 }
 

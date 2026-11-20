@@ -20,7 +20,7 @@
  */
 
 import type { CredentialRow, Credentials, TicketRow } from "../store/credentials.ts";
-import type { Appender } from "../store/log.ts";
+import type { Appender, Reader } from "../store/log.ts";
 import type { Connections } from "../store/connections.ts";
 import type { Gates } from "../store/gates.ts";
 import type { Registry } from "../store/agents.ts";
@@ -31,7 +31,7 @@ import { disabled } from "../config.ts";
 import { socketOf } from "../edge.ts";
 import { MIND } from "../session.ts";
 import { serveSocket } from "./serve.ts";
-import { steeringRefused } from "./steering.ts";
+import { selfRefused } from "./self.ts";
 import { type TokenArgs, tokenKey } from "./token/grant.ts";
 
 /** How long a link lives. */
@@ -56,9 +56,10 @@ export interface SignInAsk {
   scopes?: string[];
   /** WhatsApp: the number a pairing code is minted for; absent, a QR. */
   pair?: string;
-  /** WhatsApp and Telegram: keep the account to its owner's mind surfaces (§4). Each
-   *  sign-in says it anew: one without it gives the agent the whole account. */
-  steering?: boolean;
+  /** WhatsApp and Telegram: keep the account to its chat with itself, its owner's to steer
+   *  from (§4). Each sign-in says it anew: one without it gives the agent the whole
+   *  account. */
+  self?: boolean;
   /** A pasted token: what it is for, and where it may be spent. */
   token?: TokenArgs;
   /** The tool call to tell the outcome to. */
@@ -114,11 +115,13 @@ export interface Gate {
   say(ticket: string, word: Word): Promise<void>;
 }
 
-/** The writes a sign-in makes and the rows it reads. */
+/** The writes a sign-in makes and the rows it reads: the map, the roster, and the log a
+ *  pairing reads where the listening stopped in. */
 export type SignInLog =
   & Pick<Appender, "publish">
+  & Pick<Reader, "read">
   & Pick<Registry, "agents">
-  & Pick<Connections, "connections" | "upsertConnections" | "upsertMemberships">
+  & Pick<Connections, "connections" | "aliases" | "upsertConnections" | "upsertMemberships">
   & Partial<Pick<Gates, "unended">>;
 
 /** What every flow is handed. */
@@ -400,8 +403,8 @@ export function createSignIns(
       if (ask.agent && !(await log.agents()).some((a) => a.agentId === ask.agent)) {
         throw new Error(`no agent "${ask.agent}": a grant binds to an agent on the roster`);
       }
-      const unsteered = ask.steering ? steeringRefused(ask) : undefined;
-      if (unsteered) throw unsteered;
+      const unkept = ask.self ? selfRefused(ask) : undefined;
+      if (unkept) throw unkept;
       await sweep();
       const prepared = await flow.prepare(ask, ctx);
       const { caller, ...rest } = ask;

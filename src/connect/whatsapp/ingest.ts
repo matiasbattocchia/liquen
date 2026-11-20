@@ -50,7 +50,7 @@
 
 import { SENDER_SAVED } from "../../sender.ts";
 import type { Appender, Reader } from "../../store/log.ts";
-import type { Connections, ConnectionState } from "../../store/connections.ts";
+import { type Connections, type ConnectionState, selfOnly } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
 import { imageSizeOf, saveMedia } from "../../store/media.ts";
@@ -74,7 +74,7 @@ import { roomPart } from "../../room.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { entry } from "../../entry.ts";
 import { createMarks, marked } from "../marks.ts";
-import { steered } from "../steering.ts";
+import { keptToSelf } from "../self.ts";
 import { signedOutLine } from "../health.ts";
 
 /* ── the bridge's wire shapes (openbsp.go is the source of truth — the bridge's own
@@ -318,6 +318,11 @@ export function createWhatsAppWebhook(deps: WhatsAppWebhookDeps): WebhookHandler
     }
     const connection = batch.organization_address;
     if (!connection) return text(400, "missing organization_address");
+    // a number kept to its chat with itself imports no history, whatever the bridge sends
+    // (its pairing asked for none, and a bridge started since knows nothing of the ask)
+    if (batch.history && selfOnly(await deps.store?.connection(SERVICE, connection))) {
+      return json(200, {});
+    }
 
     // caches BEFORE messages: a first-sight group subject or pushname arrives in the same
     // batch as the message it should stamp
@@ -951,7 +956,7 @@ function session(
     const state: ConnectionState | undefined = STATE_OF[e.event];
     if (!state) return text(400, `unknown session event ${e.event}`);
     // The row is main's to make, when the pairing lands (`landWhatsApp`), with whose the
-    // number is and whether it is kept to steering: an event for a number with no row is
+    // number is and whether it is kept to its chat with itself: an event for a number with no row is
     // taken and left, and the batches behind it are refused at the gate until the row is
     // there, which the bridge posts again. On a row, every event records state, stamped
     // `<state>_at` when the row moves to it — what the anchor reads to say a surface is
@@ -1029,8 +1034,11 @@ export async function runIngest(): Promise<() => Promise<void>> {
   const handler = createWhatsAppWebhook({
     // a group's facts meet the connection's knobs before the batch lands: the crowd rule,
     // and a line for the account, the account's address being the connection's own. A
-    // number kept to steering keeps only its mind surfaces' lines
-    publish: steered(marked(log.publish, createMarks({ read: (q) => log.read(q), knobs })), log),
+    // number kept to its chat with itself keeps that chat's lines alone
+    publish: keptToSelf(
+      marked(log.publish, createMarks({ read: (q) => log.read(q), knobs })),
+      log,
+    ),
     store: log, // connections live on the Log (§4) — session events write the map
     storage,
     read: (q) => log.read(q),

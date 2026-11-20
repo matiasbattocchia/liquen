@@ -44,14 +44,13 @@
  * owned account in a direct chat has that chat recorded on the account's row as
  * `mirrors.dms`: a principal's DM there is their agent's mind surface (§4).
  *
- * An account kept to steering is heard only in its chat with itself and its direct chats
- * with roster members: a line anywhere else is not mapped, its file not fetched, its
- * chat's history not imported (`heard`).
+ * A self-only account is heard in its Saved Messages alone: a line anywhere else is not
+ * mapped and its file not fetched (`heard`), and no history is imported.
  */
 
 import { SENDER_ABOUT, SENDER_SAVED } from "../../sender.ts";
 import type { Appender, Reader } from "../../store/log.ts";
-import { type Connections, forSteering, mirrorsOf } from "../../store/connections.ts";
+import { type Connections, mirrorsOf, selfOnly } from "../../store/connections.ts";
 import type { Registry } from "../../store/agents.ts";
 import { sameHandle } from "../../store/roster.ts";
 import { saveMedia } from "../../store/media.ts";
@@ -215,7 +214,8 @@ const megabytes = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`;
 export function createTelegramIngest(deps: TelegramIngestDeps): {
   handle: (event: TgEvent) => Promise<void>;
   /** Import every chat's history dated after `since` and before the sign-in, one chat at
-   *  a time. Answers whether it went through every chat, which a stop cuts short. */
+   *  a time; a self-only account imports none. Answers whether it went through every chat,
+   *  which a stop cuts short. */
   backfill: (since: string) => Promise<boolean>;
   stop: () => void;
 } {
@@ -527,21 +527,15 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
     }
   };
 
-  /** On an account kept to steering (§4), whether a chat may be one of its mind surfaces:
-   *  its chat with itself, or a direct chat with a roster member, kept by the publish
-   *  (`steered`) while that member steers the account's agent. Asked before a line is
-   *  mapped, so the account's other chats cost no file and no about text. On any other
-   *  account, every chat may. */
-  const heard = async (chat: TgPeer): Promise<boolean> => {
-    if (!deps.store || !forSteering(await deps.store.connection(SERVICE, connection))) {
-      return true;
-    }
-    if (chat.id === connection) return true;
-    if (chat.kind !== "user") return false;
-    if ((await deps.store.connection(SERVICE, chat.id))?.agentId) return true;
-    const members = (await deps.store.agents?.()) ?? [];
-    return members.some((a) => sameHandle(a.phone, chat.phone));
-  };
+  /** Whether the account is kept to its chat with itself (§4). */
+  const selfOnlyRow = async () =>
+    !!deps.store && selfOnly(await deps.store.connection(SERVICE, connection));
+
+  /** Whether a chat is heard: on a self-only account its Saved Messages alone, asked before
+   *  a line is mapped, so the account's other chats cost no file and no about text; on any
+   *  other account, every chat. */
+  const heard = async (chat: TgPeer): Promise<boolean> =>
+    chat.id === connection || !(await selfOnlyRow());
 
   /** Whether the account's row still stands: once it is removed, the log takes nothing
    *  more of it, and a publish it refuses is refused for good. */
@@ -657,10 +651,10 @@ export function createTelegramIngest(deps: TelegramIngestDeps): {
       stopped = true;
     },
     async backfill(since) {
-      if (deps.signedIn === undefined) return true;
+      if (deps.signedIn === undefined || await selfOnlyRow()) return true;
       for (const chat of await deps.wire.dialogs()) {
         if (stopped) return false;
-        if (!followed(chat) && await heard(chat)) await importChat(chat, since);
+        if (!followed(chat)) await importChat(chat, since);
       }
       return !stopped;
     },
