@@ -962,10 +962,12 @@ export async function openTelegram(opts: OpenOptions): Promise<TelegramSession> 
   });
 
   try {
-    wire.self = peerOf(await client.start({ session: opts.session, sessionForce: true }));
+    // a session Telegram no longer takes is asked for a phone to sign in again: nobody here
+    // gives one, so the ask fails at once rather than prompt on stdin and wait for good
+    const phone = () => Promise.reject(new Error("it asks for a phone to sign in again"));
+    wire.self = peerOf(await client.start({ session: opts.session, sessionForce: true, phone }));
   } catch (err) {
     await client.destroy().catch(() => {});
-    // an account Telegram signed out is asked for a phone, which nobody here gives
     if (ended(err) || !tl.RpcError.is(err)) {
       throw new SignedOut(
         `Telegram no longer takes this session (${err instanceof Error ? err.message : err})`,
