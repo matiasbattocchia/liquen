@@ -192,16 +192,16 @@ Deno.test("org-level validation: timezone, backlogHours, an agent override's eff
   });
 });
 
-Deno.test("pages.days: 30 unless said, and a positive whole number", async () => {
+Deno.test("artifacts.days: 30 unless said, and a positive whole number", async () => {
   await withDir(async (root) => {
-    assertEquals((await readConfig(root)).pages.days, 30);
-    await Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ pages: { days: 7 } }));
-    assertEquals((await readConfig(root)).pages.days, 7);
-    await Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ pages: { days: 0.5 } }));
+    assertEquals((await readConfig(root)).artifacts.days, 30);
+    await Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ artifacts: { days: 7 } }));
+    assertEquals((await readConfig(root)).artifacts.days, 7);
+    await Deno.writeTextFile(`${root}/config.yaml`, JSON.stringify({ artifacts: { days: 0.5 } }));
     await assertRejects(
       () => readConfig(root),
       Error,
-      "pages.days must be a positive whole number",
+      "artifacts.days must be a positive whole number",
     );
   });
 });

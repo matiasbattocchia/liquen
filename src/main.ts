@@ -136,9 +136,10 @@ import { createMercadopagoSignIn } from "./connect/mercadopago/signin.ts";
 import { createTokenSignIn } from "./connect/token/signin.ts";
 import { connectSpec, connectTool } from "./exec/connect.ts";
 import { AGENT_SPEC, agentTool } from "./exec/agent.ts";
-import { pagesPort, PUBLISH_SPEC, publishTool } from "./exec/publish.ts";
-import { createPages, PAGE_SWEEP_MS, sweepPages } from "./pages.ts";
-import { pagesSocket } from "./edge.ts";
+import { artifactsPort, PUBLISH_SPEC, publishTool } from "./exec/publish.ts";
+import { ARTIFACT_SWEEP_MS, createArtifacts, listArtifacts, sweepArtifacts } from "./artifacts.ts";
+import { createServers, socketOf } from "./artifact-servers.ts";
+import { artifactsSocket } from "./edge.ts";
 import { bridgeSend } from "./connect/whatsapp/dispatch.ts";
 import { serveSocket } from "./connect/serve.ts";
 import { classifyFloors, ensureUser, requireTools, sealSystem } from "./users.ts";
@@ -568,10 +569,24 @@ export async function start(
   };
   // the runner (§4): one builder for the mind and every named session, over the store,
   // the row and these ports — the process's own part is the fan-outs and the transports
-  // a page's last day as its agent reads a date, in the org's zone
-  const pageDay = (ms: number) =>
+  // an artifact's last day as its agent reads a date, in the org's zone
+  const artifactDay = (ms: number) =>
     new Intl.DateTimeFormat("en-CA", { timeZone: catalog()?.shared.timezone ?? undefined })
       .format(ms);
+  // the artifacts' servers, each on the ground of the agent that published it
+  const servers = createServers({
+    dir,
+    ground: (agentId, argv, cwd) => sandbox.command(agentId, argv, cwd),
+  });
+  // who an agent answers to, by the phone the roster holds for each: on every artifact
+  const principalsOf = async (agentId: string) => {
+    const names = await log.principalsOf(agentId);
+    const rows = await log.agents();
+    return names.map((n) => {
+      const row = rows.find((r) => r.agentId === n);
+      return { name: row?.name ?? n, ...(row?.phone ? { phone: row.phone } : {}) };
+    });
+  };
   const host: Host = {
     log,
     docs,
@@ -593,7 +608,7 @@ export async function start(
       ...(root
         ? { agent: agentTool({ root, log, docs: docs.bed, up: (id) => reconcile(id) }) }
         : {}),
-      // a folder is read from where the session's shell stands, for rooms it can read
+      // a folder is found from where the session's shell stands, for rooms it can read
       ...(root
         ? {
           publish: publishTool({
@@ -603,16 +618,26 @@ export async function start(
             creds,
             storage,
             edge: () => org.edge,
-            days: () => org.pages.days,
-            day: pageDay,
+            days: () => org.artifacts.days,
+            day: artifactDay,
+            principals: () => principalsOf(agentId),
+            servers,
+            bubbled: () => bubble,
           }),
         }
         : {}),
     }),
     ...(root
       ? {
-        pages: (agentId) =>
-          pagesPort({ agentId, creds, storage, edge: () => org.edge, day: pageDay }),
+        artifacts: (agentId) =>
+          artifactsPort({
+            agentId,
+            creds,
+            storage,
+            edge: () => org.edge,
+            day: artifactDay,
+            servers,
+          }),
       }
       : {}),
     media,
@@ -991,22 +1016,23 @@ export async function start(
     }
   });
   await Deno.chmod(`${dir}/run/main.sock`, 0o600);
-  // the pages agents publish (pages.ts), behind the edge: a group's roster read through
-  // the rooms port, and a code sent through the bridge with no line in the log, so no
-  // agent ever holds one
-  const pages = root
+  // what agents publish (artifacts.ts), behind the edge: a group's roster read through
+  // the rooms port, a code sent through the bridge with no line in the log, so no agent
+  // ever holds one, and a server spoken to on the socket in its folder
+  const artifacts = root
     ? await serveSocket(
-      pagesSocket(root),
-      createPages({
+      artifactsSocket(root),
+      createArtifacts({
         creds,
         storage,
         secure: () => org.edge.publicUrl?.startsWith("https://") ?? false,
-        roster: async (page, group) => {
+        socket: (a) => socketOf(dir, a),
+        roster: async (a, group) => {
           const members = rooms.whatsapp?.members;
           if (!members) throw new Error("whatsapp reads no roster");
           return (await members({
             connection: group.connection,
-            agent: page.agentId,
+            agent: a.agentId,
             conversation: group.address,
           })).map((s) => s.address);
         },
@@ -1024,13 +1050,19 @@ export async function start(
       }),
     )
     : null;
-  const sweepingPages = () =>
-    sweepPages(creds, storage).then(
-      (n) => n && console.error(`[pages] ${n} page(s) past their days, let go`),
-      (err) => console.error("[pages] the sweep failed:", err),
+  // the artifacts past their days let go, and exactly the live ones' servers running
+  const sweepingArtifacts = () =>
+    sweepArtifacts(creds, storage).then(
+      async (n) => {
+        if (n) console.error(`[artifacts] ${n} artifact(s) past their days, let go`);
+        await servers.reconcile(await listArtifacts(creds));
+      },
+      (err) => console.error("[artifacts] the sweep failed:", err),
     );
-  if (root) await sweepingPages();
-  const pageSweeper = root ? setInterval(() => void sweepingPages(), PAGE_SWEEP_MS) : undefined;
+  if (root) await sweepingArtifacts();
+  const artifactSweeper = root
+    ? setInterval(() => void sweepingArtifacts(), ARTIFACT_SWEEP_MS)
+    : undefined;
   // the sign-ins the last run left open: lapsed, served again, or their polls taken up
   await signIns?.resume().catch((err) => console.error("[sign-in] resume:", err));
 
@@ -1194,14 +1226,15 @@ export async function start(
       stopped = true;
       clearInterval(ticker);
       clearInterval(collector);
-      clearInterval(pageSweeper);
+      clearInterval(artifactSweeper);
       for (const t of settling.values()) clearTimeout(t); // a burst still settling: drop it
       settling.clear();
       for (const [agentId, w] of keepers) handOver(agentId, w);
       for (const unsub of [...unsubs, ...subs.values()]) unsub();
       await asked.shutdown(); // no change to the roster is taken from here on
       await Deno.remove(`${dir}/run/main.sock`).catch(() => {});
-      await pages?.shutdown();
+      await artifacts?.shutdown();
+      await servers.close();
       await signIns?.close(); // the doors shut; the tickets stay for the next main
       await doors.close(); // stop taking syscalls before the log goes away
       // Bound the settle. A turn wedged on a hung model connection (e.g. a network

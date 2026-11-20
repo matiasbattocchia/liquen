@@ -6,6 +6,7 @@
     ".": "./src/mod.ts",
     "./connector": "./src/connector.ts",
     "./script": "./src/script.ts",
+    "./artifact": "./src/artifact.ts",
     "./start": "./src/start.ts",
     "./stop": "./src/stop.ts",
     "./reload": "./src/reload.ts",

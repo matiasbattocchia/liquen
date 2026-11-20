@@ -97,7 +97,7 @@ export interface BashOptions {
 // Process-group isolation (`setsid`) lets us kill a command's whole tree — including a
 // backgrounded grandchild — by the group. Not on macOS; fall back to a bare spawn there.
 let _hasSetsid: boolean | undefined;
-function hasSetsid(): boolean {
+export function hasSetsid(): boolean {
   if (_hasSetsid === undefined) {
     try {
       new Deno.Command("setsid", { args: ["true"], stdout: "null", stderr: "null" }).outputSync();
@@ -822,8 +822,19 @@ export interface ExecPlane {
 /** One AGENT's ground (§9): the workspace, the PATH cascade, the uid — prepared once.
  *  `shell()` opens a session's shell on it; `tell` is where it tells what its calls do
  *  after their answers (late.ts). */
+/** How a process runs on an agent's ground, as a shell's call would: inside its bubble, as
+ *  its uid, with the environment user space is issued. */
+export interface GroundCommand {
+  argv: string[];
+  env: Record<string, string>;
+  uid?: number;
+  gid?: number;
+}
+
 export interface ExecGround {
   shell(tell?: (u: ShellUpdate) => void): ExecPlane;
+  /** `argv` as it runs here, standing at `cwd`. */
+  command(argv: string[], cwd: string): Promise<GroundCommand>;
   /** Let go of the ground's bubbles: with `jobs: "end"` they end, and what runs in them;
    *  else they stay for the next harness, holding the jobs it adopts. Nothing to do
    *  without a bubble. */
@@ -1064,6 +1075,16 @@ export async function installExecGround(
   await sweepLogs(`${workspace}/.out`);
   const host = localHost();
   return {
+    async command(argv, cwd) {
+      const issued = { ...userSpaceEnv(binPath), ...(await env?.()) };
+      if (user) Object.assign(issued, { HOME: user.home, USER: user.name, LOGNAME: user.name });
+      if (bubble) Object.assign(issued, { HOME: workspace, TMPDIR: "/tmp" });
+      return {
+        argv: [...(await bubble?.enter(cwd) ?? []), ...argv],
+        env: issued,
+        ...(user ? { uid: user.uid, gid: user.gid } : {}),
+      };
+    },
     shell(tell?: (u: ShellUpdate) => void): ExecPlane {
       const jobs = new Jobs(host, tell);
       const state: BashState = { cwd: workspace };

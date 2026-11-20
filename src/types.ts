@@ -629,6 +629,30 @@ export interface PermissionAsk {
    *  answers, and what it will say — the text with its line breaks, the attachments, the
    *  pin and the cards counted apart. */
   send?: SendPreview;
+  /** A `publish`, laid out for the person judging it (§9): who it is for by name and
+   *  number, what it shows, and what its server reaches. */
+  artifact?: ArtifactPreview;
+}
+
+/** An artifact as a publish will put it up. */
+export interface ArtifactPreview {
+  title: string;
+  kind: "page" | "api" | "app";
+  link: string;
+  /** The folder, as the agent names it. */
+  folder: string;
+  /** Published before: it keeps its link. */
+  again: boolean;
+  /** `public/`'s files, and their bytes. */
+  files: number;
+  bytes: number;
+  /** Its server: the hosts it reaches, and whether it loads native code, held by the
+   *  agent's bubble or by nothing but Deno's checks. */
+  server?: { hosts: string[]; native: boolean; bubbled: boolean };
+  /** Who it is for: each conversation and principal by name and address. */
+  with: { name: string; address: string; kind: "direct" | "group" | "principal" }[];
+  /** The day it lapses. */
+  until: string;
 }
 
 /** One directory of the agent's PATH, and the programs in it; a program the harness ships

@@ -45,8 +45,8 @@ export interface Host {
   /** The tools the host serves itself, a session's own (`connect`, `agent`): offered and
    *  gated as every exec tool is. */
   tools?: (agentId: string, sessionId: string) => Record<string, ExecTool>;
-  /** The pages an agent reaches (§9). Absent: no pages served. */
-  pages?: (agentId: string) => NonNullable<XiPorts["pages"]>;
+  /** The artifacts an agent reaches (§9). Absent: no artifacts served. */
+  artifacts?: (agentId: string) => NonNullable<XiPorts["artifacts"]>;
   contact?: XiPorts["contact"];
   rooms?: XiPorts["rooms"];
   media?: MediaLoader;
@@ -157,7 +157,7 @@ export function runnerFor(
       ...(box?.bins ? { bins: box.bins } : {}),
       ...(host.contact ? { contact: host.contact } : {}),
       ...(host.rooms ? { rooms: host.rooms } : {}),
-      ...(host.pages ? { pages: host.pages(agentId) } : {}),
+      ...(host.artifacts ? { artifacts: host.artifacts(agentId) } : {}),
       ...(host.media ? { media: host.media } : {}),
       ...(host.onDelta ? { onDelta: (d: Delta) => host.onDelta!(agentId, sessionId, d) } : {}),
       ...(host.onDecision
