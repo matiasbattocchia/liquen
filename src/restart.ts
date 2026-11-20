@@ -25,8 +25,8 @@ import { detach } from "./start.ts";
 export const USAGE = `usage: liquen restart [<process>…] [--dir <org>]
 
   Stop and start the processes named, or the whole run when none is: what a process
-  reads only at its start (deployment, edge.port, edge.tunnel, a connection's start
-  keys), and its code. The whole run takes up .env too, and goes on detached.
+  reads only at its start (deployment, edge.port, edge.publicUrl, edge.tunnel, a
+  connection's start keys), and its code. The whole run takes up .env too, and goes on detached.
 
   --dir <org>    the org, when run from elsewhere`;
 
