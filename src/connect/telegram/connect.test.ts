@@ -64,7 +64,7 @@ Deno.test("telegram connect: a member's sign-in writes the vault, one owned row 
       name: "Ana Paz",
       username: "anapaz",
       mirrors: { self: "700100" },
-      steering: null,
+      self_only: null,
     },
   }]);
   assertEquals(h.memberships, [
@@ -76,23 +76,23 @@ Deno.test("telegram connect: a member's sign-in writes the vault, one owned row 
   assertEquals(h.published[0].envelope.sender?.address, "telegram-connect");
 });
 
-Deno.test("telegram connect: --steering keeps the account to its owner's mind, and says so", async () => {
-  const h = harness({ steering: true });
+Deno.test("telegram connect: --self keeps the account to its Saved Messages, and says so", async () => {
+  const h = harness({ self: true });
   await connectTelegram(h.deps);
-  assertEquals(h.connections[0].extra?.steering, true);
+  assertEquals(h.connections[0].extra?.self_only, true);
   assertEquals(h.connections[0].extra?.mirrors, { self: "700100" });
   const note = h.published[0].parts[0];
   assertEquals(
     note.type === "text" && note.text,
-    "Telegram connected: @anapaz (700100) → ana, for steering",
+    "Telegram connected: @anapaz (700100) → ana, its chat with itself alone",
   );
 });
 
-Deno.test("telegram connect: a shared account is kept to steering by nobody, before any sign-in", async () => {
+Deno.test("telegram connect: a shared account is kept to its chat with itself by nobody, before any sign-in", async () => {
   let signedIn = false;
   const h = harness({
     principal: undefined,
-    steering: true,
+    self: true,
     signIn: () => {
       signedIn = true;
       return Promise.resolve({ session: "s", self: SELF });

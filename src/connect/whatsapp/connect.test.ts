@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import type { WABridgeSessions, WAPairingState } from "./connect.ts";
 import { createWhatsappSignIn, PAIRING_WHERE } from "./signin.ts";
-import type { Appender } from "../../store/log.ts";
+import type { Appender, ReadQuery } from "../../store/log.ts";
 import type { ConnectionRow, MembershipRow } from "../../store/connections.ts";
 import type { Draft, Event, MessageEvent } from "../../types.ts";
 import type { TicketRow } from "../../store/credentials.ts";
@@ -38,21 +38,36 @@ const CONFIG = {
   bridgeUrl: "http://bridge",
   ingestUrl: null,
   organizationId: "acme",
+  historyDays: 60,
 } as unknown as WhatsappConfig;
 
-/** One pairing run against a scripted bridge: the flow as main runs it, its gate a fake. */
+/** One pairing run against a scripted bridge: the flow as main runs it, its gate a fake.
+ *  `heard` is the newest line the log holds of the number, `phone` the one on matias's row. */
 function pairing(
   bridge: WABridgeSessions,
   t: TicketRow,
-  opts: { refuse?: string } = {},
+  opts: { refuse?: string; heard?: string; phone?: string } = {},
 ) {
   const connections: ConnectionRow[] = [];
   const memberships: MembershipRow[] = [];
   const published: Event[] = [];
+  const read: ReadQuery[] = [];
   const ctx = {
     root: "/nowhere/acme",
     edge: { publicUrl: null, port: 8787 },
     log: {
+      agents: () =>
+        Promise.resolve([{
+          agentId: "matias",
+          mind: "mind@matias",
+          ...(opts.phone ? { phone: opts.phone } : {}),
+        }]),
+      connections: () => Promise.resolve([]),
+      aliases: () => Promise.resolve([]),
+      read: (q: ReadQuery) => {
+        read.push(q);
+        return Promise.resolve(opts.heard ? [{ ts: opts.heard } as Event] : []);
+      },
       upsertConnections: (rows: ConnectionRow[]) => {
         connections.push(...rows);
         return Promise.resolve();
@@ -75,7 +90,7 @@ function pairing(
     pollMs: 1,
   });
   const run = () => flow.run!(t, ctx, gate, new AbortController().signal);
-  return { run, gate, connections, memberships, published };
+  return { run, gate, connections, memberships, published, read };
 }
 
 const pending = (over: Partial<WAPairingState> = {}): WAPairingState => ({
@@ -127,6 +142,38 @@ Deno.test("QR flow: poll to paired writes the owned anchor, membership, and note
   const note = published[0] as MessageEvent;
   assertEquals(note.envelope.connection_address, "5491100000000");
   assertStringIncludes(note.parts[0].type === "text" ? note.parts[0].text : "", "matias");
+});
+
+const PAIRED: WAPairingState = { session_id: "p1", status: "paired", address: "5491100000000" };
+
+Deno.test("history: a pairing asks the phone from where the listening stopped on its number, within historyDays", async () => {
+  // the number is the one on the agent's row; the log last heard it yesterday
+  const heard = new Date(Date.now() - 86_400_000).toISOString();
+  const known = fakeBridge(pending(), PAIRED);
+  const one = pairing(known.bridge, MATIAS, { heard, phone: "+54 9 11 0000-0000" });
+  await one.run();
+  assertEquals(known.creates[0].history_since, heard);
+  assertEquals(known.creates[0].no_history, undefined);
+  assertEquals([one.read[0].service, one.read[0].connection], ["whatsapp", "5491100000000"]);
+
+  // a QR pairing whose number nobody knows is asked the whole window
+  const unknown = fakeBridge(pending(), PAIRED);
+  const before = Date.now();
+  await pairing(unknown.bridge, MATIAS, { heard }).run();
+  const since = Date.parse(unknown.creates[0].history_since!);
+  const window = 60 * 86_400_000;
+  assertEquals(since >= before - window && since <= Date.now() - window, true);
+});
+
+Deno.test("history: --self asks the phone for none, and lands the mark", async () => {
+  const self = ticket("t2", { service: "whatsapp", agentId: "matias", extra: { self: true } });
+  const { bridge, creates } = fakeBridge(pending(), PAIRED);
+  const { run, connections, read } = pairing(bridge, self, { phone: "5491100000000" });
+  await run();
+  assertEquals(creates[0].no_history, true);
+  assertEquals(creates[0].history_since, undefined);
+  assertEquals(read, []); // nothing to read where the listening stopped
+  assertEquals(connections[0].extra?.self_only, true);
 });
 
 Deno.test("phone flow: the number rides create; the pairing code is the word", async () => {

@@ -12,13 +12,14 @@
  * signed out is said on its row and left. SIGTERM stops the way main stops: no new work,
  * what is in flight settled, the sessions closed with their cursors kept.
  *
- * An opening that follows a sign-in imports the account's history: every chat's last
- * `historyDays`, stamped `backfill`, behind the live session. The sign-in is the door's
- * grant note, and the note whose history is in sits beside the cache (`historyPath`), so a
- * restart resumes and a new sign-in imports again.
+ * An opening that follows a sign-in imports the account's history, stamped `backfill`,
+ * behind the live session: every chat from where the listening stopped, no further back
+ * than `historyDays` (`connect/history.ts`); a self-only account imports none. The sign-in
+ * is the door's grant note, and the note whose history is in sits beside the cache
+ * (`historyPath`), so a restart resumes and a new sign-in imports again.
  *
- * Every line is published through the room marks (`connect/marks.ts`), and on an account
- * kept to steering only on its mind surfaces (`connect/steering.ts`).
+ * Every line is published through the room marks (`connect/marks.ts`), and on a self-only
+ * account only in its Saved Messages (`connect/self.ts`).
  *
  * The body runs under `entry` (§9): a boot that cannot go on is a refusal in a sentence.
  */
@@ -28,7 +29,8 @@ import { entry } from "../../entry.ts";
 import type { Reader } from "../../store/log.ts";
 import { heartbeat, setState } from "../health.ts";
 import { createMarks, marked } from "../marks.ts";
-import { steered } from "../steering.ts";
+import { keptToSelf } from "../self.ts";
+import { heardUntil, historySince } from "../history.ts";
 import { logDirectory } from "../mentions.ts";
 import { exitOnStop } from "../stop.ts";
 import { createAccounts, type Opened, RECONCILE_MS } from "./accounts.ts";
@@ -47,8 +49,6 @@ import { createTelegramDispatch } from "./dispatch.ts";
 import { createTelegramIngest } from "./ingest.ts";
 import { servePort } from "./port.ts";
 import { SERVICE, type TgEvent } from "./wire.ts";
-
-const DAY_MS = 24 * 60 * 60_000;
 
 /** When the account was last signed in: its newest grant note's time. */
 export async function signedInAt(
@@ -89,7 +89,7 @@ export async function runTelegram(): Promise<() => Promise<void>> {
   // the room knobs asked per batch, and an account's own as its session opens
   const knobs = await liveKnobs<TelegramConfig>(root, SPEC, log);
   const read: Reader["read"] = (q) => log.read(q);
-  const publish = steered(marked(log.publish, createMarks({ read, knobs })), log);
+  const publish = keptToSelf(marked(log.publish, createMarks({ read, knobs })), log);
 
   const app = await creds.get(APP_KEY);
   if (!app?.value.api_id || !app.value.api_hash) {
@@ -145,9 +145,11 @@ export async function runTelegram(): Promise<() => Promise<void>> {
     });
     route.handle = ingest.handle;
     for (const event of early) chain = chain.then(() => ingest.handle(event));
-    // the history runs behind the live session, and is in once every chat went through
+    // the history runs behind the live session, from where the listening stopped, and is in
+    // once every chat went through
     const imported = signedIn && historyDays > 0
-      ? ingest.backfill(new Date(Date.parse(signedIn) - historyDays * DAY_MS).toISOString())
+      ? heardUntil(log, SERVICE, account, signedIn)
+        .then((heard) => ingest.backfill(historySince(signedIn, historyDays, heard)))
         .then(async (whole) => {
           if (whole) await Deno.writeTextFile(marker, signedIn);
         })

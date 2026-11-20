@@ -77,8 +77,8 @@ import {
   CONNECTIONS_DDL,
   createConnections,
   exempt,
-  offSurface,
-  STEERING,
+  offSelf,
+  SELF_ONLY,
   UNPREFIX,
 } from "./connections.ts";
 import { createGates, type Gates, GATES_DDL } from "./gates.ts";
@@ -665,14 +665,15 @@ export async function openLog(
   );
   // the frontier gate (§4): only a REGISTERED (and live) connection may log — an event on
   // an unknown or soft-deleted account is refused before anything lands. `local` is the
-  // substrate's own service (minds, DMs), not a connected account: exempt. An account kept
-  // to steering takes a line on its mind surfaces alone
+  // substrate's own service (minds, DMs), not a connected account: exempt. A self-only
+  // account takes a line in its chat with itself alone: the alias its owner faces itself in
   const registered = db.prepare(
-    `SELECT json_extract(extra, '$.${STEERING}') IS 1 AS steering FROM connections
+    `SELECT json_extract(extra, '$.${SELF_ONLY}') IS 1 AS self_only FROM connections
       WHERE service = ? AND address = ? AND deleted_at IS NULL`,
   );
-  const surface = db.prepare(
-    "SELECT 1 AS x FROM aliases WHERE service = ? AND connection = ? AND conversation = ?",
+  const selfChat = db.prepare(
+    `SELECT 1 AS x FROM aliases
+      WHERE service = ? AND connection = ? AND conversation = ? AND principal = agent_id`,
   );
   const mark = db.prepare(
     `UPDATE events SET
@@ -819,13 +820,13 @@ export async function openLog(
     for (const d of drafts) {
       const { service, connection_address: address, conversation } = d.envelope;
       if (service === "local") continue;
-      const row = registered.get(service, address) as { steering: number } | undefined;
+      const row = registered.get(service, address) as { self_only: number } | undefined;
       if (row === undefined) throw new Error(`connection not registered: ${service}:${address}`);
       if (
-        row.steering && !exempt(d) &&
-        surface.get(service, address, conversation.address) === undefined
+        row.self_only && !exempt(d) &&
+        selfChat.get(service, address, conversation.address) === undefined
       ) {
-        throw offSurface(service, address, conversation.address);
+        throw offSelf(service, address, conversation.address);
       }
     }
     const now = new Date().toISOString();

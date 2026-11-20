@@ -18,8 +18,8 @@
  *          → membership: the `connect` conversation, so the note reaches the principal
  *          → the log: the grant notification crosses the frontier as an event (§4)
  *
- * The row is this write's alone: it says whose the number is and whether it is kept to
- * steering, so nothing of the number lands before it does. The bridge's session events
+ * The row is this write's alone: it says whose the number is and whether it is kept to its
+ * chat with itself, so nothing of the number lands before it does. The bridge's session events
  * move its state once it stands, and the batches the bridge sends first are refused at
  * the gate and sent again. Which ingest is the org's to say: the bridge is one sidecar
  * for many orgs, and `webhook_url` on the create request is where THIS session's traffic
@@ -27,14 +27,16 @@
  *
  * Which is why the door DECLARES the connection and waits for its ingest before it asks
  * main for the pairing (`requireIngest`): pairing makes the bridge start delivering at
- * once, and the history it sends arrives once or never.
+ * once, and the history it sends arrives once or never. The pairing names the history it
+ * asks the phone for: from where the listening stopped on the number, no further back than
+ * `historyDays`, or none for a number kept to its chat with itself (`whatsapp/signin.ts`).
  */
 
 import { helpFlag } from "../help.ts";
 import type { Appender } from "../../store/log.ts";
-import { type Connections, STEERING } from "../../store/connections.ts";
+import { type Connections, SELF_ONLY } from "../../store/connections.ts";
 import type { Draft, MessageEvent } from "../../types.ts";
-import { noSteeringShared } from "../steering.ts";
+import { noSelfShared } from "../self.ts";
 import { SERVICE } from "./ingest.ts";
 import { findRoot, orgFlag } from "../../config.ts";
 import { timedFetch } from "../http.ts";
@@ -63,6 +65,10 @@ export interface WABridgeSessions {
     agent_id?: string;
     /** where the bridge delivers this session's traffic — this org's ingest */
     webhook_url: string;
+    /** the history asked of the phone: its lines from then on (RFC 3339) */
+    history_since?: string;
+    /** no history at all */
+    no_history?: boolean;
   }): Promise<WAPairingState>;
   pending(id: string): Promise<WAPairingState>;
 }
@@ -94,8 +100,9 @@ export interface WhatsAppLandDeps {
   /** The member whose phone this is — the connection's owner (§4). Absent ⇒ the org's
    *  number: an agent whose declared phone it is speaks through it, steered by the roster. */
   principal?: string;
-  /** Keep the number to steering: its owner's mind surfaces and nothing else (§4). */
-  steering?: boolean;
+  /** Keep the number to its chat with itself, its owner's to steer from, and nothing
+   *  else (§4). */
+  self?: boolean;
   /** The bridge's tenant id — `connections.whatsapp.organizationId` (it stores and
    *  echoes it back on session events). */
   organizationId: string;
@@ -109,12 +116,12 @@ export interface WhatsAppLandDeps {
 /** A paired number, written: the anchor row, the owner's membership, the note. */
 export async function landWhatsApp(address: string, deps: WhatsAppLandDeps): Promise<void> {
   const now = deps.now ?? (() => new Date().toISOString());
-  if (deps.steering && !deps.principal) throw noSteeringShared();
+  if (deps.self && !deps.principal) throw noSelfShared();
   // the map: one anchor row (opens the publish gate the next webhook batch checks) —
   // OWNED by the principal who paired their own phone, or the org's (§4: no owner, and a
   // credential key naming the bridge session, which is the credential the org holds for
   // it) — and, for a member's, the membership that carries the note into their view. Each
-  // pairing says anew whether the number is kept to steering
+  // pairing says anew whether the number is kept to its chat with itself
   await deps.store.upsertConnections([{
     service: SERVICE,
     address,
@@ -122,7 +129,7 @@ export async function landWhatsApp(address: string, deps: WhatsAppLandDeps): Pro
     extra: {
       ...linked(now()),
       organization_id: deps.organizationId,
-      [STEERING]: deps.steering ? true : null,
+      [SELF_ONLY]: deps.self ? true : null,
     },
   }]);
   if (deps.principal) {
@@ -145,7 +152,7 @@ export async function landWhatsApp(address: string, deps: WhatsAppLandDeps): Pro
       type: "text",
       kind: "text",
       text: `WhatsApp connected: ${address} → ${deps.principal ?? "the org"}` +
-        (deps.steering ? ", for steering" : ""),
+        (deps.self ? ", its chat with itself alone" : ""),
     }],
   };
   await deps.publish(note);
@@ -164,15 +171,15 @@ export async function landWhatsApp(address: string, deps: WhatsAppLandDeps): Pro
  * Expired ⇒ run the door again for a fresh one.
  *
  * Env: WA_BRIDGE_TOKEN (the secret, main's); the knobs are connections.whatsapp. */
-const USAGE = `usage: liquen connect whatsapp [agent] [--steering] [--phone <digits>]
+const USAGE = `usage: liquen connect whatsapp [agent] [--self] [--phone <digits>]
        liquen connect whatsapp --shared [--phone <digits>]
 
   Pair a WhatsApp number through the whatsmeow bridge; knobs: connections.whatsapp.
 
   [agent]           the roster member whose phone this is (default: your OS username)
-  --steering        keep the number to steering: its chat with itself and its principals'
-                    DMs reach the agent, and nothing else crosses either way; a pairing
-                    without it gives the agent the whole number
+  --self            keep the number to its chat with itself, where you steer the agent:
+                    nothing else crosses either way, and no history is asked for; a
+                    pairing without it gives the agent the whole number
   --shared          a shared number: owned by nobody, read by every agent
   --phone <digits>  the pairing-code flow for that number (international digits, no +);
                     without it, a QR code to scan from the phone
@@ -189,10 +196,10 @@ if (import.meta.main) {
     const flags = new Map<string, string>();
     const positional: string[] = [];
     let shared = false;
-    let steering = false;
+    let self = false;
     for (let i = 0; i < org.args.length; i++) {
       if (org.args[i] === "--shared") shared = true;
-      else if (org.args[i] === "--steering") steering = true;
+      else if (org.args[i] === "--self") self = true;
       else if (org.args[i].startsWith("--")) flags.set(org.args[i].slice(2), org.args[++i] ?? "");
       else positional.push(org.args[i]);
     }
@@ -200,8 +207,8 @@ if (import.meta.main) {
       console.error("--shared pairs a number nobody owns: no agent to name");
       Deno.exit(2);
     }
-    if (shared && steering) {
-      console.error(noSteeringShared().message);
+    if (shared && self) {
+      console.error(noSelfShared().message);
       Deno.exit(2);
     }
     const principal = shared ? undefined : positional[0] ?? terminalUser();
@@ -221,7 +228,7 @@ if (import.meta.main) {
 
     console.error(
       `Connecting WhatsApp as ${principal ? `agent "${principal}"` : "the org"}` +
-        `${steering ? ", for steering" : ""} — ` +
+        `${self ? ", its chat with itself alone" : ""} — ` +
         `${phone ? `pairing code for ${phone}` : "QR"}.\n`,
     );
     Deno.exit(
@@ -231,7 +238,7 @@ if (import.meta.main) {
           service: "whatsapp",
           ...(principal ? { agent: principal } : {}),
           ...(phone ? { pair: phone } : {}),
-          ...(steering ? { steering } : {}),
+          ...(self ? { self } : {}),
         },
         {
           where: "Scan with the phone: WhatsApp → Settings → Linked devices → Link a device\n",

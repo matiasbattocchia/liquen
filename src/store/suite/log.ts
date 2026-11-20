@@ -594,21 +594,27 @@ export function logSuite(s: Substrate): void {
     });
   });
 
-  Deno.test("the publish gate: an account kept to steering takes a line on its mind surfaces alone (§4)", async () => {
+  Deno.test("the publish gate: a self-only account takes a line in its chat with itself alone (§4)", async () => {
     await withLog(async (log) => {
       await cast(log);
+      await log.putAgents([{
+        agentId: "matias",
+        mind: "mind@matias",
+        principals: ["matias", "ana"],
+      }]);
       await log.upsertConnections([
         {
           service: "telegram",
           address: "700",
           agentId: "matias",
-          extra: { mirrors: { self: "700" }, steering: true },
+          // ana's DM is a surface of matias's mind, and still not the account's self chat
+          extra: { mirrors: { self: "700", dms: { ana: "901" } }, self_only: true },
         },
         {
           service: "whatsapp",
           address: "549115550001",
           agentId: "matias",
-          extra: { steering: true },
+          extra: { self_only: true },
         },
       ]);
       const on = (service: Service, account: string, id: string, chat: string) => {
@@ -624,9 +630,14 @@ export function logSuite(s: Substrate): void {
       await assertRejects(
         () => log.publish(on("telegram", "700", "04", "555")),
         Error,
-        "telegram:700 is connected for steering: 555 is not one of its mind surfaces",
+        "telegram:700 is connected for its chat with itself alone: 555 is not that chat",
       );
-      // a batch with one line off the surfaces lands none of it
+      await assertRejects(
+        () => log.publish(on("telegram", "700", "08", "901")),
+        Error,
+        "901 is not that chat",
+      );
+      // a batch with one line off the self chat lands none of it
       await assertRejects(
         () =>
           log.publish([
@@ -634,7 +645,7 @@ export function logSuite(s: Substrate): void {
             on("whatsapp", "549115550001", "06", "120363@g.us"),
           ]),
         Error,
-        "is connected for steering",
+        "is connected for its chat with itself alone",
       );
       assertEquals((await log.read()).map((e) => e.id), ["01", "02", "03"]);
 
@@ -656,7 +667,7 @@ export function logSuite(s: Substrate): void {
       await log.upsertConnections([{
         service: "telegram",
         address: "700",
-        extra: { steering: null },
+        extra: { self_only: null },
       }]);
       await log.publish(on("telegram", "700", "07", "555"));
       assertEquals((await log.read()).length, 4);

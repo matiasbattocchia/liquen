@@ -9,12 +9,21 @@
  * The service is declared, with its ingest up, before a pairing starts: from the pairing on
  * the bridge delivers to that ingest, the history first. An org's first pairing declares
  * it, naming the bridge's tenant after the org's folder, as the CLI door does.
+ *
+ * The pairing names the history the phone is asked for, since the phone hears the ask at
+ * pairing and never after: none for a number kept to its chat with itself, else its lines
+ * from where the listening stopped on the number, no further back than `historyDays`
+ * (`connect/history.ts`). The number is the one the pairing names, else the phone on its
+ * agent's row, else the one number its agent owns; a QR pairing that names none is asked
+ * the whole window.
  */
 
 import { basename } from "node:path";
-import { digits, type SignInFlow, type Word } from "../signin.ts";
+import { digits, type FlowCtx, type SignInFlow, type Word } from "../signin.ts";
+import type { TicketRow } from "../../store/credentials.ts";
 import { readConfig } from "../../org.ts";
 import { waitIngest } from "../declare.ts";
+import { heardUntil, historySince } from "../history.ts";
 import { ingestUrlOf, type WhatsappConfig, whatsappConfig } from "./config.ts";
 import {
   bridgeSessions,
@@ -39,6 +48,37 @@ export function pairingWord(s: WAPairingState, until: number): Word | undefined 
   if (s.pairing_code) return { code: s.pairing_code, where: PAIRING_WHERE, until };
   if (s.qr_code) return { qr: s.qr_code, until };
   return undefined;
+}
+
+/** The number a pairing will most likely land as: the one it names, else the phone on its
+ *  agent's row, else the one number its agent owns. */
+async function numberOf(
+  t: TicketRow,
+  pair: string | undefined,
+  log: FlowCtx["log"],
+): Promise<string | undefined> {
+  if (pair) return pair;
+  if (!t.agentId) return undefined;
+  const phone = (await log.agents()).find((a) => a.agentId === t.agentId)?.phone;
+  if (phone) return digits(phone);
+  const own = (await log.connections()).filter((c) =>
+    c.service === "whatsapp" && c.agentId === t.agentId
+  );
+  return own.length === 1 ? own[0].address : undefined;
+}
+
+/** The history a pairing asks the phone for, as the bridge takes it. */
+export async function historyAsked(
+  t: TicketRow,
+  days: number,
+  pair: string | undefined,
+  ctx: Pick<FlowCtx, "log">,
+  at: string = new Date().toISOString(),
+): Promise<{ no_history: true } | { history_since: string }> {
+  if (t.extra.self === true || days === 0) return { no_history: true };
+  const number = await numberOf(t, pair, ctx.log);
+  const heard = number ? await heardUntil(ctx.log, "whatsapp", number, at) : undefined;
+  return { history_since: historySince(at, days, heard) };
 }
 
 export function createWhatsappSignIn(
@@ -77,6 +117,7 @@ export function createWhatsappSignIn(
           webhook_url: ingestUrlOf(cfg, ctx.edge.port),
           ...(pair ? { phone_number: pair } : {}),
           ...(t.agentId ? { agent_id: t.agentId } : {}),
+          ...await historyAsked(t, cfg.historyDays, pair, ctx),
         });
         await gate.note(t.ticket, { pending: state.session_id });
       }
@@ -101,7 +142,7 @@ export function createWhatsappSignIn(
       if ("refused" in verdict) return;
       await landWhatsApp(state.address, {
         ...(verdict.agent ? { principal: verdict.agent } : {}),
-        steering: t.extra.steering === true,
+        self: t.extra.self === true,
         organizationId: tenant,
         store: ctx.log,
         publish: ctx.log.publish,

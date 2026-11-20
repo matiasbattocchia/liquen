@@ -11,7 +11,8 @@
  * session), and everything the bridge dials for this org — batches, media, session events,
  * the RELATIVE signed media path (`store/media.ts`) — resolves against it. `ingestUrl` is
  * that address as the bridge reaches it; null derives it from this machine's edge, which
- * is right whenever the sidecar shares the host.
+ * is right whenever the sidecar shares the host. `historyDays` caps the history a pairing
+ * asks the phone for (`connect/history.ts`).
  */
 
 import type { ConnectorSpec, RoomKnobs } from "../../config.ts";
@@ -19,6 +20,7 @@ import { connectorConfig } from "../../org.ts";
 import { ingestAddress, localBase } from "../../edge.ts";
 
 export const DEFAULT_BRIDGE_URL = "http://localhost:8081";
+export const DEFAULT_HISTORY_DAYS = 60;
 
 export interface WhatsappConfig {
   bridgeUrl: string;
@@ -26,6 +28,7 @@ export interface WhatsappConfig {
   organizationId: string | null;
   /** null ⇒ `http://localhost:<edge.port>/whatsapp/ingest` — see `ingestUrlOf` */
   ingestUrl: string | null;
+  historyDays: number;
 }
 
 /** Where the bridge reaches this org's ingest — what the pairing door registers with the
@@ -62,6 +65,14 @@ export const SPEC: ConnectorSpec = {
       doc:
         "this org's ingest as the bridge reaches it — registered with the session at pairing; null ⇒ http://localhost:<edge.port>/whatsapp/ingest, right when the bridge shares the host",
       check: aStringOrNull,
+    },
+    {
+      key: "historyDays",
+      value: DEFAULT_HISTORY_DAYS,
+      doc:
+        "the most days of history a pairing asks the phone for, from where the listening stopped: kept and searchable, never news; its files are named and left on WhatsApp. 0 asks for none, nor does a number kept to its chat with itself",
+      check: (v) =>
+        Number.isInteger(v) && (v as number) >= 0 ? null : "must be a whole number, 0 or more",
     },
   ],
 };

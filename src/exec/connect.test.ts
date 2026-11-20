@@ -15,7 +15,7 @@ const CONNECTIONS: ConnectionRow[] = [
   { service: "google", address: "ana@example.com", agentId: "ana" },
   { service: "google", address: "team@example.com", credentialKey: "google:team@example.com" },
   { service: "whatsapp", address: "5492610000009", agentId: "matias" },
-  { service: "telegram", address: "700100", agentId: "matias", extra: { steering: true } },
+  { service: "telegram", address: "700100", agentId: "matias", extra: { self_only: true } },
 ];
 
 const log = {
@@ -87,13 +87,13 @@ Deno.test("askOf: a reconnect is a connection the caller may sign in, keeping it
   );
 });
 
-Deno.test("askOf: steering asks for an account kept to its owner's mind; a reconnect keeps how it was kept unless told", async () => {
-  assertEquals(await ask({ service: "telegram", steering: true }), {
+Deno.test("askOf: self asks for an account kept to its chat with itself; a reconnect keeps how it was kept unless told", async () => {
+  assertEquals(await ask({ service: "telegram", self: true }), {
     service: "telegram",
     agent: "matias",
-    steering: true,
+    self: true,
   });
-  assertEquals(await ask({ service: "telegram", steering: false }), {
+  assertEquals(await ask({ service: "telegram", self: false }), {
     service: "telegram",
     agent: "matias",
   });
@@ -101,25 +101,24 @@ Deno.test("askOf: steering asks for an account kept to its owner's mind; a recon
     service: "telegram",
     agent: "matias",
     account: "700100",
-    steering: true,
+    self: true,
   });
-  assertEquals(await ask({ service: "telegram", account: "700100", steering: false }), {
+  assertEquals(await ask({ service: "telegram", account: "700100", self: false }), {
     service: "telegram",
     agent: "matias",
     account: "700100",
   });
-  assertEquals(await ask({ service: "whatsapp", account: "5492610000009", steering: true }), {
+  assertEquals(await ask({ service: "whatsapp", account: "5492610000009", self: true }), {
     service: "whatsapp",
     agent: "matias",
     account: "5492610000009",
     pair: "5492610000009",
-    steering: true,
+    self: true,
   });
   await assertRejects(
-    () =>
-      ask({ service: "token", steering: true, token: { name: "crm", env: "CRM", hosts: "x.io" } }),
+    () => ask({ service: "token", self: true, token: { name: "crm", env: "CRM", hosts: "x.io" } }),
     Error,
-    "nothing to keep to steering",
+    "it has no chat with itself",
   );
 });
 

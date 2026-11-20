@@ -54,7 +54,7 @@ export const SPEC: ConnectorSpec = {
       key: "historyDays",
       value: DEFAULT_HISTORY_DAYS,
       doc:
-        "how many days of every chat a sign-in imports, as history: kept and searchable, never news; a file is named and left on Telegram. 0 imports nothing",
+        "the most days of every chat a sign-in imports, as history, from where the listening stopped: kept and searchable, never news; a file is named and left on Telegram. 0 imports nothing, nor does an account kept to its chat with itself",
       check: (v) =>
         Number.isInteger(v) && (v as number) >= 0 ? null : "must be a whole number, 0 or more",
     },

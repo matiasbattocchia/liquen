@@ -295,31 +295,44 @@ calendar, holds no Teams subscription, and hosts no room.
 The store merges `extra` as an RFC 7396 patch, so a connector writes only the key it
 learns — `{ mirrors: { dms: { sol: "D77" } } }` — and removes one by patching it to `null`.
 
-### An account kept to steering: `extra.steering`
+### An account kept to its chat with itself: `extra.self_only`
 
-A door that signs in an owned account may keep it to steering (`--steering`, the `connect`
-tool's `steering`, `STEERED` in `connect/steering.ts`): the row says `extra.steering: true`,
+A door that signs in an owned account may keep it to its self chat (`--self`, the `connect`
+tool's `self`, `SELF_SERVICES` in `connect/self.ts`): the row says `extra.self_only: true`,
 and each sign-in says it anew, `null` when it does not. The account is then its owner's
-mind surfaces and nothing more. The log's gate takes a new row on it only in one of them
-(the `aliases` view) or in `connect`, the grant note's conversation, whoever writes it;
-a patch, which stamps a row already in, passes. So an ingest on such an account publishes
-through `steered` beside `marked`:
+chat with itself and nothing more. The log's gate takes a new row on it only there (the
+`aliases` view's self row) or in `connect`, the grant note's conversation, whoever writes
+it; a patch, which stamps a row already in, passes. So an ingest on such an account
+publishes through `keptToSelf` beside `marked`:
 
 ```ts
-const publish = steered(marked(log.publish, createMarks({ read, knobs })), log);
+const publish = keptToSelf(marked(log.publish, createMarks({ read, knobs })), log);
 ```
 
 which leaves out what the gate would refuse, by the same rows, so a publish tried again
 never meets a refusal. Skip the rest of the account before mapping it where the wire
-costs something: Telegram's ingest maps only the account's chat with itself and its
-direct chats with roster members, so nothing else has its file fetched, its stranger's
-about text read or its history imported. The agent does not speak through the account
-(`speaksThrough`), so no send, book or room reaches it.
+costs something: Telegram's ingest maps only Saved Messages, so nothing else has its file
+fetched or its stranger's about text read. Such an account imports no history: Telegram's
+import is skipped, a WhatsApp pairing asks the phone for none, and the ingest drops a
+history batch on the row whatever the bridge sends. The agent does not speak through the
+account (`speaksThrough`), so no send, book or room reaches it.
 
 A row must say it before its first line lands. Telegram's door writes the row before the
 process opens the session. A WhatsApp row is made by main when the pairing lands
 (`landWhatsApp`); the bridge's session events only move the state of a row that stands,
 and the batches it sends before then are refused at the gate and sent again.
+
+### A sign-in's history: from where the listening stopped
+
+A connector that imports history at a sign-in imports what the log is missing and no more
+(`connect/history.ts`): `heardUntil` reads the newest line the wire brought of the
+account before the sign-in, leaving out what lands whether the wire is up or not
+(imported history, the mirror's copies, an agent's sends, the door's note, the account's
+own mind surfaces), and `historySince` starts the range there, never further back than
+the connection's `historyDays`. Telegram's process imports every chat from that moment. A
+WhatsApp pairing names it to the bridge as `history_since` (or `no_history`), since the
+phone hears the ask at pairing alone: the bridge asks the phone for the whole days back to
+it and posts no message older.
 
 ### The address book: the service keeps it, the name carries it
 
@@ -1049,8 +1062,8 @@ signs an account in: a QR code to scan (Settings → Devices → Link Desktop De
 `--phone` the code Telegram sends, then the two-step password when the account has one.
 It writes the session string to the vault as `telegram:<user id>`, one connection row at
 the user id, and the grant's note; an owned account's Saved Messages is its
-`mirrors.self`. With `--steering` the row keeps the account to its owner's mind surfaces
-(§1, an account kept to steering). A running process takes the account up when that note
+`mirrors.self`. With `--self` the row keeps the account to its Saved Messages (§1, an
+account kept to its chat with itself). A running process takes the account up when that note
 lands, and leaves every other account's session as it was.
 
 **The accounts follow the store** (`accounts.ts`). The sessions the process holds are the
@@ -1067,9 +1080,11 @@ stands soft-deleted and its key is gone, two facts only a removal writes; a row 
 merely leaves out is closed with its session kept. If Telegram cannot be reached, the
 removal says so and points to Devices.
 
-**A sign-in imports the history.** An opening that follows a sign-in reads every chat's
-last `historyDays` (60), one chat at a time behind the live session, sitting out a flood
-wait, and publishes it as `backfill`: kept and searchable, never news. After the sign-in,
+**A sign-in imports the history.** An opening that follows a sign-in reads every chat from
+where the listening stopped, never further back than `historyDays` (60; §1, a sign-in's
+history), one chat at a time behind the live session, sitting out a flood wait, and
+publishes it as `backfill`: kept and searchable, never news. A self-only account imports
+none. After the sign-in,
 any line dated before it is history, the import's and the session's replay alike. A file
 is named and left on Telegram, and a stranger's about text is not read. The sign-in is the
 door's grant note; the one whose history is in is kept beside the cache

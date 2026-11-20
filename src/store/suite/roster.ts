@@ -101,14 +101,14 @@ export function rosterSuite(s: Substrate): void {
     });
   });
 
-  Deno.test("an account kept to steering is its owner's mind surfaces and no voice: still a person's agent, steered by itself", async () => {
+  Deno.test("a self-only account is its owner's chat with itself and no voice: still a person's agent, steered by itself", async () => {
     const agents: AgentPut[] = [{ agentId: "matias", mind: "mind@matias" }];
     const connections: ConnectionRow[] = [
       {
         service: "telegram",
         address: "700",
         agentId: "matias",
-        extra: { mirrors: { self: "700" }, steering: true },
+        extra: { mirrors: { self: "700" }, self_only: true },
       },
       { service: "whatsapp", address: "549115550001", credentialKey: "whatsapp:549115550001" },
     ];
