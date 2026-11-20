@@ -4030,8 +4030,8 @@ loudly, the same law as an unknown config key.
   reads on.
 - **One port, and the connectors listen where they live.** The org binds one port,
   `edge.port`, and nothing else: every connector serves its ingest on a Unix socket under
-  the org's own folder, `data/run/<service>.sock`, and main serves a sign-in door on
-  `data/run/<service>-oauth.sock` while one of its sign-ins is open (`socketOf`,
+  the org's own folder, `data/run/ingest/<service>.sock`, and main serves a sign-in door on
+  `data/run/oauth/<service>.sock` while one of its sign-ins is open (`socketOf`,
   src/edge.ts; `serveIngest`, src/connect/serve.ts). The location is the whole address, so a connector declares
   nothing to be reachable, two orgs on one machine never meet, and a socket somebody
   already answers on is refused rather than stolen. Whatever dials the org on this host —
@@ -4048,7 +4048,17 @@ loudly, the same law as an unknown config key.
   them by name; `edge.tunnel` is an argv `liquen start` keeps alive beside the org for the
   one that runs here. Behind the port stands the edge process, always one child of the
   supervisor: it forwards each path to the socket the grammar names, an ingest handed the
-  path under its root, a door the path as it came. Nothing at an ingest is a 502 naming
+  path under its root, a door the path as it came. It forwards into the two leg folders
+  alone, so no path reaches the sockets the org keeps beside them — main's and the run's,
+  which answer whoever reaches them — and only for a connector the org has
+  (`connectorsOf`: the shipped ones and its own under `connectors/`). Any other name is a
+  404 its log names once, and the folders are kept to that (`keepLegs`): anything that
+  appears in one that is not a socket named for a connector, a server another process
+  put there or a link to another socket, is removed and said. It listens on loopback, both
+  families, when everything that dials it is on this machine — the org's own tunnel, a
+  browser, the bridge — and on every interface when the `publicUrl` is answered by
+  something the org does not run, a host's proxy or a platform's router (`listensOn`), so
+  the port is no door to the LAN unless it must be. Nothing at an ingest is a 502 naming
   the socket; nothing at a door is a 410 telling the person no sign-in is open, since a
   door stands only while one is, and a page reloaded after its sign-in finished meets it
   closed. The doors DERIVE the address rather than ask for it — the portal

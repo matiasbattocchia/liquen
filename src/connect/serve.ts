@@ -72,7 +72,7 @@ export function serveLeg(
   return serveSocket(socketOf(root, service, leg), handler);
 }
 
-/** Serve an ingest at `data/run/<service>.sock`, naming itself to a `GET /` and handing
+/** Serve an ingest at `data/run/ingest/<service>.sock`, naming itself to a `GET /` and handing
  *  everything else to `handler`. */
 export function serveIngest(
   root: string,

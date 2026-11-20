@@ -42,7 +42,7 @@ Deno.test("requireIngest: a fresh org gets the declaration, then the refusal —
     const err = await assertRejects(() => requireIngest(root, spec, {}, 30));
     assertStringIncludes(
       (err as Error).message,
-      `nothing is listening at ${root}/data/run/acme.sock`,
+      `nothing is listening at ${root}/data/run/ingest/acme.sock`,
     );
     assertStringIncludes((err as Error).message, "liquen start");
     // the store now says the org has acme — `liquen start` runs it from here on

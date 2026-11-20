@@ -7553,6 +7553,38 @@ grant of their own. Microsoft is left: a Teams self-chat steers, but the account
 its mail, calendar and the Graph token the agent's shell is handed, and keeping it to its
 self chat means holding all three back.
 
+### The edge forwarded to the org's own sockets (2026-11-20) — FIXED
+
+The edge turned `/<name>/ingest` into `data/run/<name>.sock` for any name the grammar
+took, and the org's control sockets lived in the same folder. Making them owner-only
+kept nothing out, since the edge runs as their owner. So, from the internet, through
+`new.liquen.dev`, with nothing asked of the caller:
+
+- `/liquen/ingest` reached the run's socket: `{ restart }` restarted any process.
+- `/main/ingest` reached main's: `{ agent, down }` took an agent down, and a GET listed
+  every agent.
+- `/main/ingest/sign-in` opened a sign-in for any service and agent, and streamed back its
+  link, QR or pairing code. Someone could pair their own phone to an agent, and that
+  account's chat with itself steers the agent.
+- `/buscador/ingest` reached a site an agent serves from its folder: the agent had found
+  the route and published through it.
+
+A malformed POST to the first two answered from outside, the run with its own words. Now
+the connector sockets live in a folder per leg, `data/run/ingest/` and `data/run/oauth/`,
+and the edge forwards into those two and to the pages alone. It forwards only for a
+connector the org has (`connectorsOf`: the shipped ones and each folder under
+`connectors/`): any other name is a 404, said once in its log. `keepLegs` keeps the
+folders to that: anything in one that is not a socket named for a connector, a server
+another process put there or a link to another socket, is removed as it appears and
+said. And the edge listens on loopback, 127.0.0.1 and ::1, unless a `publicUrl` is
+published by something the org does not run (no `edge.tunnel`), as a container behind a
+platform's router is (`listensOn`). Until now it listened on every interface, which put
+every org on the LAN and the tailnet.
+
+Left as it was: a process of the org's own user can still bind a connector's socket while
+that connector is down, and the edge would forward to it. With `sandbox: null` an agent
+is that user and reaches main's socket anyway; `bwrap` shows it neither.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

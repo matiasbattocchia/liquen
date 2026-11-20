@@ -947,7 +947,7 @@ export function parseDeclared(raw: string, path: string): Declared {
     if (!SERVICE_NAME.test(name)) {
       throw new Error(
         `${path}: connections.${name} — a connection's name is its path on the edge ` +
-          `(/<name>/ingest) and its socket (data/run/<name>.sock): lowercase letters, digits ` +
+          `(/<name>/ingest) and its socket (data/run/ingest/<name>.sock): lowercase letters, digits ` +
           `and dashes, starting with a letter`,
       );
     }

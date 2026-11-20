@@ -1003,7 +1003,7 @@ function json(status: number, body: unknown): Response {
 
 /* ── local entry: HTTP server the session's webhook_url points at ─────────────────────
  *
- *   deno task run:whatsapp        # serves data/run/whatsapp.sock behind the edge — the
+ *   deno task run:whatsapp        # serves data/run/ingest/whatsapp.sock behind the edge — the
  *                                 # address the pairing door registered
  *
  * Env: WA_BRIDGE_TOKEN (must equal the bridge's BRIDGE_TOKEN; required). */
