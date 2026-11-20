@@ -11,7 +11,13 @@
  * with no exec plane has no proxy either, and a remote sandbox brings its own.
  */
 
-import { type ExecGround, type ExecPlane, installExecGround, shippedAt } from "./exec/bash.ts";
+import {
+  type ExecGround,
+  type ExecPlane,
+  type GroundCommand,
+  installExecGround,
+  shippedAt,
+} from "./exec/bash.ts";
 import type { ShellUpdate } from "./exec/jobs.ts";
 import { type Files, localFiles } from "./store/media.ts";
 import type { Store } from "./store/mod.ts";
@@ -53,6 +59,10 @@ export interface Sandbox {
   /** Take an agent's ground away: its shells' jobs ended, and no one else's. */
   remove(agentId: string): Promise<void>;
   forAgent(agentId: string): SandboxAgent;
+  /** How `argv` runs on an agent's ground, standing at `cwd`, its ground prepared first: a
+   *  process of its own beside its shells, an artifact's server (artifact-servers.ts).
+   *  Throws where the ground is not this machine. */
+  command(agentId: string, argv: string[], cwd: string): Promise<GroundCommand>;
   /** Stop the proxy, and with `jobs: "end"` kill every shell's jobs (the org was stopped);
    *  else leave them running for the next harness to adopt (§9). */
   close(opts?: { jobs?: "end" | "leave" }): Promise<void>;
@@ -187,6 +197,10 @@ export async function openLocalSandbox(
         },
       };
     },
+    async command(agentId, argv, cwd) {
+      await add(agentId);
+      return await grounds.get(agentId)!.command(argv, cwd);
+    },
     async close({ jobs = "end" } = {}) {
       await closeShells(shells.values(), jobs); // each session's own jobs (§9)
       for (const ground of grounds.values()) await ground.close(jobs);
@@ -306,6 +320,14 @@ export function openCloudflareSandbox(
           };
         },
       };
+    },
+    command(agentId) {
+      return Promise.reject(
+        new Error(
+          `agent ${agentId}'s shells run in a Cloudflare sandbox: an artifact's server runs on ` +
+            "this machine, beside main",
+        ),
+      );
     },
     async close({ jobs = "end" } = {}) {
       await closeShells(shells.values(), jobs);

@@ -1406,28 +1406,49 @@ The 3×2 grid, each cell real and distinct:
   ticket's, never the link's. With the `agent` tool beside it, offered only where an
   agent's `tools` names it, one agent provisions another: the agent made with a member's
   email, then a sign-in for it sent to that member.
-  **A page is a folder an agent publishes for WhatsApp conversations** (`src/pages.ts`,
-  the `publish` tool in `src/exec/publish.ts`), gated `ask` as a send is. The folder lies
-  below the agent's own or below `shared/`, and the session's files port reads it whole,
-  dot-named entries left out, so the agent publishes only what it could attach. A folder
-  is one page: publishing it again replaces its files under `pages/<id>/` in the object
-  store and keeps its link. Its row is in the vault under `page:<id>`, for `pages.days`
-  from the last publish, owned by the agent that published it last: its view vouches for
-  every conversation on the list, and a group's roster is read through it. Any agent that
-  reaches the folder publishes it again or takes it down with `cancel`, so a page in
-  `shared/` is every agent's, and the anchor's `pages` section lists the live pages each
-  agent reaches. Main serves a page behind the edge, in two steps. The door,
-  `/pages/<id>`, admits a visitor whose login belongs to the page: a direct chat's own
-  number, or a seat on a group's roster as the bridge reads it at that moment. The box, `/pages/<id>/<view>/`, serves the files under
-  a view key signed for that page alone, and every file wears the headers that close it
-  in: it loads only its own files (`default-src 'self'`) and runs in an origin of its own
-  (`sandbox` without `allow-same-origin`), so it reaches neither other pages nor the
-  login. The login is a cookie that names a phone, signed with the vault's `pages:sign`
-  key. Each direct chat's link carries a token of its own that logs its person in once,
+  **An artifact is a folder an agent publishes for WhatsApp conversations and for its
+  principals** (`src/artifacts.ts`, the `publish` tool in `src/exec/publish.ts`), gated
+  `ask` as a send is, its card naming each person by name and number, what it shows, and
+  what its server reaches. The folder lies below the agent's own or below `shared/`, and
+  what it holds says what it is: `public/`, read whole through the session's files port,
+  dot-named entries left out, is what it shows; `server.ts` is its server; either one or
+  both, a page, an API or an app. A folder is one artifact: publishing it again replaces
+  its files, starts its server anew, and keeps its link, `/artifacts/<slug>`, the slug
+  made from the title at the first publish. `public/`'s files are copied into the object
+  store, each named by its content under the artifact's own id (`artifacts/<id>/<hash>`);
+  what the server reads stays in the folder and is never copied. Its row is in the vault
+  under `artifact:<slug>`, for `artifacts.days` from the last publish, owned by the agent
+  that published it last: its view vouches for every conversation on the list, a group's
+  roster is read through it, and the server runs on its ground. The agent's principals are
+  always on the list, by the phone the roster holds for each. Any agent that reaches the
+  folder publishes it again or takes it down with `cancel`, so an artifact in `shared/` is
+  every agent's, and the anchor's `artifacts` section lists the live ones each agent
+  reaches. **The server** (`src/artifact-servers.ts`) is `deno run` from the folder with
+  what the artifact was published with and no more: its folder to read and write, the
+  `hosts` it named, the socket it listens on, the environment the agent's shell is issued
+  (the egress proxy fronts its tokens there), inside the agent's bubble when the org runs
+  one, its imports mapped to the package's `artifact` module alone. Published `native`, it
+  loads the native libraries npm packages ship, which run outside Deno's checks. Main
+  starts it at the publish and at boot, again when it ends, and stops it at a `cancel` or
+  when its days run out; its lines go to the run's log and to `.artifact.log` beside it.
+  Main serves an artifact behind the edge, in two steps. The door, `/artifacts/<slug>`,
+  admits a visitor whose login belongs to it: a direct chat's own number, a principal's,
+  or a seat on a group's roster as the bridge reads it at that moment. The box,
+  `/artifacts/<slug>/<view>/`, opens under a view key that names the visitor's phone,
+  signed for that artifact alone: a path that is one of `public/`'s files is served from
+  the store, and any other goes to the server on the socket in its folder, a link there
+  never followed, with the phone in `liquen-visitor` and the login cookie left out. Every
+  answer, the server's too, wears the headers that close it in: it loads only its own
+  files (`default-src 'self'`) and runs in an origin of its own (`sandbox` without
+  `allow-same-origin`), so it reaches neither other artifacts nor the login. The login is
+  a cookie that names a phone, signed with the vault's `artifacts:sign` key. Each direct
+  chat's and principal's link carries a token of its own that logs its person in once,
   posted by a button so a previewer that only fetches spends nothing. Anyone else types
   their number: main checks it belongs before anything is sent, DMs a code from the
-  account of the conversation that admits it, through the bridge, with no line in the log, so no agent ever holds a code, and answers
-  the same whether or not it sent one.
+  account of a conversation that admits it, through the bridge, with no line in the log,
+  so no agent ever holds a code, and answers the same whether or not it sent one; a code
+  to a principal goes out only from an account not their own, since their own would land
+  in the chat with themselves. Where this is weak is `ARTIFACTS.md`.
   **The two Slack doors (`liquen connect slack {app,user}`, `connect/slack/connect.ts`)**: the dashboard's
   "Install to Workspace" button IS an OAuth flow with Slack hosting the redirect, so a
   dev self-serves tokens with zero public surface — `app` is one sitting at the console:
@@ -2004,7 +2025,7 @@ invalidates nothing) and **authority** (the non-spoofable operator channel — u
   is still in the air: surfaces that are down, background jobs, **today**, the wakes after
   it, open approvals (§9 — pending state, not history: the transcript already closed those
   calls, so the only honest place for them is the block that restates the state), the
-  **unanswered conversations**, and the live **pages** the agent reaches (§9). **Today** and **tomorrow** are each day as a phone's agenda
+  **unanswered conversations**, and the live **artifacts** the agent reaches (§9). **Today** and **tomorrow** are each day as a phone's agenda
   shows it (`agenda.ts`): the calendar's events the log holds for the day, a series on each
   day its rule takes; each line of every doc the agent reads dated `@` that day, or
   repeating onto it by the `every` that follows its moment (read as the same RRULE a series
@@ -4069,10 +4090,10 @@ loudly, the same law as an unknown config key.
   address changes. With no `publicUrl` the org is reached on localhost only, and what
   needs the internet to dial in — Graph's push, a member's Slack sign-in, a GitHub webhook
   short of `gh webhook forward` — waits for the address to exist, said by the door.
-- **Pages stand beside the grammar.** `<base>/pages/<id>` is a page an agent published,
-  and the edge hands every path under `/pages/` to `data/run/pages.sock`, which main
-  serves, as it came (`pagesSocket`). With main down the edge answers 502, as it does for
-  an ingest.
+- **Artifacts stand beside the grammar.** `<base>/artifacts/<slug>` is what an agent
+  published, and the edge hands every path under `/artifacts/` to
+  `data/run/artifacts.sock`, which main serves, as it came (`artifactsSocket`). With main
+  down the edge answers 502, as it does for an ingest.
 - **A crash comes back, a refusal does not.** `entry` picks the exit code by the same rule
   it picks the message: an `Error` the program modeled is a refusal and exits `REFUSAL`
   (2), the runtime's own is a fault and exits 1. The supervisor reads that code (`comesBack`, src/start.ts): a

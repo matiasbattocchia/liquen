@@ -72,7 +72,7 @@ import {
   silent,
   unloadOf,
 } from "../render.ts";
-import { describeCall, describeSendCard, nameResolver } from "../describe.ts";
+import { describeArtifactCard, describeCall, describeSendCard, nameResolver } from "../describe.ts";
 import { roomOnly } from "../room.ts";
 import { clipStart } from "../exec/truncate.ts";
 import { SENDER_EMAIL, SENDER_NAME, senderEmail, senderFacts } from "../sender.ts";
@@ -698,10 +698,12 @@ async function ccParts(
     // principal's own. The reply syntax rides along — the surface has no key bindings.
     const ask = (e as PermissionRequestEvent).parts[0].data;
     // a send is laid out in rows — where, what it answers, what it says — because the
-    // judgment is over the words as the other end will read them; any other call is its
-    // one line in full
+    // judgment is over the words as the other end will read them; a publish in rows too,
+    // who it is for and what its server reaches; any other call is its one line in full
     const body = ask.send
       ? `**${ask.tool}**\n\n${describeSendCard(ask.send, w.card)}`
+      : ask.artifact
+      ? `**${ask.tool}**\n\n${describeArtifactCard(ask.artifact, w.artifact)}`
       : boldName(ask.detail);
     return same([{
       type: "text",

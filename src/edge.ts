@@ -26,10 +26,10 @@
  * ingest's socket is a 502 that names it, a service whose process is down; nothing at a
  * door is a 410 that tells the person no sign-in is open, since a door stands only while
  * one is; and a path outside the grammar is a 404. One more head stands beside the
- * grammar: `/pages/…`, the pages agents publish, goes to `data/run/pages.sock`, which
- * main serves, with the path as it came (`pagesSocket`).
+ * grammar: `/artifacts/…`, what agents publish, goes to `data/run/artifacts.sock`, which
+ * main serves, with the path as it came (`artifactsSocket`).
  *
- * The edge forwards into the two leg folders and to the pages alone, so no path reaches
+ * The edge forwards into the two leg folders and to the artifacts alone, so no path reaches
  * the org's own sockets beside them in `data/run` — main's, the run's, which answer
  * whoever reaches them. And it forwards only for a connector the org has
  * (`connectorsOf`: the shipped ones and its own under `connectors/`): any other name is a
@@ -98,24 +98,24 @@ export function listensOn(edge: Pick<OrgConfig["edge"], "publicUrl" | "tunnel">)
   return edge.publicUrl && !edge.tunnel ? ["::"] : ["127.0.0.1", "::1"];
 }
 
-/** The socket main serves the pages on (pages.ts): every path under `/pages/`, handed as
- *  it came. */
-export function pagesSocket(root: string): string {
-  return `${root}/data/run/pages.sock`;
+/** The socket main serves the artifacts on (artifacts.ts): every path under
+ *  `/artifacts/`, handed as it came. */
+export function artifactsSocket(root: string): string {
+  return `${root}/data/run/artifacts.sock`;
 }
 
-/** Whether a path is a page's: `/pages/<id>` and everything under it. */
-export function isPagePath(pathname: string): boolean {
-  return pathname.startsWith("/pages/");
+/** Whether a path is an artifact's: `/artifacts/<slug>` and everything under it. */
+export function isArtifactPath(pathname: string): boolean {
+  return pathname.startsWith("/artifacts/");
 }
 
-/** Where a page opens: under `publicUrl` when the org has one, else on this machine's
+/** Where an artifact opens: under `publicUrl` when the org has one, else on this machine's
  *  edge. */
-export function pageAddress(
+export function artifactAddress(
   edge: Pick<OrgConfig["edge"], "publicUrl" | "port">,
-  id: string,
+  slug: string,
 ): string {
-  return `${edge.publicUrl ?? localBase(edge.port)}/pages/${id}`;
+  return `${edge.publicUrl ?? localBase(edge.port)}/artifacts/${slug}`;
 }
 
 /** A path under the grammar: the service, the leg, and the path the leg is handed. */
@@ -152,9 +152,9 @@ export function createEdge(root: string, say: Say = toLog): (req: Request) => Pr
   };
   return async (req) => {
     const url = new URL(req.url);
-    const page = isPagePath(url.pathname);
-    const at = page ? null : routeOf(url.pathname);
-    if (!page && !at) return text(404, "no such door");
+    const artifact = isArtifactPath(url.pathname);
+    const at = artifact ? null : routeOf(url.pathname);
+    if (!artifact && !at) return text(404, "no such door");
     if (at && !connectorsOf(root).has(at.service)) {
       if (!refused.has(at.service)) {
         if (refused.size >= REFUSED_KEPT) refused.clear();
@@ -163,7 +163,7 @@ export function createEdge(root: string, say: Say = toLog): (req: Request) => Pr
       }
       return text(404, "no such door");
     }
-    const sock = at ? socketOf(root, at.service, at.leg) : pagesSocket(root);
+    const sock = at ? socketOf(root, at.service, at.leg) : artifactsSocket(root);
     const rest = at ? at.rest : url.pathname;
     const headers = new Headers(req.headers);
     headers.set("x-forwarded-host", url.host);
@@ -190,7 +190,7 @@ export function createEdge(root: string, say: Say = toLog): (req: Request) => Pr
         502,
         at
           ? `${at.service}'s ${at.leg} is not listening (${where})`
-          : `pages are not served (${where})`,
+          : `artifacts are not served (${where})`,
       );
     }
     // the leg's answer as it gave it, a sign-in's redirect included; the framing headers
@@ -250,7 +250,7 @@ export async function keepLegs(root: string, say: Say = toLog): Promise<() => vo
   }
   (async () => {
     for await (const ev of watcher) for (const path of ev.paths) await tend(path);
-  })();
+  })().catch((err) => say(`the watch on data/run/{ingest,oauth} ended: ${err}`));
   return () => watcher.close();
 }
 

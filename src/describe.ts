@@ -23,6 +23,7 @@
  */
 
 import type {
+  ArtifactPreview,
   Carried,
   ContactsPart,
   Conversation,
@@ -59,10 +60,14 @@ export function addressReads(kind?: Conversation["kind"]): boolean {
 
 /** The arguments that carry a wire address, and so are offered to `resolve`: `send(to:)` —
  *  the one a human weighs before approving — `search(in:/from:)`, which name the
- *  conversation searched and the voice searched for, and `contact(who:)`, the person an
- *  address book entry is written for. An argument under any other key is prose and
- *  prints as written. */
-const ADDRESSED = new Set(["to", "in", "from", "who"]);
+ *  conversation searched and the voice searched for, `contact(who:)`, the person an
+ *  address book entry is written for, and `publish(with:)`, a list of the conversations an
+ *  artifact is for. An argument under any other key is prose and prints as written. */
+const ADDRESSED = new Set(["to", "in", "from", "who", "with"]);
+
+/** An addressed argument's addresses: the one it holds, or each of a list's. */
+const addressesIn = (v: Json): string[] =>
+  typeof v === "string" ? [v] : Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
 
 export interface DescribeOpts {
   resolve?: Resolve;
@@ -183,6 +188,66 @@ export function describeSendCard(p: SendPreview, labels: SendCardLabels): string
   return rows.join("\n\n");
 }
 
+/** The publish CARD (§9): the artifact as it will go up, in rows. Who it is for reads the
+ *  way the send card's conversation does, a person by name and number and a group by its
+ *  name, a principal said so; what its server reaches and whether it loads native code is
+ *  the part a person weighs. Labels are the surface's tongue; the values are the call's. */
+export function describeArtifactCard(p: ArtifactPreview, labels: ArtifactCardLabels): string {
+  const who = p.with.map((w) =>
+    w.kind === "group"
+      ? w.name
+      : w.kind === "principal"
+      ? `${w.name} (${w.address}, ${labels.principal})`
+      : `${w.name} (${w.address})`
+  );
+  const rows = [
+    `**${labels.artifact}**: "${p.title}" · ${labels.kinds[p.kind]}${
+      p.again ? ` (${labels.again})` : ""
+    }`,
+    `**${labels.link}**: ${p.link}`,
+    `**${labels.folder}**: ${p.folder}`,
+    `**${labels.for}**: ${who.join(", ")}`,
+  ];
+  if (p.files > 0) rows.push(`**${labels.shows}**: ${labels.files(p.files, sizeWords(p.bytes))}`);
+  if (p.server) {
+    const bits = [
+      "server.ts",
+      p.server.hosts.length
+        ? `${labels.reaches} ${p.server.hosts.join(", ")}`
+        : labels.reachesNothing,
+      ...(p.server.native ? [p.server.bubbled ? labels.nativeBubble : labels.nativeBare] : []),
+    ];
+    rows.push(`**${labels.server}**: ${bits.join(" · ")}`);
+  }
+  rows.push(`**${labels.until}**: ${p.until}`);
+  return rows.join("\n");
+}
+
+/** A size as a person reads it. */
+function sizeWords(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+export interface ArtifactCardLabels {
+  artifact: string;
+  kinds: Record<ArtifactPreview["kind"], string>;
+  again: string;
+  link: string;
+  folder: string;
+  for: string;
+  principal: string;
+  shows: string;
+  files: (n: number, size: string) => string;
+  server: string;
+  reaches: string;
+  reachesNothing: string;
+  nativeBare: string;
+  nativeBubble: string;
+  until: string;
+}
+
 export interface SendCardLabels {
   conversation: string;
   last: string;
@@ -285,7 +350,11 @@ function generic(input: Json, opts: DescribeOpts): string {
  *  name alone. Anything unresolved or unaddressed stands as written: a name nothing answers
  *  to is still what the model asked for. */
 function named(key: string, v: Json, opts: DescribeOpts): Json {
-  if (typeof v !== "string" || !ADDRESSED.has(key)) return v;
+  if (!ADDRESSED.has(key)) return v;
+  if (Array.isArray(v) && v.every((x) => typeof x === "string")) {
+    return v.map((x) => named(key, x, opts) as string).join(", ");
+  }
+  if (typeof v !== "string") return v;
   const who = opts.resolve?.(v);
   if (who === undefined) return v;
   return opts.full ? landing(who) : who.name;
@@ -302,9 +371,11 @@ function landing(who: Landing): string {
 export function landings(call: ToolCall, resolve: Resolve): string[] {
   const out: string[] = [];
   for (const [k, v] of Object.entries(argsOf(call.input))) {
-    if (!ADDRESSED.has(k) || typeof v !== "string") continue;
-    const who = resolve(v);
-    if (who) out.push(landing(who));
+    if (!ADDRESSED.has(k)) continue;
+    for (const one of addressesIn(v)) {
+      const who = resolve(one);
+      if (who) out.push(landing(who));
+    }
   }
   return out;
 }
@@ -327,8 +398,11 @@ const NAME_REACH = 200;
 export async function nameResolver(read: Reader["read"], calls: ToolCall[]): Promise<Resolve> {
   const shown = new Map<string, Landing>();
   for (const { input } of calls) {
-    for (const [k, v] of Object.entries(argsOf(input))) {
-      if (!ADDRESSED.has(k) || typeof v !== "string" || v === "" || shown.has(v)) continue;
+    const asked = Object.entries(argsOf(input)).flatMap(([k, v]) =>
+      ADDRESSED.has(k) ? addressesIn(v) : []
+    );
+    for (const v of asked) {
+      if (v === "" || shown.has(v)) continue;
       const rows = await read({ conversation: v, limit: NAME_REACH });
       if (rows.length > 0) {
         const name = nameIn(rows);

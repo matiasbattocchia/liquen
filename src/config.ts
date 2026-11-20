@@ -166,8 +166,8 @@ export const DEFAULT_EDGE_PORT = 8787;
 export const DEFAULT_DECISION_MODEL = "claude-haiku-5-5";
 export const DEFAULT_DECISION_EFFORT: Effort = "low";
 
-/** How long a page lives from its publishing, in days (`pages.days`). */
-export const DEFAULT_PAGE_DAYS = 30;
+/** How long an artifact lives from its publishing, in days (`artifacts.days`). */
+export const DEFAULT_ARTIFACT_DAYS = 30;
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 /** What a surface hears of the mind at work, quietest first (§9). */
@@ -270,8 +270,8 @@ export interface OrgConfig {
     /** The tunnel's argv, supervised by `liquen start`; null ⇒ the operator runs one. */
     tunnel: string[] | null;
   };
-  pages: {
-    /** How long a page lives from its publishing, in days. */
+  artifacts: {
+    /** How long an artifact lives from its publishing, in days. */
     days: number;
   };
   /** The decision model (§2): a cheap call that judges each room's news green, yellow or
@@ -561,7 +561,8 @@ const AGENT: Entry[] = [
       'account on a wire whose rooms it may change, "contact" where an account keeps an ' +
       'address book the agent may write, and "agent" where it may make agents. "connect" ' +
       "hands out sign-ins, its own principal's or a member's, and \"publish\" makes a " +
-      "folder a page for WhatsApp conversations to open. With docs: database, read · " +
+      "folder an artifact (a page, an API or an app) for WhatsApp conversations and the " +
+      "agent's principals to open. With docs: database, read · " +
       "write · edit are offered whatever this says: they are the agent's one way to its docs",
   },
   {
@@ -657,12 +658,12 @@ const EDGE: Entry[] = [
   },
 ];
 
-const PAGES: Entry[] = [
+const ARTIFACTS: Entry[] = [
   {
     key: "days",
-    value: DEFAULT_PAGE_DAYS,
-    doc: "how long a page an agent publishes lives, in days from its last publishing; the " +
-      "agent can take it down sooner",
+    value: DEFAULT_ARTIFACT_DAYS,
+    doc: "how long an artifact an agent publishes lives, in days from its last publishing; " +
+      "the agent can take it down sooner",
   },
 ];
 
@@ -694,7 +695,8 @@ const SECTION_DOCS: Record<string, string> = {
   processors: "media processors — broker-side commands that derive text from bytes (§5)",
   edge: "the org's one door — the address the world dials, the one port the org binds, " +
     "and the tunnel",
-  pages: "the pages agents publish for WhatsApp conversations, served at <publicUrl>/pages/<id>",
+  artifacts: "what agents publish for WhatsApp conversations and their principals: pages, APIs " +
+    "and apps, served at <publicUrl>/artifacts/<slug>",
   decision: "the decision model — a cheap call that sorts each room's news into green, " +
     "yellow and red, so the mind wakes for what cannot wait and the digest can be long",
   agents: "the roster: every key is a member — an agent, its folder and its unix user, or " +
@@ -723,7 +725,7 @@ function defaults(): OrgConfig {
     },
     processors: fromEntries(PROCESSORS),
     edge: fromEntries(EDGE),
-    pages: fromEntries(PAGES),
+    artifacts: fromEntries(ARTIFACTS),
     decision: fromEntries(DECISION),
     agents: {},
     connections: {},
@@ -822,7 +824,7 @@ const SCOPES: Record<string, Entry[]> = {
   "shared.connections": CONNECTION,
   processors: PROCESSORS,
   edge: EDGE,
-  pages: PAGES,
+  artifacts: ARTIFACTS,
   decision: DECISION,
 };
 
@@ -905,7 +907,13 @@ export function parseDeclared(raw: string, path: string): Declared {
         "processors",
       ),
       ...leavesOf(asObject(found.edge, path, "edge"), EDGE, "edge", path, "edge"),
-      ...leavesOf(asObject(found.pages, path, "pages"), PAGES, "pages", path, "pages"),
+      ...leavesOf(
+        asObject(found.artifacts, path, "artifacts"),
+        ARTIFACTS,
+        "artifacts",
+        path,
+        "artifacts",
+      ),
       ...leavesOf(
         asObject(found.decision, path, "decision"),
         DECISION,
@@ -1128,7 +1136,7 @@ export function materialize(
   };
   const plain = cfg as unknown as Record<string, Record<string, unknown>>;
   for (
-    const name of ["system", "deployment", "shared", "processors", "edge", "pages", "decision"]
+    const name of ["system", "deployment", "shared", "processors", "edge", "artifacts", "decision"]
   ) {
     section(name);
     const entries = name === "deployment" ? DEPLOYMENT : SCOPES[name];
@@ -1310,10 +1318,10 @@ export function validateOrg(cfg: OrgConfig, path: string): void {
       throw new Error(`${path}: edge.tunnel publishes edge.publicUrl, and publicUrl is null`);
     }
   }
-  if (!(Number.isInteger(cfg.pages.days) && cfg.pages.days > 0)) {
+  if (!(Number.isInteger(cfg.artifacts.days) && cfg.artifacts.days > 0)) {
     throw new Error(
-      `${path}: pages.days must be a positive whole number of days (got ` +
-        `${JSON.stringify(cfg.pages.days)})`,
+      `${path}: artifacts.days must be a positive whole number of days (got ` +
+        `${JSON.stringify(cfg.artifacts.days)})`,
     );
   }
   validateDecision(cfg.decision, path);

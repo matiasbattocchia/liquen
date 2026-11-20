@@ -1,5 +1,12 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { describeCall, describeSendCard, nameResolver } from "./describe.ts";
+import {
+  describeArtifactCard,
+  describeCall,
+  describeSendCard,
+  landings,
+  nameResolver,
+} from "./describe.ts";
+import { words } from "./i18n.ts";
 import type { Event, SendPreview } from "./types.ts";
 
 Deno.test("describeCall: one string argument prints bare — the argument IS the call", () => {
@@ -431,4 +438,73 @@ Deno.test("describeSendCard: rows a person judges — where, what it answers, wh
     answering({ text: "Carlos", carries: ["contacts"], at: "1 Oct 10:02" }),
     "\n[contacto] Carlos\n",
   );
+});
+
+Deno.test("describe: a publish's list of conversations reads by name, and the card's by name and number", async () => {
+  const rows = [
+    {
+      envelope: {
+        conversation: { address: "5491100000001", kind: "direct" },
+        sender: { address: "5491100000001", name: "Ana" },
+      },
+    },
+    { envelope: { conversation: { address: "1203@g.us", kind: "group", name: "Ops" } } },
+  ] as unknown as Event[];
+  const read = (q: { conversation?: string; conversationName?: string }) =>
+    Promise.resolve(rows.filter((r) =>
+      r.envelope.conversation.address === q.conversation ||
+      (q.conversationName !== undefined && r.envelope.conversation.name === q.conversationName)
+    ));
+  const call = { name: "publish", input: { path: "app", with: ["5491100000001", "Ops"] } };
+  const resolve = await nameResolver(read as never, [call]);
+  assertEquals(describeCall(call, { resolve }), "publish(path: app, with: Ana, Ops)");
+  assertEquals(
+    describeCall(call, { resolve, full: true }),
+    "publish(path: app, with: Ana (5491100000001), Ops)",
+  );
+  assertEquals(landings(call, resolve), ["Ana (5491100000001)", "Ops"]);
+});
+
+Deno.test("describeArtifactCard: who it is for, what it shows and what its server reaches, in the surface's tongue", () => {
+  const card = describeArtifactCard({
+    title: "Buscador",
+    kind: "app",
+    link: "https://acme.example.com/artifacts/buscador",
+    folder: "lucas/buscador",
+    again: true,
+    files: 9,
+    bytes: 312 * 1024,
+    server: { hosts: ["api.voyageai.com"], native: true, bubbled: false },
+    with: [
+      { name: "Lucas", address: "5492615550000", kind: "direct" },
+      { name: "Ops", address: "1203@g.us", kind: "group" },
+      { name: "Matías", address: "5491133330000", kind: "principal" },
+    ],
+    until: "2026-12-20",
+  }, words("es").artifact);
+  assertEquals(
+    card,
+    '**Artefacto**: "Buscador" · app (publicado de nuevo)\n' +
+      "**Enlace**: https://acme.example.com/artifacts/buscador\n" +
+      "**Carpeta**: lucas/buscador\n" +
+      "**Para**: Lucas (5492615550000), Ops, Matías (5491133330000, principal)\n" +
+      "**Muestra**: 9 archivos, 312 KB\n" +
+      "**Servidor**: server.ts · llega a api.voyageai.com · código nativo, con el alcance de la " +
+      "organización: ningún sandbox lo contiene\n" +
+      "**Hasta**: 2026-12-20",
+  );
+  const page = describeArtifactCard({
+    title: "Plan",
+    kind: "page",
+    link: "https://acme.example.com/artifacts/plan",
+    folder: "plan",
+    again: false,
+    files: 1,
+    bytes: 900,
+    with: [{ name: "Ana", address: "5491100000001", kind: "direct" }],
+    until: "2026-12-20",
+  }, words("en").artifact);
+  assertStringIncludes(page, '**Artifact**: "Plan" · page\n');
+  assertStringIncludes(page, "**Shows**: 1 file, 900 B\n");
+  assertEquals(page.includes("Server"), false);
 });

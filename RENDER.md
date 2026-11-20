@@ -44,7 +44,7 @@ goes with its words. Each skill the system describes is one file under
 | `now: …` | ✗ | |
 | `cwd: …`, `git: … · clean` | ✗ | `bash.md` |
 | `background — N jobs:` `· … — running 3m, last line "…" · pid N · group N` | ✗ | `bash.md` |
-| `pages — N pages:` `· <folder> — "<title>" · <link> · with … · until 2026-12-16` | ✗ | `publish.md`, `cancel.md` |
+| `artifacts — N artifacts:` `· <folder> — "<title>" · <page\|api\|app> · <link> · with … · until 2026-12-16` | ✗ | `publish.md`, `cancel.md` |
 
 ## World
 

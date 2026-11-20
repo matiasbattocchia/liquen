@@ -7596,6 +7596,43 @@ since a line without its newline is held until it ends, and the row went on sayi
 dropped that session an hour in is not known; the account's device list says whether it
 was ended there.
 
+### Artifacts: a folder is a page, an API or an app (2026-11-20) — LANDED
+
+Lucas's buscador needed what a page could not hold: a 14.5 GB SQLite file with full-text
+and vector search, and a Voyage key to embed each query. dubiku served it itself, a Python
+server under a systemd unit of its own on a socket the edge reached, with a token of its
+own for a login, and the page published beside it carried the token. Pages are artifacts
+now, and an artifact can have a server.
+
+- **The folder says what it is.** `public/` is what it shows, copied into the store;
+  `server.ts` is its server, run from the folder, so what it reads is never copied. Either
+  or both: a page, an API, an app.
+- **The link is the title's,** `/artifacts/<slug>`, taken at the first publish and kept
+  after; a title another live artifact's link took is refused, naming its folder. The row
+  holds an id of its own that the files and every view key are bound to.
+- **The server** is `deno run` with its folder, the `hosts` it was published with, its
+  socket and the agent's environment, where the proxy fronts the agent's tokens; `native`
+  adds the npm cache's native libraries. Main starts it at the publish and at boot, again
+  when it ends, stops it at a cancel or when its days run out, and its lines go to the
+  run's log and to `.artifact.log` beside it. It imports `@liquen/liquen/artifact`, whose
+  `serve(handler)` hands it the visitor's phone, and which run by hand serves the app at
+  `127.0.0.1:8000`.
+- **The box** serves `public/`'s files and hands every other request to the server with
+  the visitor's phone, which the view key now names, and the login cookie left out.
+- **The principals** are on every artifact's list, by the roster's phone, each with a link.
+- **The card** says who it is for by name and number, what it shows, and what its server
+  reaches, in the surface's tongue.
+- **The tool's doc** carries what a skill would: the layout, a server's first lines,
+  `hosts`, `native`, tokens through `connect`, and trying it by hand.
+
+The store's filesystem backend never writes a key twice, and a page's files were kept
+under their paths, so a page published again with a file changed went on serving the old
+one. Files are kept under their content's hash now.
+
+Open: everything `ARTIFACTS.md` lists. `native` is for the buscador, for a few days, until
+its vector search moves off libsql's index. The page `Lucas c/ la Jurisprudencia` on new
+went with the old routes; the buscador comes back as an app once its server is Deno's.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

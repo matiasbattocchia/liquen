@@ -42,6 +42,7 @@ import type {
   Json,
   LightEvent,
   MessageEvent,
+  PermissionAsk,
   PermissionRequestEvent,
   PermissionResponseEvent,
   PermissionVerdict,
@@ -92,7 +93,7 @@ import { roomOnly, roomPart } from "./room.ts";
 import { type ToolShape, wordedAll } from "./tooldoc.ts";
 import { bounded } from "./bounds.ts";
 import { DOC_TOOLS } from "./exec/docs.ts";
-import type { PagesPort } from "./exec/publish.ts";
+import type { ArtifactsPort } from "./exec/publish.ts";
 import type { ConversationRow } from "./store/connections.ts";
 import { momentOf } from "./moment.ts";
 import { calendarEntries, dayOf, daySection, docEntries, docName, nextDay } from "./agenda.ts";
@@ -1159,6 +1160,9 @@ export interface ExecTool extends ToolShape {
    *  mirror's tool line (§9). Optional: `describeCall`'s default already renders a
    *  one-argument tool as `bash(git status)`, which is what most tools want. */
   describe?: Describe;
+  /** What the approval card lays out beside the call's line, for a call a person judges
+   *  better as rows (§9): a publish's artifact. Undefined when it can't be laid out. */
+  card?: (input: Json) => Promise<Pick<PermissionAsk, "artifact"> | undefined>;
 }
 
 /** An output's size in UTF-8 bytes: a string's own, anything else as its JSON. */
@@ -1239,9 +1243,9 @@ export interface XiPorts {
    *  `cause`, who asked for the work (`causeOf`), is what presence reads (§9). */
   onDecision?: (verdict: Decision, cursor: string | undefined, cause?: Cause) => void;
   ambient?: () => Promise<string[]>; // env lines (cwd·git·jobs) for the anchor (§5); edge: absent
-  /** The pages the agent reaches (§9): the anchor's `pages` section, and what `cancel`
-   *  takes down by folder or link. Absent: no pages served. */
-  pages?: PagesPort;
+  /** The artifacts the agent reaches (§9): the anchor's `artifacts` section, and what
+   *  `cancel` takes down by folder or link. Absent: no artifacts served. */
+  artifacts?: ArtifactsPort;
   bins?: () => Promise<BinDir[]>; // the org folder's programs on PATH, for the prefix (§5)
 }
 
@@ -1583,7 +1587,7 @@ async function think(
     ),
     ...typingOn(events, Date.now()),
     ...(await hushedOn(events, config.since, ports.log)),
-    ...(ports.pages ? await ports.pages.standing() : []),
+    ...(ports.artifacts ? await ports.artifacts.standing() : []),
   ];
   // ONE turn per invocation, and `decide` said which: a think, or — nothing owed and the
   // window over budget — the checkpoint, whose summary's insert wakes the next look (§5). A
@@ -1761,6 +1765,7 @@ export async function attachmentsOf(
 const NO_FILES: Files = {
   resolve: (ref) => Promise.reject(new Error(`${ref}: no files to attach here`)),
   folder: (ref) => Promise.reject(new Error(`${ref}: no files here`)),
+  locate: (ref) => Promise.reject(new Error(`${ref}: no files here`)),
 };
 
 /** The anchor's standing lists (§5): what is still in the air — background jobs, surfaces
@@ -2407,6 +2412,9 @@ async function answerer(
                     ),
                   }
                   : {}),
+                // the rows a tool lays its own call out in, a publish's artifact; a card
+                // that can't be laid out is the call's line alone
+                ...(await ports.exec?.[name]?.card?.(use.parts[0].data.input).catch(() => {})),
               },
             }],
           } satisfies Draft<PermissionRequestEvent>,
@@ -3629,11 +3637,11 @@ async function execute(
             `action delete and re ${id}`,
         );
       }
-      // a page the agent reaches, by its folder or its link, as the anchor lists it
-      const down = await ports.pages?.cancel(id);
+      // an artifact the agent reaches, by its folder or its link, as the anchor lists it
+      const down = await ports.artifacts?.cancel(id);
       if (down) return down;
       throw new Error(
-        `"${id}" is not an open ask, an unsent message or a page — it was answered, lapsed ` +
+        `"${id}" is not an open ask, an unsent message or an artifact — it was answered, lapsed ` +
           "or went out, or the id is not one your window and lists name",
       );
     }

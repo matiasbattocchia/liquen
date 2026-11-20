@@ -1,5 +1,7 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import {
+  artifactAddress,
+  artifactsSocket,
   callbackAddress,
   createEdge,
   ingestAddress,
@@ -7,8 +9,6 @@ import {
   legDir,
   listensOn,
   localBase,
-  pageAddress,
-  pagesSocket,
   reached,
   routeOf,
   SIGN_IN_CLOSED,
@@ -150,32 +150,32 @@ Deno.test("createEdge: a signed media path, resolved against the ingest's addres
   }
 });
 
-Deno.test("createEdge: a page's path goes to main's pages socket as it came, and says so when none serves it", async () => {
+Deno.test("createEdge: an artifact's path goes to main's artifacts socket as it came, and says so when none serves it", async () => {
   const root = await Deno.makeTempDir();
   const edge = createEdge(root);
   try {
-    const down = await edge(new Request(`${BASE}/pages/abc`));
+    const down = await edge(new Request(`${BASE}/artifacts/abc`));
     assertEquals(down.status, 502);
-    assertStringIncludes(await down.text(), "pages are not served (data/run/pages.sock)");
+    assertStringIncludes(await down.text(), "artifacts are not served (data/run/artifacts.sock)");
 
     const seen: string[] = [];
-    const pages = await serveSocket(pagesSocket(root), (req) => {
+    const served = await serveSocket(artifactsSocket(root), (req) => {
       const url = new URL(req.url);
       seen.push(url.pathname + url.search);
-      return new Response("a page");
+      return new Response("an artifact");
     });
     try {
-      const open = await edge(new Request(`${BASE}/pages/abc/k1/app.js?t=x`));
-      assertEquals(await open.text(), "a page");
-      assertEquals(seen, ["/pages/abc/k1/app.js?t=x"]);
-      assertEquals((await edge(new Request(`${BASE}/pages`))).status, 404);
+      const open = await edge(new Request(`${BASE}/artifacts/abc/k1/app.js?t=x`));
+      assertEquals(await open.text(), "an artifact");
+      assertEquals(seen, ["/artifacts/abc/k1/app.js?t=x"]);
+      assertEquals((await edge(new Request(`${BASE}/artifacts`))).status, 404);
     } finally {
-      await pages.shutdown();
+      await served.shutdown();
     }
-    assertEquals(pageAddress({ publicUrl: BASE, port: 8787 }, "abc"), `${BASE}/pages/abc`);
+    assertEquals(artifactAddress({ publicUrl: BASE, port: 8787 }, "abc"), `${BASE}/artifacts/abc`);
     assertEquals(
-      pageAddress({ publicUrl: null, port: 8787 }, "abc"),
-      `${localBase(8787)}/pages/abc`,
+      artifactAddress({ publicUrl: null, port: 8787 }, "abc"),
+      `${localBase(8787)}/artifacts/abc`,
     );
   } finally {
     await Deno.remove(root, { recursive: true });

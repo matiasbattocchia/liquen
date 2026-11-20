@@ -400,6 +400,17 @@ export interface Files {
   /** A folder below the agent's own or the shared one, never either root itself, read
    *  whole within the caps. Throws when it is elsewhere, missing, or past a cap. */
   folder(ref: string, most: { files: number; bytes: number }): Promise<Folder>;
+  /** The same folder found and not read: where it lies, and which of `names` stand
+   *  directly in it. Throws where `folder` would for where it is. */
+  locate(ref: string, names: string[]): Promise<Located>;
+}
+
+/** A folder found (`Files.locate`): where it lies, as `Folder` says it, and the names asked
+ *  for that it holds. */
+export interface Located {
+  root: "home" | "shared";
+  path: string;
+  has: Set<string>;
 }
 
 /** The files port over a ground, under a scope: a kept object and a link pass through
@@ -408,6 +419,27 @@ export interface Files {
  *  remote sandbox's (`gatewayFiles`) differ only in the ground and the roots. */
 export function groundFiles(ground: FileGround, scope: FileScope, storage: Storage): Files {
   const within = (root: string, path: string) => path === root || path.startsWith(`${root}/`);
+  /** A folder below the agent's own or the shared one: where it really is, and its root. */
+  const found = async (ref: string): Promise<{ abs: string; root: string }> => {
+    const asked = posix.resolve(scope.cwd?.() ?? scope.home, pathOf(ref));
+    const abs = await ground.real(asked).catch((err) => {
+      throw err instanceof Deno.errors.NotFound
+        ? new Deno.errors.NotFound(`${ref}: no such folder`)
+        : err;
+    });
+    const below = (root: string) => abs.startsWith(`${root}/`);
+    const root = below(scope.home)
+      ? scope.home
+      : scope.shared && below(scope.shared)
+      ? scope.shared
+      : null;
+    if (!root) {
+      throw new Error(
+        `${ref}: a folder below your own or below shared/, not either one itself`,
+      );
+    }
+    return { abs, root };
+  };
   return {
     async resolve(ref) {
       if (isStored(ref) || isExternal(ref)) return { part: await filePartOf(ref, storage) };
@@ -441,23 +473,7 @@ export function groundFiles(ground: FileGround, scope: FileScope, storage: Stora
       };
     },
     async folder(ref, most) {
-      const asked = posix.resolve(scope.cwd?.() ?? scope.home, pathOf(ref));
-      const abs = await ground.real(asked).catch((err) => {
-        throw err instanceof Deno.errors.NotFound
-          ? new Deno.errors.NotFound(`${ref}: no such folder`)
-          : err;
-      });
-      const below = (root: string) => abs.startsWith(`${root}/`);
-      const root = below(scope.home)
-        ? scope.home
-        : scope.shared && below(scope.shared)
-        ? scope.shared
-        : null;
-      if (!root) {
-        throw new Error(
-          `${ref}: a folder below your own or below shared/, not either one itself`,
-        );
-      }
+      const { abs, root } = await found(ref);
       const paths = await ground.list(abs, most.files);
       if (paths.length > most.files) {
         throw new Error(`${ref} holds more than ${most.files} files`);
@@ -480,6 +496,20 @@ export function groundFiles(ground: FileGround, scope: FileScope, storage: Stora
         root: root === scope.home ? "home" : "shared",
         path: posix.relative(root, abs),
         files,
+      };
+    },
+    async locate(ref, names) {
+      const { abs, root } = await found(ref);
+      const has = new Set<string>();
+      for (const name of names) {
+        // what stands there is judged by where it really leads, as a folder's files are
+        const real = await ground.real(posix.join(abs, name)).catch(() => null);
+        if (real && within(root, real)) has.add(name);
+      }
+      return {
+        root: root === scope.home ? "home" : "shared",
+        path: posix.relative(root, abs),
+        has,
       };
     },
   };
