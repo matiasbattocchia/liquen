@@ -7585,6 +7585,17 @@ Left as it was: a process of the org's own user can still bind a connector's soc
 that connector is down, and the edge would forward to it. With `sandbox: null` an agent
 is that user and reaches main's socket anyway; `bwrap` shows it neither.
 
+### A Telegram session Telegram no longer took hung its connector at a prompt (2026-11-20) — FIXED
+
+Restarted an hour after its sign-in, `--self` Telegram never came back: `client.start`
+found the session dead and asked for a phone the way mtcute's Deno client does, on stdin,
+and the prompt waited for good. The log showed `phone >` only when the process was killed,
+since a line without its newline is held until it ends, and the row went on saying
+`connected`. Now the open passes a `phone` that fails at once, so a dead session is
+`SignedOut` as `openTelegram` says, and the row says `signed_out` with why. Why Telegram
+dropped that session an hour in is not known; the account's device list says whether it
+was ended there.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones
