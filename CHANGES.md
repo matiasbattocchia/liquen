@@ -434,6 +434,13 @@ glossary, so a thing that has a name is never given another.
 - **"Look" is no term.** Where this file says a look, the glossary's word is invocation.
 - **The lease answers in the code's words.** `acquire` returns `acquired`, `stolen` or
   `held` (`store/lock.ts`). Where §2 says taken, it means acquired or stolen.
+- **The session lease guards a step.** One invocation holds it for the one step it carries
+  out, and between steps the row is gone, so it is named for the session it serializes:
+  its key is the session's address alone, with no `turn-` before it. `locks` holds no
+  other kind of row.
+- **A step's rows carry a `step_id`.** `turn_id` groups one step's emissions, so it takes
+  the step's name, and turn keeps its one meaning: the loop. `readTurns` and the turn line
+  read the loop, and keep theirs.
 - **The side table is `metrics`.** §10's table keeps what each invocation cost, and its
   name says it is telemetry, not a part of the loop.
 - **A term is a compound noun.** A paragraph names a thing whole the first time it says
