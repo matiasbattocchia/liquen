@@ -146,7 +146,7 @@ Deno.test("publish: a folder's public/ for a chat and a group answers the link a
     assertStringIncludes(out, `Published "The plan" (app), a page: ${base}\n`);
     assertStringIncludes(
       out,
-      `For Ana, sent in your chat with them, a link that logs them in once: ${base}?t=${
+      `For Ana, a link to send in your chat with them, which logs them in once: ${base}?t=${
         a.tokens[ANA]
       }`,
     );
