@@ -18,7 +18,8 @@ The server can read and write its own folder and nothing else, reach only the `h
 
 A folder is one artifact. Publishing it again replaces its files, starts its server anew, keeps its link, and counts its days again from now. The link is made from the title the first time; a title another artifact's link has already taken is refused. Your artifacts stand in your anchor, and `cancel` takes one down by its folder or its link. One in `shared/` is every agent's: build there what another agent will publish, the one that reads the conversations it is for. It is a view of your work for the people it is for: never put a secret in `public/`.
 
-- path: the folder, below your own or below `shared/`
+- path: the folder, below your own (`site`) or below `shared/` (`shared/site`), or its absolute
+  path; never from where your shell stands
 - with: the WhatsApp conversations it is for, direct chats or groups, each its <conv>
   `address` or its name; leave it out for your principals alone, and a later publish keeps
   the list unless this replaces it

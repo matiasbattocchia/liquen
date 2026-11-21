@@ -349,9 +349,10 @@ async function verify(secret: string, payload: string, mac: string): Promise<boo
 
 const encode = (s: string): BufferSource => new TextEncoder().encode(s) as BufferSource;
 
-/** Where an agent's file references may point (§9 data classification): a relative path
- *  is from `cwd` — where the session's shell stands, the anchor's `cwd:` line — else from
- *  `home`, the agent's own folder; `roots` are the directories a reference may resolve
+/** Where an agent's file references may point (§9 data classification): a file's relative
+ *  path is from `cwd` — where the session's shell stands, the anchor's `cwd:` line — else
+ *  from `home`, the agent's own folder, and a folder's from `home` (`Files.folder`);
+ *  `roots` are the directories a reference may resolve
  *  INTO, judged by where the path really leads. The same ground the agent's uid can read;
  *  the harness reads no further. */
 export interface FileScope {
@@ -398,7 +399,10 @@ export interface Files {
    *  agent may attach: the tool_result carries that back as the error it is. */
   resolve(ref: string): Promise<Attached>;
   /** A folder below the agent's own or the shared one, never either root itself, read
-   *  whole within the caps. Throws when it is elsewhere, missing, or past a cap. */
+   *  whole within the caps. Named from the agent's folder, `shared/…` from the shared one,
+   *  or absolute: never from where the shell stands, which moves while a card waits, so
+   *  the folder a card shows is the one its call reads. Throws when it is elsewhere,
+   *  missing, or past a cap. */
   folder(ref: string, most: { files: number; bytes: number }): Promise<Folder>;
   /** The same folder found and not read: where it lies, and which of `names` stand
    *  directly in it. Throws where `folder` would for where it is. */
@@ -414,14 +418,19 @@ export interface Located {
 }
 
 /** The files port over a ground, under a scope: a kept object and a link pass through
- *  (`filePartOf`); a path is resolved from where the shell stands, judged by where it
- *  really leads, read, and kept, content-named. The local adapter (`localFiles`) and a
- *  remote sandbox's (`gatewayFiles`) differ only in the ground and the roots. */
+ *  (`filePartOf`); a file's path is resolved from where the shell stands, a folder's from
+ *  the agent's own (`Files.folder`), judged by where it really leads, read, and kept,
+ *  content-named. The local adapter (`localFiles`) and a remote sandbox's (`gatewayFiles`)
+ *  differ only in the ground and the roots. */
 export function groundFiles(ground: FileGround, scope: FileScope, storage: Storage): Files {
   const within = (root: string, path: string) => path === root || path.startsWith(`${root}/`);
   /** A folder below the agent's own or the shared one: where it really is, and its root. */
   const found = async (ref: string): Promise<{ abs: string; root: string }> => {
-    const asked = posix.resolve(scope.cwd?.() ?? scope.home, pathOf(ref));
+    const path = pathOf(ref);
+    const shared = scope.shared && /^shared(\/|$)/.test(path);
+    const asked = shared
+      ? posix.resolve(scope.shared!, path.slice("shared".length + 1))
+      : posix.resolve(scope.home, path);
     const abs = await ground.real(asked).catch((err) => {
       throw err instanceof Deno.errors.NotFound
         ? new Deno.errors.NotFound(`${ref}: no such folder`)
