@@ -355,7 +355,7 @@ export function publishTool(deps: PublishDeps): ExecTool & {
           shownOf(a.folder, deps.agentId)
         }), ${KIND_WORDS[kindOf(a)]}: ${base}`,
         ...a.with.filter((p) => p.kind === "direct").map((p) =>
-          `For ${nameOf(p)}, sent in your chat with them, a link that logs them in once: ` +
+          `For ${nameOf(p)}, a link to send in your chat with them, which logs them in once: ` +
           `${base}?t=${a.tokens[p.address]}`
         ),
         ...a.with.filter((p) => p.kind === "principal").map((p) =>
