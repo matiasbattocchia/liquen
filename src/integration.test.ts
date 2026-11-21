@@ -1426,6 +1426,65 @@ Deno.test("a gated send's card names a kept file by the name it came with, and a
   }
 });
 
+Deno.test("a gated call whose card can't be laid out is answered with why, and nobody is asked", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await orgLog(dir);
+  const ran: string[] = [];
+  const publish = {
+    spec: { name: "publish", description: "", input_schema: { type: "object" } },
+    execute: (input: Json) => {
+      ran.push((input as { path: string }).path);
+      return Promise.resolve("published");
+    },
+    card: (input: Json) => {
+      const { path } = input as { path: string };
+      if (path === "gone") return Promise.reject(new Error("gone: no such folder"));
+      return Promise.resolve({
+        artifact: {
+          title: "Site",
+          kind: "page" as const,
+          link: "https://acme.example.com/artifacts/site",
+          folder: path,
+          again: false,
+          files: 1,
+          bytes: 9,
+          with: [],
+          until: "2026-12-16",
+        },
+      });
+    },
+  };
+  const { transport } = scripted([
+    ok([{ kind: "tool_use", name: "publish", input: { path: "gone" } }], "tool_use"),
+    ok([{ kind: "tool_use", name: "publish", input: { path: "site" } }], "tool_use"),
+    ok([{ kind: "assistant", text: "pedí permiso" }], "end_turn"),
+  ]);
+  const config: AgentConfig = { ...CONFIG, gate: (name) => name === "publish" ? "ask" : "allow" };
+  const ports = {
+    log,
+    docs: await docsAt(`${dir}/docs`),
+    transport,
+    exec: { publish },
+  } as unknown as XiPorts;
+  try {
+    await log.publish(principalMsg("publicá el sitio"));
+    for (let i = 0; i < 6; i++) await xi(config, ports);
+    const results = await log.read({ types: ["tool_result"] }) as ToolResultEvent[];
+    assertEquals(results[0].parts[0].data, { output: "gone: no such folder", is_error: true });
+    assertEquals(
+      (results[1].parts[0].data.output as { status: string }).status,
+      "pending_approval",
+    );
+    // one card, the one that can run, laid out; neither call ran
+    const cards = await log.read({ types: ["permission_request"] }) as PermissionRequestEvent[];
+    assertEquals(cards.map((c) => c.parts[0].data.artifact?.folder), ["site"]);
+    assertEquals(ran, []);
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("send `contacts`: the harness shapes the cards, on WhatsApp only", async () => {
   const dir = await Deno.makeTempDir();
   const log = await orgLog(dir);

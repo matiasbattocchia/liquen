@@ -418,3 +418,33 @@ Deno.test("localFiles: a scoped reference resolves from the agent's home and sta
     await Deno.remove(tmp, { recursive: true });
   }
 });
+
+Deno.test("localFiles: a folder is named from the agent's home, `shared/…` from the shared one, wherever the shell stands", async () => {
+  const tmp = await Deno.realPath(await Deno.makeTempDir());
+  try {
+    const home = `${tmp}/agents/ana`;
+    const shared = `${tmp}/shared`;
+    await Deno.mkdir(`${home}/site/public`, { recursive: true });
+    await Deno.mkdir(`${shared}/site`, { recursive: true });
+    await Deno.mkdir(`${tmp}/elsewhere/site`, { recursive: true });
+    let cwd = `${tmp}/elsewhere`;
+    const files = localFiles(
+      { home, cwd: () => cwd, roots: [home, shared], shared },
+      fileStorage(tmp),
+    );
+    const at = async (ref: string) => {
+      const { root, path, has } = await files.locate(ref, ["public"]);
+      return [root, path, [...has]];
+    };
+    // the shell stands where a `site` of its own is: the agent's is the one named
+    assertEquals(await at("site"), ["home", "site", ["public"]]);
+    assertEquals(await at("shared/site"), ["shared", "site", []]);
+    cwd = shared;
+    assertEquals(await at("site"), ["home", "site", ["public"]]);
+    assertEquals(await at(`${shared}/site`), ["shared", "site", []]);
+    await assertRejects(() => files.locate("shared", []), Error, "not either one");
+    await assertRejects(() => files.locate("../../elsewhere/site", []), Error, "not either one");
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});

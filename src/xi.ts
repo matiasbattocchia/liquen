@@ -1161,8 +1161,9 @@ export interface ExecTool extends ToolShape {
    *  one-argument tool as `bash(git status)`, which is what most tools want. */
   describe?: Describe;
   /** What the approval card lays out beside the call's line, for a call a person judges
-   *  better as rows (§9): a publish's artifact. Undefined when it can't be laid out. */
-  card?: (input: Json) => Promise<Pick<PermissionAsk, "artifact"> | undefined>;
+   *  better as rows (§9): a publish's artifact. Throws when the call can't run as asked:
+   *  the error answers it, and no card goes up for a call bound to fail. */
+  card?: (input: Json) => Promise<Pick<PermissionAsk, "artifact">>;
 }
 
 /** An output's size in UTF-8 bytes: a string's own, anything else as its JSON. */
@@ -2385,6 +2386,15 @@ async function answerer(
       // the card goes to the principal-DM and crosses to their surfaces (mirror, §4);
       // a card already up is not asked twice — this use is simply being answered late
       if (!events.some((e) => e.type === "permission_request" && e.payload?.ref_id === use.id)) {
+        // the rows a tool lays its own call out in, a publish's artifact: one that can't be
+        // laid out is a call that can't run, answered with why before anyone is asked
+        let card: Pick<PermissionAsk, "artifact"> | undefined;
+        try {
+          card = await ports.exec?.[name]?.card?.(use.parts[0].data.input);
+        } catch (err) {
+          out.push(await resultOf(use, (err as Error).message, { is_error: true }));
+          return false;
+        }
         out.push(
           {
             ts: ts(),
@@ -2412,9 +2422,7 @@ async function answerer(
                     ),
                   }
                   : {}),
-                // the rows a tool lays its own call out in, a publish's artifact; a card
-                // that can't be laid out is the call's line alone
-                ...(await ports.exec?.[name]?.card?.(use.parts[0].data.input).catch(() => {})),
+                ...card,
               },
             }],
           } satisfies Draft<PermissionRequestEvent>,

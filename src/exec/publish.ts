@@ -177,7 +177,7 @@ interface Plan {
 }
 
 export function publishTool(deps: PublishDeps): ExecTool & {
-  card: (input: Json) => Promise<{ artifact: ArtifactPreview } | undefined>;
+  card: (input: Json) => Promise<{ artifact: ArtifactPreview }>;
 } {
   const now = deps.now ?? Date.now;
   const text = (v: unknown) => typeof v === "string" ? v.trim() : "";
@@ -383,11 +383,7 @@ export function publishTool(deps: PublishDeps): ExecTool & {
       ].join("\n");
     },
     async card(input) {
-      const { artifact: a, before } = await plan(input).catch(() => ({
-        artifact: null,
-        before: null,
-      }));
-      if (!a) return undefined;
+      const { artifact: a, before } = await plan(input);
       const files = Object.values(a.files);
       return {
         artifact: {

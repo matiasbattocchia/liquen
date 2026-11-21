@@ -187,7 +187,7 @@ Deno.test("publish: the principals are always on the list, by their phone, each 
 
     // for the principals alone: no account of the list reaches them but their own
     b.principals([{ name: "Mati", phone: ACCOUNT }]);
-    const alone = await b.call({ path: "../../shared/site" });
+    const alone = await b.call({ path: "shared/site" });
     const site = (await listArtifacts(b.creds)).find((x) => x.folder === "shared/site")!;
     assertEquals(site.with, [{
       address: ACCOUNT,
@@ -259,7 +259,7 @@ Deno.test("publish: a title another artifact's link took is refused, and a folde
   try {
     await b.call({ path: "app", with: ["Ana"] });
     await assertRejects(
-      () => b.call({ path: "../../shared/site", with: ["Ana"], title: "The Plan!" }),
+      () => b.call({ path: "shared/site", with: ["Ana"], title: "The Plan!" }),
       Error,
       `the link /artifacts/the-plan is app's ("The plan"): give this one another title`,
     );
@@ -312,17 +312,17 @@ Deno.test("publish: refused without anyone, off WhatsApp, with neither public/ n
 Deno.test("publish: a shared folder is one artifact any agent publishes again, checked against what that agent reads", async () => {
   const b = await bed();
   try {
-    await b.call({ path: "../../shared/site", with: ["Ops"] }, "cy");
+    await b.call({ path: "shared/site", with: ["Ops"] }, "cy");
     const [a] = await listArtifacts(b.creds);
     assertEquals(a.folder, "shared/site");
 
     // dee reads no Ops: the list it would keep is not its to vouch for
     await assertRejects(
-      () => b.call({ path: "../../shared/site" }, "dee", [ANA]),
+      () => b.call({ path: "shared/site" }, "dee", [ANA]),
       Error,
       "Ops is on the artifact's list but not a conversation you can read",
     );
-    const out = await b.call({ path: "../../shared/site", with: ["Ana"] }, "dee", [ANA]);
+    const out = await b.call({ path: "shared/site", with: ["Ana"] }, "dee", [ANA]);
     assertStringIncludes(out, `Republished "Site" (shared/site)`);
     const [again] = await listArtifacts(b.creds);
     assertEquals([again.slug, again.id, again.agentId], [a.slug, a.id, "dee"]);
@@ -359,7 +359,8 @@ Deno.test("publish card: who it is for by name and number, what it shows and wha
       until: "2026-12-16",
     });
     assertEquals(await listArtifacts(b.creds), []);
-    assertEquals(await b.tool().card({ path: "gone" }), undefined);
+    // a call that can't run has no card: its error answers it before anyone is asked
+    await assertRejects(() => b.tool().card({ path: "gone" }), Error, "no such folder");
   } finally {
     await b.close();
   }
@@ -369,7 +370,7 @@ Deno.test("artifacts port: the anchor lists the artifacts an agent reaches, and 
   const b = await bed();
   try {
     await b.call({ path: "app", with: ["Ana", "Ops"] });
-    await b.call({ path: "../../shared/site", with: ["Ops"] });
+    await b.call({ path: "shared/site", with: ["Ops"] });
     assertEquals(await b.port("cy").standing(), [
       "artifacts — 2 artifacts:",
       `· app — "The plan" · page · https://acme.example.com/artifacts/the-plan · with Ana, Ops · until 2026-12-16`,
