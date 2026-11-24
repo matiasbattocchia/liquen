@@ -1822,7 +1822,7 @@ Deno.test("attention: a green light wakes at once, and red news never makes the 
   assertEquals(decide([looked(16), news], SESSION, night, NOON, [], yellow), "ignore");
 });
 
-Deno.test("attention: with the model on, a judged room's floor wakes nobody, and an unjudged one is the floor's", () => {
+Deno.test("attention: with the model on, the floor has hysteresis — only red takes the agent's, only green the principal's", () => {
   const spoke = ev(
     "message",
     { ...SELF, conv: "slack:C1", ts: at(4), payload: { turn_id: "T0" } } as
@@ -1833,11 +1833,34 @@ Deno.test("attention: with the model on, a judged room's floor wakes nobody, and
   const window = [spoke, looked(1), bye];
   // the agent holds the floor: with no light yet, the engaged rung answers
   assertEquals(decide(window, SESSION, LIT, NOON), "think");
+  // a yellow there is still the conversation the agent is in
+  assertEquals(
+    decide(window, SESSION, LIT, NOON, [], [light("slack:C1", "yellow", bye.id)]),
+    "think",
+  );
   // the judge read the floor and lit the goodbye red
   const red = [light("slack:C1", "red", bye.id)];
   assertEquals(decide(window, SESSION, LIT, NOON, [], red), "ignore");
   // with the model off, lights are never read
   assertEquals(decide(window, SESSION, WAKE, NOON, [], red), "think");
+  // the principal holds the floor: yellow leaves it theirs, green steps in
+  const byHand = ev("message", {
+    agent: { id: "a1" }, // their phone in hand: no session_id, and never a turn_id
+    ts: at(3),
+    envelope: { ...env("slack:C1"), sender: { address: "matias", name: "matias" } },
+    parts: [{ type: "text", kind: "text", text: "yo sigo desde acá" }],
+  } as Partial<Event>);
+  const asks = world("slack:C1", 0, "¿a qué hora?");
+  const theirs = [spoke, byHand, looked(1), asks];
+  assertEquals(decide(theirs, SESSION, LIT, NOON), "ignore");
+  assertEquals(
+    decide(theirs, SESSION, LIT, NOON, [], [light("slack:C1", "yellow", asks.id)]),
+    "ignore",
+  );
+  assertEquals(
+    decide(theirs, SESSION, LIT, NOON, [], [light("slack:C1", "green", asks.id)]),
+    "think",
+  );
 });
 
 Deno.test("lookAhead: the next look is the digest after the last one, or the night's end", () => {

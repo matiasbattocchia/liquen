@@ -161,7 +161,7 @@ decide(window) →
     an engaged conversation — the agent HOLDS THE FLOOR: our       → think (you don't drop
       complex's last word there is the agent's own, recent, and      out mid-conversation)
       the other side's line came after it; with the model on,
-      only a room no light covers yet
+      unless all its news is lit red
     asleep (`sleepHours`)                                          → ignore (the world waits)
     a transcript for a note already LOOKED at                      → think (the words are
                                                                       that note, arriving)
@@ -180,8 +180,9 @@ the agent looks next (`lookAhead`: the digest after its last look, or the night'
 day's calendar, and whose the room is, said outright: the principal holds the floor within
 `engagedMinutes` of their line, the assistant is carrying it within the hour of its own,
 and past that nobody holds it. It reads them under `system/decision.md`, whose rubric
-lights a room the principal holds red whatever it says, a conversation the assistant is
-carrying green when a line there wants an answer, by night too, and a quarrel or a
+lights a room the principal holds red unless a line there is green, a conversation the
+assistant is carrying green when a line there wants an answer, a bot's menu included, by
+night too, and red there only when the exchange is over, and a quarrel or a
 personal matter only the principal can answer yellow at most. It reads the
 principal's standing word too, the same for every room: the agent's own instructions, its
 memories and the profiles that load always, the principal's among them. Those close the
@@ -192,9 +193,11 @@ word above its own rules. It answers with a reason and a color, and the answer i
 `extra.consumed` is the room's last row the judge read, and it covers the room up to there:
 **green** wakes the mind now, **yellow** waits for the next look, and **red** neither makes
 a digest due nor counts toward one, read whenever something else opens a turn. The floor
-is something the judge reads, so a room whose news is all lit is not woken for by
-engagement; a room the judge has not lit, because the call failed or has not run, falls
-back to the engaged rung, and with the model off the ladder is as it stands above.
+has hysteresis: whoever holds it keeps it until the judge lights the other way. A room the
+agent holds wakes it on any news but red, the goodbye; a room the principal holds stays
+theirs on anything but green; a room nobody holds goes by its color. News the judge has
+not lit, because the call failed or has not run, goes by the floor alone, and with the
+model off the ladder is as it stands above.
 The judge works at every hour, so it is what lets a room pull in an agent that is not in
 it, and what keeps an engaged one from answering a goodbye; at night a green is the one way
 the world wakes the mind. Nothing is judged for a named session, or when a summons, an

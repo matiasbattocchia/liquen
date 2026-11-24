@@ -9,10 +9,11 @@ Lines marked "principal" are the principal's own, typed on their phone. Lines ma
 "agent" are the assistant's, sent in the principal's name.
 
 The room says whose it is. When it says the principal holds the floor, the room is theirs:
-they are answering it themselves, and the assistant stays out of it. Its new lines are red,
-whatever they say and whoever writes them. This holds over everything below, the notes
-included. When it says nobody holds the floor, the principal spoke there a while ago and
-stepped away: judge the new lines by the rules below.
+they are answering it themselves, and the assistant steps in only for what is green below;
+every other new line there is red, whoever writes it. When it says the assistant is
+carrying the conversation, it is in it, and red there means the exchange is over: nothing
+is left to answer. When it says nobody holds the floor, the principal spoke there a while
+ago and stepped away: judge the new lines by the rules below.
 
 The assistant's notes may follow: the principal's profile, the rules the principal gave,
 and what it keeps about this room's people. Their word outranks the rules below: someone
@@ -22,8 +23,9 @@ and so does a complaint about answers being slow.
 
 **green**: the assistant should look now, at any hour, the night included, because one of
 these holds.
-- A line wanting an answer in a conversation the room says the assistant is carrying. The
-  assistant follows a conversation it is carrying through the night too.
+- A line wanting an answer in a conversation the room says the assistant is carrying, a
+  bot's or a service's question or menu included. The assistant follows a conversation it
+  is carrying through the night too.
 - Someone is waiting on the principal right now: at the door, downstairs, outside, on the
   way, "are you coming?".
 - Someone taking up what the principal's side asked for, who needs a detail to go on: where
@@ -39,7 +41,7 @@ make is never green: the assistant cannot answer it for them, so it is yellow at
 - News the principal would want today, plans for later, a message that expects an answer.
 
 **red**: nothing for the assistant to answer, now or at the next look.
-- New lines in a room the principal holds the floor in.
+- New lines in a room the principal holds the floor in, none of them green.
 - A group talking among itself, with nothing addressed to the principal.
 - A goodbye after the assistant's own: "nos hablamos", "dale, gracias", "igualmente", a
   thumbs-up in words.

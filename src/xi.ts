@@ -318,10 +318,11 @@ function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
  *      time it looked — the way you put the phone down and pick it up again
  *   5. or early, when `digestAfterMessages` have piled up across the whole world
  *
- * With the decision model on, a room's light answers before any rung that weighs the
- * world, at every hour: green wakes now, wherever the floor is and asleep or not, and a
- * room whose news is all lit is not woken for by the floor. So the judge is what lets a
- * room pull in an agent that is not in it, or keeps one that is from answering a goodbye.
+ * With the decision model on, the floor has hysteresis: whoever holds it keeps it until the
+ * judge lights the other way. Green wakes now, at every hour and wherever the floor is, so
+ * it is the one light that steps into a room the principal holds; a room the agent holds
+ * wakes it unless all its news is lit red, the goodbye. So the judge is what lets a room
+ * pull in an agent that is not in it, or keeps one that is from answering a goodbye.
  *
  * Rungs 4 and 5 weigh the other side's words: a reaction, a deletion or a room's change is
  * a mark nobody is owed an answer for, so it is read when words make the digest due and
@@ -390,11 +391,12 @@ function attention(
   if (told.some((e) => e.type === "tool_result")) return "think";
   // holding the floor is the one question that is per-conversation — so the news is grouped
   // for it, and for nothing else: the two rules below weigh the world as one thing. With the
-  // decision model on, a room's light answers it: green wakes now, by day or night, and a
-  // room whose news is all judged is not woken for by the floor, which the judge read. News
-  // no light covers yet (the judge failed, or has not run) is weighed by the floor, as with
-  // no model at all. Only the other side's lines ask anything: our own, the principal's
-  // typed or spoken ones included, are the floor, never a reason to wake on it
+  // decision model on, green wakes now, by day or night, whoever holds the floor; red news
+  // alone keeps the agent out of a room it holds; yellow leaves the floor to answer, so a
+  // room the agent is in wakes it and one the principal is in stays theirs. News no light
+  // covers yet (the judge failed, or has not run) is weighed by the floor the same way.
+  // Only the other side's lines ask anything: our own, the principal's typed or spoken ones
+  // included, are the floor, never a reason to wake on it
   const lit = wake.decision?.enabled ? colorsOf(events, lights) : undefined;
   for (const conv of new Set(told.map((e) => e.envelope.conversation.address))) {
     const here = told.filter((e) =>
@@ -402,7 +404,7 @@ function attention(
     );
     if (here.length === 0) continue;
     if (lit && here.some((e) => lit.get(e.id) === "green")) return "think";
-    if (lit && here.every((e) => lit.has(e.id))) continue;
+    if (lit && here.every((e) => lit.get(e.id) === "red")) continue;
     if (engaged(conv, events, session, wake, now)) return "think";
   }
   // ASLEEP: inside the span the ambient class wakes nobody, however deep the pile, and the
