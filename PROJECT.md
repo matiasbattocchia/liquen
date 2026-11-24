@@ -7633,6 +7633,24 @@ Open: everything `ARTIFACTS.md` lists. `native` is for the buscador, for a few d
 its vector search moves off libsql's index. The page `Lucas c/ la Jurisprudencia` on new
 went with the old routes; the buscador comes back as an app once its server is Deno's.
 
+### Root ran a command an agent wrote, and an agent could be root (2026-11-24) — FIXED
+
+A security advisor reported, of turtle-agents, that liquen gives the agent a git tool that
+runs as root. The model has no git tool, but the harness read the ambient block's git line
+as itself, root in that image, in the directory the agent stood in, and `git status` runs
+the repo's `core.fsmonitor`. Git's ownership check refused a repo the agent owned, so the
+hole stood only where that check gave way: `safe.directory=*`, or a root-owned repo whose
+config the agent could write. A trial in the image's base confirmed both halves. The line
+is read through the agent's ground now, as its uid and in its bubble, and a trial as root
+saw a planted fsmonitor run as the agent's uid.
+
+The same look found that an agent named `root` ran as uid 0: `ensureUser` found the user
+there and made none, and `agentUser` handed its uid to every spawn. Any name the machine's
+users held went the same way (`mail`, `daemon`), and removing such an agent `userdel`'d
+the machine's user. An agent's user is now one in the `agents` group; `ensureUser` and
+`agentUser` refuse any other, and `dropUser` leaves it. The advisor's other proposal,
+dropping git from the image, stays out: agents use git in their own shells, as their uid.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

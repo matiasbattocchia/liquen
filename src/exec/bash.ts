@@ -851,35 +851,47 @@ function groupAlive(pgid: number): boolean {
   }
 }
 
-async function gitLine(cwd: string): Promise<string | null> {
+/** How a process runs where the agent's shell does. */
+type Ground = (argv: string[], cwd: string) => Promise<GroundCommand>;
+
+/** The git line, read by git running as the agent: a repo's config names commands git
+ *  runs (`core.fsmonitor`), and the agent writes the config of any repo it stands in. */
+async function gitLine(cwd: string, ground: Ground): Promise<string | null> {
+  const git = async (...args: string[]) => {
+    const cmd = await ground(["git", ...args], cwd);
+    const out = await new Deno.Command(cmd.argv[0], {
+      args: cmd.argv.slice(1),
+      cwd,
+      clearEnv: true,
+      env: cmd.env,
+      ...(cmd.uid !== undefined ? { uid: cmd.uid, gid: cmd.gid } : {}),
+      stdin: "null",
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    return new TextDecoder().decode(out.stdout).trim();
+  };
   try {
-    const branch = new TextDecoder().decode(
-      (await new Deno.Command("git", {
-        args: ["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
-        stdout: "piped",
-        stderr: "null",
-      }).output()).stdout,
-    ).trim();
+    const branch = await git("rev-parse", "--abbrev-ref", "HEAD");
     if (!branch) return null; // not a repo (or git absent)
-    const dirty = new TextDecoder().decode(
-      (await new Deno.Command("git", {
-        args: ["-C", cwd, "status", "--porcelain"],
-        stdout: "piped",
-        stderr: "null",
-      }).output()).stdout,
-    ).trim().split("\n").filter((l) => l.length > 0).length;
+    const dirty = (await git("status", "--porcelain")).split("\n").filter((l) => l.length > 0)
+      .length;
     return `git: ${branch}${dirty ? ` · ${dirty} uncommitted` : " · clean"}`;
   } catch {
-    return null; // git not installed / not a repo
+    return null; // git not installed, or the cwd is gone
   }
 }
 
 /** A shell's ambient lines (§5): cwd · git (if a repo) · background jobs. Looks at the jobs
  *  here too — the every-think place — so an end this look sees first is told before the
  *  list leaves it out. */
-export async function bashAmbient(state: BashState, jobs: Jobs): Promise<string[]> {
+export async function bashAmbient(
+  state: BashState,
+  jobs: Jobs,
+  ground: Ground,
+): Promise<string[]> {
   const lines = [`cwd: ${state.cwd}`];
-  const git = await gitLine(state.cwd);
+  const git = await gitLine(state.cwd, ground);
   if (git) lines.push(git);
   await jobs.look();
   return [...lines, ...jobLines(jobs, await groupMembers(jobs))];
@@ -1074,17 +1086,18 @@ export async function installExecGround(
   if (user) console.error(`[exec] ${agentId}: spawns run as uid ${user.uid}`);
   await sweepLogs(`${workspace}/.out`);
   const host = localHost();
+  const command: Ground = async (argv, cwd) => {
+    const issued = { ...userSpaceEnv(binPath), ...(await env?.()) };
+    if (user) Object.assign(issued, { HOME: user.home, USER: user.name, LOGNAME: user.name });
+    if (bubble) Object.assign(issued, { HOME: workspace, TMPDIR: "/tmp" });
+    return {
+      argv: [...(await bubble?.enter(cwd) ?? []), ...argv],
+      env: issued,
+      ...(user ? { uid: user.uid, gid: user.gid } : {}),
+    };
+  };
   return {
-    async command(argv, cwd) {
-      const issued = { ...userSpaceEnv(binPath), ...(await env?.()) };
-      if (user) Object.assign(issued, { HOME: user.home, USER: user.name, LOGNAME: user.name });
-      if (bubble) Object.assign(issued, { HOME: workspace, TMPDIR: "/tmp" });
-      return {
-        argv: [...(await bubble?.enter(cwd) ?? []), ...argv],
-        env: issued,
-        ...(user ? { uid: user.uid, gid: user.gid } : {}),
-      };
-    },
+    command,
     shell(tell?: (u: ShellUpdate) => void): ExecPlane {
       const jobs = new Jobs(host, tell);
       const state: BashState = { cwd: workspace };
@@ -1102,7 +1115,7 @@ export async function installExecGround(
           }),
         },
         cwd: () => state.cwd,
-        ambient: () => bashAmbient(state, jobs),
+        ambient: () => bashAmbient(state, jobs, command),
         bins: () => binsIn(binDirs, shipped),
         async stand(path?: string) {
           if (path === undefined) {

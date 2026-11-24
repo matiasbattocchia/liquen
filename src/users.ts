@@ -44,9 +44,25 @@ async function run(cmd: string, args: string[]): Promise<void> {
 }
 
 /** A row of a `passwd`-shaped file, by its first field. */
-async function entry(file: string, name: string): Promise<string[] | undefined> {
-  const text = await Deno.readTextFile(file).catch(() => "");
+export function entry(file: string, name: string): string[] | undefined {
+  let text = "";
+  try {
+    text = Deno.readTextFileSync(file);
+  } catch { /* no file, no row */ }
   return text.split("\n").map((l) => l.split(":")).find((f) => f[0] === name);
+}
+
+/** Whether a `passwd` row is an agent's user: its group is the agents'. A name a user of
+ *  the machine holds (root, mail) stays the machine's, and no agent runs as it. */
+export function agentsRow(row: string[]): boolean {
+  const group = entry("/etc/group", GROUP);
+  return group !== undefined && row[3] === group[2];
+}
+
+/** The refusal for an agent whose name a user of the machine holds. */
+export function heldName(name: string, row: string[]): string {
+  return `agent ${name}: this machine has a user named ${name} (uid ${row[2]}), and an ` +
+    `agent runs as a user of its own: give the agent another name`;
 }
 
 /** Refuse, naming it, when a tool the classification runs is not in the image. */
@@ -86,7 +102,7 @@ export function cksum(text: string): number {
 /** The agents' group, made where missing. */
 export async function ensureGroup(): Promise<void> {
   if (!asRoot()) return;
-  if (!(await entry("/etc/group", GROUP))) await run("groupadd", [GROUP]);
+  if (!entry("/etc/group", GROUP)) await run("groupadd", [GROUP]);
 }
 
 /** The agent's user and its folder: the user made where missing, its uid pinned by name
@@ -97,7 +113,9 @@ export async function ensureUser(dir: string, name: string): Promise<void> {
   if (!asRoot()) return;
   await ensureGroup();
   const home = `${dir}/agents/${name}`;
-  if (!(await entry("/etc/passwd", name))) {
+  const row = entry("/etc/passwd", name);
+  if (row && !agentsRow(row)) throw new Error(heldName(name, row));
+  if (!row) {
     const taken = new Set(
       (await Deno.readTextFile("/etc/passwd")).split("\n").map((l) => Number(l.split(":")[2])),
     );
@@ -128,10 +146,13 @@ export async function ensureUser(dir: string, name: string): Promise<void> {
   await run("chmod", ["700", home]);
 }
 
-/** The agent's user and its home link, gone. */
+/** The agent's user and its home link, gone. A user of the machine's by that name is left
+ *  as it is: the agent never ran as it. */
 export async function dropUser(name: string): Promise<void> {
   if (!asRoot()) return;
-  if (await entry("/etc/passwd", name)) await run("userdel", [name]);
+  const row = entry("/etc/passwd", name);
+  if (row && !agentsRow(row)) return;
+  if (row) await run("userdel", [name]);
   await Deno.remove(`/home/${name}`).catch(() => {});
 }
 
