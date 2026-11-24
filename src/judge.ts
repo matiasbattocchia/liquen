@@ -1,7 +1,8 @@
 /**
  * judge.ts — the decision model (§2): one cheap call per room whose news the mind has not
  * read, answering green, yellow or red before the ladder weighs it. Green wakes the mind
- * now; yellow waits for the next look; red is never what makes a digest due.
+ * now; yellow waits for the next look unless the agent holds the floor; red is never what
+ * makes a digest due, and keeps the agent out of a room it holds.
  *
  * The call reads one room, never the window: the room's last lines with the news marked,
  * who holds the floor there, the day's calendar, and the principal's standing word, which

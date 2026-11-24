@@ -7651,6 +7651,20 @@ the machine's user. An agent's user is now one in the `agents` group; `ensureUse
 `agentUser` refuse any other, and `dropUser` leaves it. The advisor's other proposal,
 dropping git from the image, stays out: agents use git in their own shells, as their uid.
 
+### The floor has hysteresis under the decision model (2026-11-24) — LANDED
+
+On new the mind started a complaint with LEXA, the Mendoza prosecutor's WhatsApp bot, and
+went quiet: the judge read "the assistant is carrying this conversation" and still lit
+each of LEXA's menus yellow ("an automated bot, it can wait"), and a room whose news was
+all lit was not woken for by the engaged rung. LEXA drops a session after five minutes, so
+the conversation went cold twice before the principal stepped in. Now whoever holds the
+floor keeps it until the judge lights the other way: a room the agent holds wakes it on
+anything but red, a room the principal holds stays theirs on anything but green, and a
+room nobody holds goes by its color. `decision.md` lets green step into a room the
+principal holds, which it lit red whatever it said, says what red means where the
+assistant is carrying the conversation, and counts a bot's question or menu as a line
+wanting an answer.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

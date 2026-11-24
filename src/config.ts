@@ -672,8 +672,10 @@ const DECISION: Entry[] = [
     key: "enabled",
     value: false,
     doc: "judge each room's news before the mind wakes, day and night: green wakes it at " +
-      "once, asleep or not, yellow waits for the next look, red is never what makes a " +
-      "digest due; off ⇒ the ladder alone, the engaged rung on engagedMinutes",
+      "once, asleep or not, and steps into a room the principal holds; yellow waits for the " +
+      "next look unless the agent holds the floor; red is never what makes a digest due, " +
+      "and keeps the agent out of a room it holds; off ⇒ the ladder alone, the engaged " +
+      "rung on engagedMinutes",
   },
   {
     key: "model",

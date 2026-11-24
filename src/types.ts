@@ -893,7 +893,8 @@ export interface AnchorEvent extends EventBase {
 }
 
 /** The decision model's three answers (§2): green wakes the mind now, yellow waits for the
- *  next look, red is never what makes a digest due. */
+ *  next look unless the agent holds the floor, red is never what makes a digest due and
+ *  keeps the agent out of a room it holds. */
 export type Color = "green" | "yellow" | "red";
 
 /**
