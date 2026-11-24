@@ -11,6 +11,8 @@
  * every `own` is a no-op.
  */
 
+import { agentsRow, asRoot, entry, heldName } from "../users.ts";
+
 export interface AgentUser {
   name: string;
   uid: number;
@@ -18,17 +20,21 @@ export interface AgentUser {
   home: string;
 }
 
-/** The agent's Linux user, when there is one to drop to: the harness runs as root and a
- *  passwd entry carries the agent's name. Absent otherwise. */
+/** The agent's Linux user, which a harness running as root drops to: the user of the
+ *  agents' group by the agent's name. Absent off root. On root, an agent with no such user
+ *  is refused, so nothing of an agent's runs as root or as a user of the machine's. */
 export function agentUser(agentId: string): AgentUser | undefined {
-  if (Deno.build.os !== "linux" || Deno.uid() !== 0) return undefined;
-  try {
-    for (const line of Deno.readTextFileSync("/etc/passwd").split("\n")) {
-      const [name, , uid, gid, , home] = line.split(":");
-      if (name === agentId) return { name, uid: Number(uid), gid: Number(gid), home };
-    }
-  } catch { /* no passwd to read — nothing to drop to */ }
-  return undefined;
+  if (!asRoot()) return undefined;
+  const row = entry("/etc/passwd", agentId);
+  if (!row) {
+    throw new Error(
+      `agent ${agentId}: no Linux user by its name, and a harness running as root runs ` +
+        `an agent only as its own`,
+    );
+  }
+  if (!agentsRow(row)) throw new Error(heldName(agentId, row));
+  const [name, , uid, gid, , home] = row;
+  return { name, uid: Number(uid), gid: Number(gid), home };
 }
 
 /** Give one path to the agent. No user ⇒ nothing to give. */

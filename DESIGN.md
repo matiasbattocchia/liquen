@@ -3744,14 +3744,19 @@ A harness running as root gives Linux to its agents itself (`src/users.ts`): boo
 the `agents` group, then each agent's user, then the owners — a container's `/etc/passwd`
 is made anew at every start, so the users are made from the roster's rows at every boot,
 and one more when an agent is made while the org runs. The uid is pinned by name-hash, so
-ownership on the volume holds across rebuilds. Boot gives the floors their owners before
+ownership on the volume holds across rebuilds. An agent's user is one in the `agents`
+group: a name the machine's own users hold (`root`, `mail`) is refused at the agent's
+ground, and its removal leaves that user as it is, so nothing of an agent's runs as root
+or as a user of the machine's. Boot gives the floors their owners before
 anything is laid on them and makes `system/` read-only once everything is; the sweeps are
 recursive, so a boot also mends ownership that drifted. The image holds the tools it runs
 (`groupadd`, `useradd`, `userdel`, `chown`, `chmod`, `setfacl`), and boot refuses, naming
 the tool, when one is missing. Off root — a laptop, bare or in bubbles — there is no user
 to make and none of it runs. The entrypoint links `/app/data` to the volume, does what is
 the org's own, and execs `liquen start`; bash spawns drop to the agent's own uid
-(exec/bash.ts), so the kernel enforces the classification above. What the HARNESS creates
+(exec/bash.ts), so the kernel enforces the classification above. So does the git line of
+the ambient block: a repo's config names commands git runs, and the agent writes the
+config of any repo it stands in. What the HARNESS creates
 inside an agent's folder it gives to the agent (exec/user.ts): the seeded docs and `bin/`
 at plane install, an output spill as it lands, and `door.sock` — owned by the agent, mode
 0600, so the socket a script connects to is its own agent's and no peer holds a bit on
