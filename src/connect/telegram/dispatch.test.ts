@@ -320,6 +320,27 @@ Deno.test("telegram dispatch: Telegram's refusal stamps the row with its class; 
   assertStringIncludes(String(log.patches[1].patch.status?.error), "no Telegram session");
 });
 
+Deno.test("telegram dispatch: an account signed out or removed fails a send for good — nothing waits to be offered again", async () => {
+  const down = { "901": "signed_out", "902": "removed" } as const;
+  const { log } = harness(fakeWire(), {
+    wireOf: () => undefined,
+    downOf: (c) => Promise.resolve(down[c as keyof typeof down]),
+  });
+  for (const connection of ["901", "902"]) {
+    log.push(outbound({
+      envelope: {
+        service: "telegram",
+        connection_address: connection,
+        conversation: { address: "700200" },
+        status: "queued",
+      },
+    }));
+    await settle();
+  }
+  assertEquals(log.patches.map((p) => p.patch.status?.error_code), [401, 404]);
+  assertStringIncludes(String(log.patches[0].patch.status?.error), "signed out of Telegram");
+});
+
 Deno.test("telegram dispatch: a file whose bytes are gone fails the send before anything is posted", async () => {
   const storage = {
     get: () => Promise.resolve(null),

@@ -141,9 +141,26 @@ Deno.test("telegram accounts: a session Telegram refused is said down once, and 
   await w.accounts.reconcile();
   assertEquals(w.downs, [{ account: "1", error: "SESSION_REVOKED" }]);
   assertEquals(w.said, []);
+  assertEquals(await w.accounts.downOf("1"), "signed_out");
   w.link("1", "s1b");
   await w.accounts.reconcile();
   assertEquals(w.said, ["open 1 s1b"]);
+  assertEquals(await w.accounts.downOf("1"), undefined);
+});
+
+Deno.test("telegram accounts: why an account holds no session — signed out, removed, or not yet open", async () => {
+  const w = world();
+  w.link("1", "s1");
+  w.link("2", "s2");
+  w.rows.push({ service: "telegram", address: "3", credentialKey: "telegram:3" });
+  await w.accounts.reconcile();
+  assertEquals(await w.accounts.downOf("1"), undefined); // open
+  assertEquals(await w.accounts.downOf("3"), "signed_out"); // no session in the vault
+  w.unlink("2");
+  await w.accounts.reconcile();
+  assertEquals(await w.accounts.downOf("2"), "removed");
+  // one the process has not met may still open: what is sent there waits
+  assertEquals(await w.accounts.downOf("9"), undefined);
 });
 
 Deno.test("telegram accounts: a row with no session in the vault is said down, and its open session closes", async () => {

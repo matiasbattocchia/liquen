@@ -19,13 +19,29 @@
  */
 
 import type { ConnectionRow } from "../../store/connections.ts";
-import { SignedOut } from "../errors.ts";
+import { DispatchError, SignedOut } from "../errors.ts";
 import { sessionKey } from "./config.ts";
 import { SERVICE, type TgWire } from "./wire.ts";
 
 /** How often the process reconciles of its own accord: a removal it was not asked about
  *  is met here. */
 export const RECONCILE_MS = 60_000;
+
+/** An account with no session that will not open by itself (`Accounts.downOf`). */
+export type Down = "signed_out" | "removed";
+
+/** The refusal of a send or a leg on an account with no session: permanent when the
+ *  account is down, so nothing waits to be offered again, and a 503 while it may open. */
+export function noSession(account: string, down: Down | undefined): DispatchError {
+  return down === "signed_out"
+    ? new DispatchError(
+      `${account} is signed out of Telegram: nothing sent through it leaves until it signs in again`,
+      401,
+    )
+    : down === "removed"
+    ? new DispatchError(`${account} is no longer connected`, 404)
+    : new DispatchError(`no Telegram session is up for ${account}`, 503);
+}
 
 /** An account's session, open. */
 export interface Opened {
@@ -60,6 +76,11 @@ export interface Accounts {
    *  whether a session was open to end. */
   end: (account: string) => Promise<boolean>;
   wireOf: (account: string) => TgWire | undefined;
+  /** Why an account holds no session, when it is no passing state: `signed_out`, its
+   *  session refused by Telegram or missing from the vault, until a sign-in; `removed`, its
+   *  row taken away. Undefined while one may still open: what is sent there is worth
+   *  offering again. */
+  downOf: (account: string) => Promise<Down | undefined>;
   /** Close every session, its cursors kept. */
   stop: () => Promise<void>;
 }
@@ -69,6 +90,8 @@ export function createAccounts(deps: AccountsDeps): Accounts {
   // the session strings a row failed to open with, or a removal ended: tried again only
   // once the vault holds another, by a sign-in
   const refused = new Map<string, string>();
+  // the accounts a pass found signed out, until one opens
+  const signedOut = new Set<string>();
   let running: Promise<void> | undefined;
   let again = false;
   let stopped = false;
@@ -109,6 +132,7 @@ export function createAccounts(deps: AccountsDeps): Accounts {
       const session = await deps.session(row.credentialKey ?? sessionKey(account));
       if (!session) {
         await close(account);
+        signedOut.add(account);
         if (row.extra?.state !== "signed_out") {
           await deps.signedOut(row, "no session in the vault: sign in again");
         }
@@ -131,6 +155,7 @@ export function createAccounts(deps: AccountsDeps): Accounts {
         }
         open.set(account, { ...opened, session });
         refused.delete(account);
+        signedOut.delete(account);
         deps.onOpened?.(account, opened.wire);
       } catch (err) {
         if (!(err instanceof SignedOut)) {
@@ -138,6 +163,7 @@ export function createAccounts(deps: AccountsDeps): Accounts {
           continue;
         }
         refused.set(account, session);
+        signedOut.add(account);
         await deps.signedOut(row, err.message);
       }
     }
@@ -192,6 +218,11 @@ export function createAccounts(deps: AccountsDeps): Accounts {
     reconcile,
     end,
     wireOf: (account) => open.get(account)?.wire,
+    downOf: async (account) => {
+      if (open.has(account)) return undefined;
+      if (await deps.removed(account)) return "removed";
+      return signedOut.has(account) ? "signed_out" : undefined;
+    },
     stop: async () => {
       stopped = true;
       await running?.catch(() => {});

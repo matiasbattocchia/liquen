@@ -7691,6 +7691,17 @@ compaction's deferred input), so a line that reached the turn is news when it cl
 turn is told by what its first step read, the steps since the session's last closing or
 failure, so the turn after an unload that died is not taken for it.
 
+### The mirror kept copying to a signed-out Telegram (2026-11-25) — FIXED
+
+On new the principal had disconnected Telegram from the phone days before; the row stood
+`signed_out` but not removed, and the mirror CC'd every line of the mind there: about 1,400
+failed posts in the run log. A surface was live while its row was not deleted, and
+Telegram's dispatcher answered an account with no session `503`, which the sweep offers
+again up to its ceiling. Now a signed-out account's surfaces are not live (the `aliases`
+view, SQLite and Postgres), so fan-out skips them until it signs in again, and Telegram
+tells an account that will not open by itself from one still opening (`Accounts.downOf`):
+signed out is a `401`, removed a `404`, both final, and only the rest a `503`.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

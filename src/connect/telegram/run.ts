@@ -207,6 +207,7 @@ export async function runTelegram(): Promise<() => Promise<void>> {
     read: (q) => log.read(q),
     publish: log.publish,
     wireOf: accounts.wireOf,
+    downOf: accounts.downOf,
     storage,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     store: log,
@@ -215,7 +216,12 @@ export async function runTelegram(): Promise<() => Promise<void>> {
     onError: (e, err) =>
       console.error(`[dispatch] FAILED → ${e.envelope.conversation.address}:`, err),
   });
-  const stopPort = await servePort(`${root}/data`, accounts.wireOf, accounts.end);
+  const stopPort = await servePort(
+    `${root}/data`,
+    accounts.wireOf,
+    accounts.end,
+    accounts.downOf,
+  );
 
   return async () => {
     clearInterval(ticks);

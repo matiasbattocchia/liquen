@@ -470,8 +470,8 @@ async function fanOut(
   now: () => string,
 ): Promise<void> {
   const via = viaOf(e);
-  // a copy goes to every surface the principal HOLDS: a revoked binding still names its
-  // history, but the gate is closed there and nobody is reading
+  // a copy goes to every surface the principal HOLDS: a revoked or signed-out binding still
+  // names its history, but nothing sent there reaches anyone
   const targets = (await deps.aliases()).filter((a) =>
     a.live && a.agentId === agentId &&
     !(via && via.service === a.service && via.conversation === a.conversation)

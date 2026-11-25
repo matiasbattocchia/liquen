@@ -72,6 +72,8 @@ export function bindRoster(db: DatabaseSync): void {
  *               rooms  on a live shared account, each agent's steering room
  *                      (`mirrors.rooms`, agent → conversation), `principal` null because
  *                      whoever writes there steers
+ *               `live` is 0 on a signed-out account too: nothing sent there reaches
+ *               anyone until it signs in again
  *               `raw` is the connection's `extra.raw`: its dispatcher renders a crossing
  *               itself */
 export const ROSTER_VIEWS = `
@@ -98,13 +100,15 @@ CREATE TEMP VIEW IF NOT EXISTS aliases AS
   SELECT service, address AS connection,
          coalesce(json_extract(extra, '$.mirrors.self'),
                   CASE service WHEN 'whatsapp' THEN address END) AS conversation,
-         agent_id, agent_id AS principal, deleted_at IS NULL AS live,
+         agent_id, agent_id AS principal,
+         deleted_at IS NULL AND json_extract(extra, '$.state') IS NOT 'signed_out' AS live,
          json_extract(extra, '$.raw') IS 1 AS raw
   FROM connections
   WHERE agent_id IS NOT NULL
     AND (json_extract(extra, '$.mirrors.self') IS NOT NULL OR service = 'whatsapp')
   UNION ALL
-  SELECT c.service, c.address, digits(w.phone), c.agent_id, p.principal, 1,
+  SELECT c.service, c.address, digits(w.phone), c.agent_id, p.principal,
+         json_extract(c.extra, '$.state') IS NOT 'signed_out',
          json_extract(c.extra, '$.raw') IS 1
   FROM connections c
     JOIN principals p ON p.agent_id = c.agent_id
@@ -112,13 +116,15 @@ CREATE TEMP VIEW IF NOT EXISTS aliases AS
   WHERE c.deleted_at IS NULL AND c.service = 'whatsapp'
     AND w.phone IS NOT NULL AND w.phone <> '' AND digits(c.address) <> digits(w.phone)
   UNION ALL
-  SELECT c.service, c.address, d.value, c.agent_id, d.key, 1,
+  SELECT c.service, c.address, d.value, c.agent_id, d.key,
+         json_extract(c.extra, '$.state') IS NOT 'signed_out',
          json_extract(c.extra, '$.raw') IS 1
   FROM connections c, json_each(json_extract(c.extra, '$.mirrors.dms')) d
     JOIN principals p ON p.agent_id = c.agent_id AND p.principal = d.key
   WHERE c.deleted_at IS NULL AND d.type = 'text'
   UNION ALL
-  SELECT c.service, c.address, d.value, d.key, d.key, 1,
+  SELECT c.service, c.address, d.value, d.key, d.key,
+         json_extract(c.extra, '$.state') IS NOT 'signed_out',
          json_extract(c.extra, '$.raw') IS 1
   FROM connections c, json_each(json_extract(c.extra, '$.mirrors.dms')) d
     JOIN principals p ON p.agent_id = d.key AND p.principal = d.key
@@ -128,7 +134,8 @@ CREATE TEMP VIEW IF NOT EXISTS aliases AS
           (SELECT value FROM config WHERE scope = 'shared.agents' AND key = 'mind'),
           'true') <> 'false'
   UNION ALL
-  SELECT c.service, c.address, r.value, r.key, NULL, 1,
+  SELECT c.service, c.address, r.value, r.key, NULL,
+         json_extract(c.extra, '$.state') IS NOT 'signed_out',
          json_extract(c.extra, '$.raw') IS 1
   FROM connections c, json_each(json_extract(c.extra, '$.mirrors.rooms')) r
     JOIN agents a ON a.agent_id = r.key

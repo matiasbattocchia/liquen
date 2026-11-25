@@ -31,6 +31,7 @@ import type { ContactPort, RoomsPort } from "../../xi.ts";
 import { DispatchError } from "../errors.ts";
 import { API_TIMEOUT_MS } from "../http.ts";
 import { serveSocket } from "../serve.ts";
+import { type Down, noSession } from "./accounts.ts";
 import { kindOf } from "./ingest.ts";
 import type { TgPeer, TgWire } from "./wire.ts";
 
@@ -140,6 +141,7 @@ export const END_LEG = "accounts/end";
 export function createPortHandler(
   wireOf: (connection: string) => TgWire | undefined,
   end?: (account: string) => Promise<boolean>,
+  downOf?: (connection: string) => Promise<Down | undefined>,
 ): (req: Request) => Promise<Response> {
   const say = (status: number, message: string) => new Response(message, { status });
   return async (req) => {
@@ -156,7 +158,10 @@ export function createPortHandler(
     }
     if (!leg) return Response.json({ ended: await end!(text(body.connection)) });
     const wire = wireOf(text(body.connection));
-    if (!wire) return say(503, `no Telegram session is up for ${text(body.connection)}`);
+    if (!wire) {
+      const refused = noSession(text(body.connection), await downOf?.(text(body.connection)));
+      return say(refused.code ?? 503, refused.message);
+    }
     try {
       return Response.json(await leg(wire, body) ?? {});
     } catch (err) {
@@ -171,9 +176,10 @@ export async function servePort(
   dir: string,
   wireOf: (connection: string) => TgWire | undefined,
   end?: (account: string) => Promise<boolean>,
+  downOf?: (connection: string) => Promise<Down | undefined>,
 ): Promise<() => Promise<void>> {
   const path = portSocket(dir);
-  const server = await serveSocket(path, createPortHandler(wireOf, end));
+  const server = await serveSocket(path, createPortHandler(wireOf, end, downOf));
   await Deno.chmod(path, 0o600);
   return async () => {
     await server.shutdown();

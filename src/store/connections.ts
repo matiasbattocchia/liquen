@@ -168,9 +168,10 @@ export interface AliasRow {
   /** Who is on the other side of it — a roster username. Absent on a steering room,
    *  where whoever writes steers and each line is signed by its own sender. */
   principal?: string;
-  /** The grant still stands (no `deleted_at`): the surface is one somebody holds, so a
-   *  mind copy sent there reaches them. A revoked binding is listed too — it keeps
-   *  recognizing the history it ingested — but nothing is sent to it. */
+  /** The grant still stands (no `deleted_at`) and is signed in (`state` not `signed_out`):
+   *  the surface is one somebody holds, so a mind copy sent there reaches them. A revoked or
+   *  signed-out binding is listed too — it keeps recognizing the history it ingested — but
+   *  nothing is sent to it. */
   live: boolean;
   /** The connection's `extra.raw`: its dispatcher renders a crossing itself, so the mind
    *  copy carries the event's own parts instead of the tagged line. */

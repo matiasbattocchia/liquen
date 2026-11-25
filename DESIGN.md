@@ -1202,7 +1202,8 @@ cli/ui: native local conversations, through the door (§9) — the socket proves
     wire coordinates); in the agent's context every surface is the same **plain**
     user/assistant chat (§5 mind mode — one voice, one thread, whatever surface the
     principal picked up).
-  - **fan-out**: every mind event the REPL would show CCs to every alias binding except
+  - **fan-out**: every mind event the REPL would show CCs to every live alias binding
+    (neither revoked nor signed out: a copy there reaches nobody) except
     the origin surface (read off `extra.via`): the agent's voice as `[agent] …` (a
     self-conversation renders both speakers as the principal — the tag is the surface's
     only input/output distinction; the log needs none, authorship is the bit), a

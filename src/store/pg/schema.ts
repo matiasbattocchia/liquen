@@ -327,13 +327,15 @@ CREATE OR REPLACE VIEW aliases AS
   SELECT service, address AS connection,
          coalesce(extra #>> '{mirrors,self}',
                   CASE service WHEN 'whatsapp' THEN address END) COLLATE "C" AS conversation,
-         agent_id, agent_id AS principal, (deleted_at IS NULL)::integer AS live,
+         agent_id, agent_id AS principal,
+         (deleted_at IS NULL AND extra ->> 'state' IS DISTINCT FROM 'signed_out')::integer AS live,
          (extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer AS raw
   FROM connections
   WHERE agent_id IS NOT NULL
     AND (extra #>> '{mirrors,self}' IS NOT NULL OR service = 'whatsapp')
   UNION ALL
-  SELECT c.service, c.address, digits(w.phone), c.agent_id, p.principal, 1,
+  SELECT c.service, c.address, digits(w.phone), c.agent_id, p.principal,
+         (c.extra ->> 'state' IS DISTINCT FROM 'signed_out')::integer,
          (c.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
   FROM connections c
     JOIN principals p ON p.agent_id = c.agent_id
@@ -341,7 +343,8 @@ CREATE OR REPLACE VIEW aliases AS
   WHERE c.deleted_at IS NULL AND c.service = 'whatsapp'
     AND w.phone IS NOT NULL AND w.phone <> '' AND digits(c.address) <> digits(w.phone)
   UNION ALL
-  SELECT c.service, c.address, d.value #>> '{}', c.agent_id, d.key, 1,
+  SELECT c.service, c.address, d.value #>> '{}', c.agent_id, d.key,
+         (c.extra ->> 'state' IS DISTINCT FROM 'signed_out')::integer,
          (c.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
   FROM connections c
     CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(c.extra #> '{mirrors,dms}') = 'object'
@@ -349,7 +352,8 @@ CREATE OR REPLACE VIEW aliases AS
     JOIN principals p ON p.agent_id = c.agent_id AND p.principal = d.key
   WHERE c.deleted_at IS NULL AND jsonb_typeof(d.value) = 'string'
   UNION ALL
-  SELECT c.service, c.address, d.value #>> '{}', d.key, d.key, 1,
+  SELECT c.service, c.address, d.value #>> '{}', d.key, d.key,
+         (c.extra ->> 'state' IS DISTINCT FROM 'signed_out')::integer,
          (c.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
   FROM connections c
     CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(c.extra #> '{mirrors,dms}') = 'object'
@@ -358,7 +362,8 @@ CREATE OR REPLACE VIEW aliases AS
   WHERE c.deleted_at IS NULL AND c.agent_id IS NULL AND jsonb_typeof(d.value) = 'string'
     AND agent_runs(d.key)
   UNION ALL
-  SELECT c.service, c.address, r.value #>> '{}', r.key, NULL, 1,
+  SELECT c.service, c.address, r.value #>> '{}', r.key, NULL,
+         (c.extra ->> 'state' IS DISTINCT FROM 'signed_out')::integer,
          (c.extra -> 'raw' IS NOT DISTINCT FROM 'true'::jsonb)::integer
   FROM connections c
     CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(c.extra #> '{mirrors,rooms}') = 'object'

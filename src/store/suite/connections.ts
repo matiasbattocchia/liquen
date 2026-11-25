@@ -191,6 +191,15 @@ export function connectionsSuite(s: Substrate): void {
       // a re-grant revives it
       await log.upsertConnections([{ service: "slack", address: "T1:U1", agentId: "ana" }]);
       assertEquals((await log.aliases()).map((a) => a.live), [true, true]);
+      // a signed-out account still names its surface, and nothing sent there reaches anyone
+      // until it signs in again
+      const state = (state: string) =>
+        log.upsertConnections([{ service: "whatsapp", address: "549", extra: { state } }]);
+      await state("signed_out");
+      assertEquals(aliasOf(await log.aliases(), "whatsapp", "549", "549")?.agentId, "ana");
+      assertEquals((await log.aliases()).map((a) => a.live), [true, false]);
+      await state("connected");
+      assertEquals((await log.aliases()).map((a) => a.live), [true, true]);
     } finally {
       await log.close();
       await store.drop();

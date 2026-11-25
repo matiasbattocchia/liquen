@@ -35,6 +35,7 @@ import type {
   ReactionPart,
   TextPart,
 } from "../../types.ts";
+import { type Down, noSession } from "./accounts.ts";
 import { kindOf } from "./ingest.ts";
 import { reactionDraft, reactionId, standingOn } from "./reactions.ts";
 import { mentionSpans, toTelegram } from "./text.ts";
@@ -46,6 +47,9 @@ export interface TelegramDispatchDeps {
   /** The live session of an account, by its connection address; undefined when this
    *  process holds none for it. */
   wireOf: (connection: string) => TgWire | undefined;
+  /** Why an account with no session will not have one by itself (`Accounts.downOf`): a
+   *  send there fails for good rather than waiting to be offered again. */
+  downOf?: (connection: string) => Promise<Down | undefined>;
   /** Where a kept file's bytes are read from. */
   storage?: Storage;
   /** The log, for the remove line of a reaction an agent's own replaced. */
@@ -197,9 +201,7 @@ export function createTelegramDispatch(deps: TelegramDispatchDeps): () => Promis
       const connection = event.envelope.connection_address;
       const chat = event.envelope.conversation.address;
       const wire = deps.wireOf(connection);
-      if (!wire) {
-        throw new DispatchError(`no Telegram session is up for ${connection}`, 503);
-      }
+      if (!wire) throw noSession(connection, await deps.downOf?.(connection));
       if (work.act === "edit") {
         const { text, entities } = written(work.text, event);
         await wire.edit(chat, work.id, text, entities);
