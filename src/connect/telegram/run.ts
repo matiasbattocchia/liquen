@@ -31,7 +31,6 @@ import { heartbeat, setState } from "../health.ts";
 import { createMarks, marked } from "../marks.ts";
 import { keptToSelf } from "../self.ts";
 import { heardUntil, historySince } from "../history.ts";
-import { logDirectory } from "../mentions.ts";
 import { exitOnStop } from "../stop.ts";
 import { createAccounts, type Opened, RECONCILE_MS } from "./accounts.ts";
 import { createBios } from "./bio.ts";
@@ -209,7 +208,6 @@ export async function runTelegram(): Promise<() => Promise<void>> {
     publish: log.publish,
     wireOf: accounts.wireOf,
     storage,
-    directory: logDirectory((q) => log.read(q)),
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     store: log,
     onSent: (e, id) =>

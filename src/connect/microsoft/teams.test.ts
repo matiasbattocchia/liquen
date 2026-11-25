@@ -1836,7 +1836,6 @@ Deno.test("teams dispatch: a chat message posts as HTML with its mentions; the r
     subscribe: log.subscribe,
     read: log.read,
     setDelivery: log.setDelivery,
-    directory: () => Promise.resolve([{ address: "u-robin", name: "Robin" }]),
     wire: {
       post: (grant, place, message, root) => {
         posts.push({ grant, place, message, root });
@@ -1847,7 +1846,11 @@ Deno.test("teams dispatch: a chat message posts as HTML with its mentions; the r
     },
   });
   log.push(
-    outbound({ id: "e1", parts: [{ type: "text", kind: "text", text: "Hola @Robin, **ok**" }] }),
+    outbound({
+      id: "e1",
+      payload: { mentions: [{ address: "u-robin", name: "Robin" }] },
+      parts: [{ type: "text", kind: "text", text: "Hola @Robin, **ok**" }],
+    }),
   );
   await settle();
   assertEquals(posts.length, 1);

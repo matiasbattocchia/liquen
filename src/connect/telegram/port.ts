@@ -233,6 +233,8 @@ export function telegramRooms(call: PortCall): RoomsPort {
     await call(leg, req);
   };
   return {
+    // a public username is a mention Telegram links by itself
+    mentions: () => Promise.resolve({ native: /^[A-Za-z][A-Za-z0-9_]{4,31}$/ }),
     open: (req) =>
       call("rooms/open", req) as Promise<
         { address: string; kind?: "direct" | "group" | "channel"; name?: string }

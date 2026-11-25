@@ -93,7 +93,7 @@ Deno.test("telegram text: a round trip gives the markdown back", () => {
   assertEquals(fromTelegram(text, entities), md);
 });
 
-Deno.test("telegram text: an @Name the directory claims is a mention of that id; offsets count UTF-16", () => {
+Deno.test("telegram text: an @Name among the line's mentions is a mention of that id; offsets count UTF-16", () => {
   const dir = [{ address: "700200", name: "Sol Ruiz" }, { address: "-4100", name: "Equipo" }];
   assertEquals(mentionSpans("😀 gracias @Sol Ruiz!", dir), [
     { type: "mention_name", offset: 11, length: 9, user: "700200" },

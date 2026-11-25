@@ -12,8 +12,8 @@
  * their own. The first message's id is the row's. An edit, a delete and a reaction act on
  * the message the row points at (`ref_external_id`) and carry nothing else.
  *
- * Text crosses as Telegram's entities (`text.ts`), and an `@Name` the room's directory
- * claims names that person by id. A first contact is addressed by handle (`@name`): the
+ * Text crosses as Telegram's entities (`text.ts`), and an `@Name` the send resolved (§3
+ * mentions) names that person by id. A first contact is addressed by handle (`@name`): the
  * wire resolves it, and the row moves to the chat the message landed in, the person's id,
  * which is where their answer arrives.
  *
@@ -35,7 +35,6 @@ import type {
   ReactionPart,
   TextPart,
 } from "../../types.ts";
-import type { Directory } from "../mentions.ts";
 import { kindOf } from "./ingest.ts";
 import { reactionDraft, reactionId, standingOn } from "./reactions.ts";
 import { mentionSpans, toTelegram } from "./text.ts";
@@ -51,8 +50,6 @@ export interface TelegramDispatchDeps {
   storage?: Storage;
   /** The log, for the remove line of a reaction an agent's own replaced. */
   publish?: Appender["publish"];
-  /** The conversation's name directory (§3 mentions). Absent: a name ships as text. */
-  directory?: Directory;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
   store?: DispatcherDeps<unknown>["store"];
   onError?: (event: MessageEvent, err: unknown) => void;
@@ -114,11 +111,11 @@ function select(event: MessageEvent): Work | null {
 
 /** Wire dispatch to the log, over the shared loop (`dispatcher.ts`). Returns stop. */
 export function createTelegramDispatch(deps: TelegramDispatchDeps): () => Promise<void> {
-  const written = async (markdown: string, event: MessageEvent) => {
+  const written = (markdown: string, event: MessageEvent) => {
     const flat = toTelegram(markdown);
-    if (!deps.directory || !flat.text) return flat;
-    const dir = await deps.directory(SERVICE, event.envelope.conversation.address);
-    return { text: flat.text, entities: [...flat.entities, ...mentionSpans(flat.text, dir)] };
+    const said = event.payload?.mentions ?? [];
+    if (said.length === 0 || !flat.text) return flat;
+    return { text: flat.text, entities: [...flat.entities, ...mentionSpans(flat.text, said)] };
   };
 
   const fileOf = async (f: FilePart): Promise<NonNullable<TgOutbound["file"]>> => {
@@ -204,7 +201,7 @@ export function createTelegramDispatch(deps: TelegramDispatchDeps): () => Promis
         throw new DispatchError(`no Telegram session is up for ${connection}`, 503);
       }
       if (work.act === "edit") {
-        const { text, entities } = await written(work.text, event);
+        const { text, entities } = written(work.text, event);
         await wire.edit(chat, work.id, text, entities);
         return {};
       }
@@ -214,7 +211,7 @@ export function createTelegramDispatch(deps: TelegramDispatchDeps): () => Promis
       }
       if (work.act === "react") return await react(wire, work, event);
 
-      const flat = work.text ? await written(work.text, event) : undefined;
+      const flat = work.text ? written(work.text, event) : undefined;
       const outs: TgOutbound[] = [];
       for (const [i, f] of work.files.entries()) {
         outs.push({ file: await fileOf(f), ...(i === 0 && flat ? flat : {}) });

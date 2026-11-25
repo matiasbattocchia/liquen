@@ -2383,6 +2383,83 @@ Deno.test("conversation on a wire: every verb goes through the wire's port as th
   }
 });
 
+Deno.test("send: an @ resolves among the room's people — the log's and the roster's — into the row's mentions; a name several wear, or nobody, refuses before anything is recorded", async () => {
+  const dir = await Deno.makeTempDir();
+  const log = await orgLog(dir);
+  await log.putAgents([{ agentId: "a1", mind: "mind@a1" }]);
+  await log.upsertConnections([
+    { service: "whatsapp", address: "5491100000000", agentId: "a1", extra: { name: "Sole" } },
+  ]);
+  const asked: unknown[] = [];
+  const rooms: XiPorts["rooms"] = {
+    whatsapp: {
+      mentions: () => Promise.resolve({}),
+      members: (req: object) => {
+        asked.push(req);
+        // Marina never wrote there; the account itself is a member, and nobody to mention
+        return Promise.resolve([
+          { address: "5492616000001" },
+          { address: "5492616000004", name: "Marina de Rodt" },
+          { address: "5491100000000", name: "Sole" },
+        ]);
+      },
+    },
+  };
+  const group = { address: "120363-g", kind: "group" as const, name: "Travesía" };
+  const send = (text: string) =>
+    ok([{ kind: "tool_use", name: "send", input: { to: "120363-g", text } }], "tool_use");
+  const { transport } = scripted([
+    send("Buen día @Cristina! ¿Estoy a tiempo?"),
+    send("@Diego, ¿venís?"),
+    send("@Marina te paso la lista"),
+    send("@Zulema hola"),
+    send("@sole aviso"),
+    ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+  ]);
+  const ports: XiPorts = { log, docs: await docsAt(`${dir}/docs`), transport, rooms };
+  try {
+    let n = 0;
+    for (
+      const [address, name] of [
+        ["5492616000001", "Cristina Natación"],
+        ["5492615406773", "Diego"],
+        ["5492615123222", "Diego Zeta"],
+      ]
+    ) {
+      await log.publish(
+        wireRow("whatsapp", "5491100000000", group, { address, name }, `whatsapp:${++n}`),
+      );
+    }
+    await log.publish(principalMsg("preguntá en la travesía"));
+    for (let i = 0; i < 20; i++) await xi(CONFIG, ports);
+    const results = (await log.read({ types: ["tool_result"] })).map((e) =>
+      JSON.stringify(e.parts)
+    );
+    assertEquals(results.length, 5);
+    assertStringIncludes(results[0], "sent · id");
+    assertStringIncludes(
+      results[1],
+      '\\"@Diego\\" names 2 people here; say which, with more of the name their lines wear ' +
+        "or with @ and their address: Diego Zeta (5492615123222), Diego (5492615406773)",
+    ); // newest line first
+    assertStringIncludes(results[2], "sent · id");
+    assertStringIncludes(results[3], 'nobody here goes by \\"@Zulema\\"');
+    assertStringIncludes(results[3], "For plain text, drop the @");
+    // the account is in the roster, and is still nobody to mention
+    assertStringIncludes(results[4], 'nobody here goes by \\"@sole\\"');
+    const sent = (await log.read({ conversation: "120363-g", types: ["message"] }))
+      .filter((e) => e.agent?.id === "a1");
+    assertEquals(sent.map((e) => e.payload?.mentions), [
+      [{ address: "5492616000001", name: "Cristina" }],
+      [{ address: "5492616000004", name: "Marina" }],
+    ]);
+    assertEquals(asked[0], { connection: "5491100000000", agent: "a1", conversation: "120363-g" });
+  } finally {
+    await log.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("send: a list of people on a wire opens a room through the port — unnamed a direct room, named a group or a channel — and lands there; without a port the list stays whole", async () => {
   const dir = await Deno.makeTempDir();
   const log = await orgLog(dir);

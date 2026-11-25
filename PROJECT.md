@@ -7665,6 +7665,20 @@ principal holds, which it lit red whatever it said, says what red means where th
 assistant is carrying the conversation, and counts a bot's question or menu as a line
 wanting an answer.
 
+### A send resolves its mentions, and refuses a name it cannot place (2026-11-25) — LANDED
+
+On new the mind asked Cristina in the Travesía group whether there was still room, and told
+the principal it could not tag her: `send.md` never said how. The dispatchers did claim
+`@Name`, but only on a name spelled whole as the log had it (`@Cristina Natación`), so
+the `@Cristina` a person types went out as text, and nothing told the agent. Now the send
+resolves each `@` among the room's people, the wire's roster and whoever wrote there, the
+way `conversation` resolves `who`: a name one person wears is the mention, one several
+wear or nobody wears refuses the send with the names it could mean, and the row carries
+what it resolved (`payload.mentions`, the token as written), which each dispatcher encodes.
+Each wire's rooms port says whether its lines mention (a Teams chat does, the same
+account's mail does not) and which handles it links itself (Slack's `@here`, Telegram's
+`@username`).
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

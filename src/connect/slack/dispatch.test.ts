@@ -86,7 +86,6 @@ async function withDispatch(
   }) => Promise<void>,
   opts: {
     failWith?: Error;
-    directory?: SlackDispatchDeps["directory"];
     /** a deployment with no reaction leg — the send must stamp failed, not vanish */
     noReact?: boolean;
     rootOf?: SlackDispatchDeps["rootOf"];
@@ -137,7 +136,6 @@ async function withDispatch(
       if (patch.status?.posting_at === undefined) patches.push(patch);
       return log.setDelivery(id, patch);
     },
-    directory: opts.directory,
     rootOf: opts.rootOf,
     nameByEmail: opts.nameByEmail,
     ...(opts.store ? { store: log } : {}),
@@ -312,19 +310,17 @@ Deno.test("slack dispatch: a file-only send (no text) still dispatches", async (
   });
 });
 
-Deno.test("slack dispatch: @Name and @here encode at the frontier; unclaimed stays literal", async () => {
+Deno.test("slack dispatch: the line's mentions and @here encode at the frontier; the rest stays literal", async () => {
   await withDispatch(async ({ publish, posts, waitFor }) => {
-    await publish(agentMsg("01", "@matias dale, aviso con @here — y @Nadie queda como está"));
+    await publish({
+      ...agentMsg("01", "@matias dale, aviso con @here — y @Nadie queda como está"),
+      payload: { mentions: [{ address: "U0BKTGTB65C", name: "matias" }] },
+    });
     await waitFor(() => posts.length === 1);
     assertEquals(
       posts[0].text,
       "<@U0BKTGTB65C> dale, aviso con <!here> — y @Nadie queda como está",
     );
-  }, {
-    directory: (service, conversation) => {
-      assertEquals([service, conversation], ["slack", "C1"]);
-      return Promise.resolve([{ address: "U0BKTGTB65C", name: "matias" }]);
-    },
   });
 });
 

@@ -727,7 +727,9 @@ one peripheral for both.
     turn_id?          // groups one step's emissions (boundary rule §5, tool barrier §2)
     stop_reason?      // on a turn's LAST event: the stop, in the harness's vocabulary (decide reads it)
     covers?           // on a summary: [from,to] — the id range the checkpoint stands for
-    mentions?         // wire mentions, canonical addresses
+    mentions?         // wire mentions, canonical addresses; on a send, the people its @ tokens
+                      // name, resolved by the send among the room's (src/mentions.ts) and
+                      // encoded by the dispatcher
     control?          // the principal's hard stop, typed at the door (cancel)
   }
   extra?: {}        // the sidecar: backfill·muted·archived (silencing marks), consumed, silence, via, exec, sender_* (sender facts), <service> provenance, raw

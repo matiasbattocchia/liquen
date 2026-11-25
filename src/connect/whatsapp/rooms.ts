@@ -47,6 +47,7 @@ export function whatsappRooms(
   const withMembers = (members: string[]) => ({ body: JSON.stringify({ members }) });
 
   return {
+    mentions: () => Promise.resolve({}),
     open: async ({ connection, members, name, kind }) => {
       if (kind === "direct") {
         const others = [...new Set(members)].filter((m) => m !== connection);

@@ -132,11 +132,12 @@ Deno.test("telegram dispatch: a first contact by handle moves the row to the cha
   });
 });
 
-Deno.test("telegram dispatch: an @Name the directory claims is a mention by id", async () => {
-  const { log, wire } = harness(fakeWire(), {
-    directory: () => Promise.resolve([{ address: "700200", name: "Sol Ruiz" }]),
-  });
-  log.push(outbound({ parts: [{ type: "text", kind: "text", text: "gracias @Sol Ruiz" }] }));
+Deno.test("telegram dispatch: an @Name among the line's mentions is a mention by id", async () => {
+  const { log, wire } = harness(fakeWire());
+  log.push(outbound({
+    payload: { mentions: [{ address: "700200", name: "Sol Ruiz" }] },
+    parts: [{ type: "text", kind: "text", text: "gracias @Sol Ruiz" }],
+  }));
   await settle();
   assertEquals(sends(wire)[0][1].entities, [
     { type: "mention_name", offset: 8, length: 9, user: "700200" },

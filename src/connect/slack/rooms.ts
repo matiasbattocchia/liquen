@@ -20,6 +20,7 @@ import type { RoomsPort } from "../../xi.ts";
 import { DispatchError } from "../errors.ts";
 import { timedFetch } from "../http.ts";
 import { slackErrorCode } from "./dispatch.ts";
+import { SLACK_NATIVE } from "../mentions.ts";
 
 export interface SlackRoomsDeps {
   /** Which grant acts for the agent on the workspace — the dispatcher's own resolver. */
@@ -77,6 +78,7 @@ export function slackRooms(deps: SlackRoomsDeps): RoomsPort {
   type Channel = { id: string; name?: string };
 
   return {
+    mentions: () => Promise.resolve({ native: SLACK_NATIVE }),
     open: async ({ connection, agent, members, name, kind }) => {
       const token = await tokenFor(connection, agent);
       if (kind === "direct") {

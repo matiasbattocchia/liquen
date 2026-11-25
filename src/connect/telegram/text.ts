@@ -11,7 +11,7 @@
  * outbound a backtick span or a fence is lifted out before anything else is read.
  */
 
-import { type Claim, claimMentions, type NameEntry } from "../mentions.ts";
+import { type Claim, claimMentions, type NameEntry } from "../../mentions.ts";
 import type { TgEntity } from "./wire.ts";
 
 /** The marker pair a span is written with. A span with none (an underline, a spoiler, a
@@ -153,11 +153,11 @@ export function toTelegram(markdown: string): Flat {
   return out;
 }
 
-/** The people an outbound text names, as spans over it: an `@Name` the room's directory
- *  claims becomes a mention of that person by id, and the words stay as typed. A handle
+/** The people an outbound text names, as spans over it: an `@Name` among the line's
+ *  mentions becomes a mention of that person by id, and the words stay as typed. A handle
  *  Telegram resolves by itself (`@username`) needs no span, so only a person's id claims. */
-export function mentionSpans(text: string, dir: NameEntry[]): TgEntity[] {
-  const people = dir.filter((e) => e.type !== "#" && /^\d+$/.test(e.address));
+export function mentionSpans(text: string, mentions: NameEntry[]): TgEntity[] {
+  const people = mentions.filter((e) => e.type !== "#" && /^\d+$/.test(e.address));
   return claimMentions(text, people).map((c: Claim) => ({
     type: "mention_name" as const,
     offset: c.index,

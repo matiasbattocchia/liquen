@@ -71,7 +71,7 @@ import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import { DispatchError } from "../errors.ts";
 import type { StateStore } from "../health.ts";
 import { createMarks, marked } from "../marks.ts";
-import { claimMentions, type Directory, logDirectory, type NameEntry } from "../mentions.ts";
+import { claimMentions, type NameEntry } from "../../mentions.ts";
 import { bytesOf, isExternal, tailOf } from "../../store/media.ts";
 import type { Storage } from "../../store/storage.ts";
 import type { Appender, DeliveryPatch, Log, Reader, Subscriber } from "../../store/log.ts";
@@ -1640,9 +1640,6 @@ export interface TeamsDispatchDeps {
   subscribe: Subscriber["subscribe"];
   read: Reader["read"];
   wire: TeamsWire;
-  /** The conversation's name directory (§3 mentions): the agent's `@Name` tokens claim
-   *  user ids. Absent ⇒ names stay words. */
-  directory?: Directory;
   /** The name a place's members know a person by, by their email: a principal's line
    *  crossing from another surface wears it in its tag. Absent, or nobody there by that
    *  email ⇒ the tag the mirror wrote. */
@@ -1733,8 +1730,7 @@ export function createTeamsDispatch(deps: TeamsDispatchDeps): () => Promise<void
       const text = who && name && name !== who.tagged
         ? retag(work.text, who.tagged, name)
         : work.text;
-      const dir = /@/.test(text) ? await deps.directory?.(SERVICE, work.address) : null;
-      const message = { ...toTeamsHtml(text, dir ?? []), files: work.files };
+      const message = { ...toTeamsHtml(text, event.payload?.mentions ?? []), files: work.files };
       // a channel reply threads under the referent's root — its own id when it is one
       const thread = place.kind === "channel" && work.re ? root ?? work.re.id : undefined;
       const { id, user } = await deps.wire.post(grant, place, message, thread);
@@ -2149,7 +2145,6 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     subscribe: (l, o) => log.subscribe(l, o),
     read: (q) => log.read(q),
     wire: teamsWire({ broker, fetchApi: timedFetch, storage: store.storage() }),
-    directory: logDirectory((q) => log.read(q) as Promise<Event[]>),
     nameByEmail: placeNameByEmail(
       names,
       async (grant) =>

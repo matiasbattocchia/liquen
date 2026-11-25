@@ -88,6 +88,7 @@ import type { DocContext, DocEntry, DocHeader, Docs, Where } from "./store/docs.
 import { LeaseLost, type Locker } from "./store/lock.ts";
 import { digits, sameHandle, speaksThrough } from "./store/roster.ts";
 import { foldName, namesMatch, preferProper } from "./store/names.ts";
+import { type NameEntry, resolveMentions, type Unresolved } from "./mentions.ts";
 import { newId } from "./store/id.ts";
 import { roomOnly, roomPart } from "./room.ts";
 import { type ToolShape, wordedAll } from "./tooldoc.ts";
@@ -1136,6 +1137,11 @@ export interface RoomsPort {
       conversation: string;
     },
   ) => Promise<{ address: string; name?: string }[]>;
+  /** Whether a line in a conversation can mention people (§3 mentions), and how: undefined
+   *  ⇒ it cannot, and its `@` is a character (a mail thread); else `native` matches the
+   *  handles the wire links by itself, which go as written when nobody there goes by them.
+   *  No conversation: a room `open` makes. */
+  mentions?: (conversation?: string) => Promise<{ native?: RegExp } | undefined>;
   join?: (req: RoomsActor & { conversation: string }) => Promise<void>;
   leave?: (req: RoomsActor & { conversation: string }) => Promise<void>;
   add?: (req: RoomsActor & { conversation: string; members: string[] }) => Promise<void>;
@@ -2644,6 +2650,137 @@ function roomView(
   };
 }
 
+/** Who is in a wire room, by the wire's roster, with the names people go by here: the
+ *  wire's, else what the log holds of them, the way `who` finds them. Undefined where the
+ *  port lists no members. */
+async function rosterOf(
+  port: RoomsPort,
+  actor: RoomsActor,
+  conversation: string,
+  ports: XiPorts,
+): Promise<NameEntry[] | undefined> {
+  if (!port.members) return undefined;
+  const roster = await port.members({ ...actor, conversation });
+  return await namedFromLog(roster, actor.connection, ports);
+}
+
+/** People by address, each bare one given the name their newest line on the account wears. */
+async function namedFromLog(
+  people: NameEntry[],
+  connection: string,
+  ports: XiPorts,
+): Promise<NameEntry[]> {
+  const bare = people.filter((p) => !p.name).map((p) => p.address);
+  if (bare.length === 0) return people;
+  const heard = await ports.log.read({ connection, senders: bare, limit: NAME_REACH });
+  const names = new Map<string, string>();
+  for (const e of heard) {
+    const at = e.envelope.sender?.address;
+    const name = e.envelope.sender?.name;
+    if (at && name && !names.has(at)) names.set(at, name);
+  }
+  return people.map((p) => {
+    const name = p.name ?? names.get(p.address);
+    return name ? { address: p.address, name } : { address: p.address };
+  });
+}
+
+/** Rows the people of a conversation are read from: enough for a busy group's regulars. */
+const MENTION_REACH = 400;
+
+/**
+ * What the `@` and `#` tokens of a send name (§3 mentions), resolved among the people of
+ * the conversation it lands in: the wire's roster of a group or channel, everyone whose
+ * lines the log holds there, and, for a room this send opens, the people its list names.
+ * The account itself is nobody to mention. A token that names one of them is a mention; one
+ * that names several, or nobody, refuses the send with whom it could mean, before anything
+ * goes out. A conversation whose lines mention nobody (mail, a local room) resolves nothing.
+ */
+async function mentionsOf(
+  text: string,
+  at: {
+    service: string;
+    connection: string;
+    conversation?: string;
+    kind?: Conversation["kind"];
+    members?: string[];
+  },
+  self: { id: string },
+  ports: XiPorts,
+): Promise<NameEntry[]> {
+  if (!/[@#][\p{L}\p{N}]/u.test(text)) return [];
+  const port = ports.rooms?.[at.service];
+  // a service that is off resolves nothing: its lines go nowhere until it is back
+  const how = await port?.mentions?.(at.conversation).catch(() => undefined);
+  if (!port || !how) return [];
+  const actor: RoomsActor = { connection: at.connection, agent: self.id };
+  const people: NameEntry[] = [];
+  if (at.members) {
+    people.push(
+      ...await namedFromLog(at.members.map((address) => ({ address })), at.connection, ports),
+    );
+  }
+  if (at.conversation !== undefined) {
+    const rows = await ports.log.read({
+      service: at.service,
+      connection: at.connection,
+      conversation: at.conversation,
+      types: ["message"],
+      limit: MENTION_REACH,
+    });
+    // newest first, so a renamed person's current name is the one a refusal shows
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const s = rows[i].envelope.sender;
+      if (s?.address) people.push({ address: s.address, ...(s.name ? { name: s.name } : {}) });
+    }
+    if (at.kind === "group" || at.kind === "channel") {
+      // a roster the wire cannot give now leaves the people the log knows
+      people.push(
+        ...await rosterOf(port, actor, at.conversation, ports).catch(() => undefined) ?? [],
+      );
+    }
+  }
+  const channels: NameEntry[] = [];
+  if (/#[\p{L}\p{N}]/u.test(text)) {
+    const rows = await ports.log.read({
+      service: at.service,
+      types: ["message"],
+      limit: MENTION_REACH,
+    });
+    for (let i = rows.length - 1; i >= 0; i--) {
+      for (const m of (rows[i] as MessageEvent).payload?.mentions ?? []) {
+        if (m.type === "#" && m.name && !channels.some((c) => c.address === m.address)) {
+          channels.push({ address: m.address, name: m.name, type: "#" });
+        }
+      }
+    }
+  }
+  const { mentions, unresolved } = resolveMentions(
+    text,
+    people.filter((p) => !sameHandle(p.address, at.connection)),
+    { channels, ...(how.native ? { native: (h: string) => how.native!.test(h) } : {}) },
+  );
+  if (unresolved.length > 0) throw new Error(unresolved.map(unresolvedWords).join("; "));
+  return mentions;
+}
+
+/** Most candidates a refusal names: a big group's roster is `conversation`'s to show. */
+const CANDIDATES_SHOWN = 12;
+
+/** A token the send could not settle, in the words its refusal says. */
+function unresolvedWords(u: Unresolved): string {
+  const shown = u.candidates.slice(0, CANDIDATES_SHOWN)
+    .map((c) => `${c.name ?? "?"} (${c.address})`).join(", ");
+  const more = u.candidates.length > CANDIDATES_SHOWN
+    ? `, and ${u.candidates.length - CANDIDATES_SHOWN} more`
+    : "";
+  return u.many
+    ? `"${u.token}" names ${u.candidates.length} people here; say which, with more of the ` +
+      `name their lines wear or with @ and their address: ${shown}${more}`
+    : `nobody here goes by "${u.token}"; mention someone with @ and the name their lines ` +
+      `wear or their address${shown ? `: ${shown}${more}` : ""}. For plain text, drop the @`;
+}
+
 /** The `conversation` verbs on a wire (§9): each through the wire's port, as the acting
  *  agent on the account the conversation is on — the one `send` there rides. The wire
  *  says the change in a line of its own, which the ingest brings back as the room's
@@ -2671,29 +2808,7 @@ async function wireRoom(
     if (!l) throw new Error(`a conversation on ${wire.service} takes no \`${k}\` from here`);
     return l;
   };
-  // the wire's roster is addresses; the names are the ones people go by here — what the
-  // log holds of them, the way `who` finds them — filled in for whoever the wire left bare
-  const people = async () => {
-    if (!port.members) return undefined;
-    const roster = await port.members({ ...actor, conversation: room.address });
-    const bare = roster.filter((p) => !p.name).map((p) => p.address);
-    if (bare.length === 0) return roster;
-    const heard = await ports.log.read({
-      connection: wire.connection,
-      senders: bare,
-      limit: NAME_REACH,
-    });
-    const names = new Map<string, string>();
-    for (const e of heard) {
-      const at = e.envelope.sender?.address;
-      const name = e.envelope.sender?.name;
-      if (at && name && !names.has(at)) names.set(at, name);
-    }
-    return roster.map((p) => {
-      const name = p.name ?? names.get(p.address);
-      return name ? { address: p.address, name } : { address: p.address };
-    });
-  };
+  const people = () => rosterOf(port, actor, room.address, ports);
   if (action === "show") return roomView(room, kind, await people());
   if (kind === "direct") {
     throw new Error(
@@ -3714,6 +3829,21 @@ async function execute(
       );
     }
     to = aimed.address;
+    const body = args.text === undefined ? "" : String(args.text);
+    // the people a room this send opens is for are the ones its mentions can name, settled
+    // before the wire makes the room: a refusal leaves nothing opened
+    let mentions = aimed.wire
+      ? await mentionsOf(
+        body,
+        {
+          service: aimed.wire.service,
+          connection: aimed.wire.connection,
+          members: aimed.wire.open.members,
+        },
+        self,
+        ports,
+      )
+      : undefined;
     // a list on a wire is a room opened now, the call judged (§9): through the wire's
     // port, on the account, as this agent — and the send lands in what the wire answered,
     // under the kind and name it gave the room
@@ -3854,12 +3984,22 @@ async function execute(
         conversation,
       }
       : { service: "local" as const, connection_address: LOCAL_CONNECTION, conversation };
+    mentions ??= await mentionsOf(
+      body,
+      {
+        service: envelope.service,
+        connection: envelope.connection_address,
+        conversation: to,
+        kind,
+      },
+      self,
+      ports,
+    );
     // attachments (§5 media): each kept as it is named, through the files port; a missing
     // path throws here and the tool_result carries the error back to the model
     const { parts: files, paths } = Array.isArray(args.files)
       ? await attached(args.files.map(String), ports.files ?? NO_FILES)
       : { parts: [], paths: {} };
-    const body = args.text === undefined ? "" : String(args.text);
     const glyph = args.react === undefined ? "" : String(args.react);
     // a pin and a contact card each ride the wire as a message of its own kind (§5 parts):
     // only WhatsApp has them
@@ -3943,6 +4083,7 @@ async function execute(
           : target
           ? { action: "reply" as const }
           : {}),
+        ...(mentions.length > 0 && !glyph && action !== "delete" ? { mentions } : {}),
       },
       agent: self,
       envelope,

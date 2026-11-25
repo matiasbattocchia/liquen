@@ -375,18 +375,14 @@ Deno.test("an error without an HTTP class stamps failed with a null error_code �
   assertEquals(status.error_code, null); // never reached the bridge — no class, and none kept
 });
 
-Deno.test("the directory claims @Name tokens — content.mentions for the bridge encoder", async () => {
+Deno.test("the line's mentions ride content.mentions for the bridge encoder", async () => {
   const records: WADispatchRecord[] = [];
   const { log } = harness((record) => {
     records.push(record);
     return Promise.resolve("wmw.out.9");
-  }, {
-    directory: (service, conversation) => {
-      assertEquals([service, conversation], ["whatsapp", "5491199999999"]);
-      return Promise.resolve([{ address: "5492605550108", name: "Euge" }]);
-    },
   });
   log.push(outboundMessage({
+    payload: { mentions: [{ address: "5492605550108", name: "Euge" }] },
     parts: [{ type: "text", kind: "text", text: "@Euge te paso la dirección" }],
   }));
   await settle();
@@ -397,15 +393,27 @@ Deno.test("the directory claims @Name tokens — content.mentions for the bridge
   assertEquals(records[0].content.mentions, [{ address: "5492605550108", name: "Euge" }]);
 });
 
-Deno.test("the caption seat claims mentions too — the bridge encodes captions as well", async () => {
+Deno.test("a line without mentions hands the bridge none, whatever its text says", async () => {
+  const records: WADispatchRecord[] = [];
+  const { log } = harness((record) => {
+    records.push(record);
+    return Promise.resolve("wmw.out.11");
+  });
+  log.push(outboundMessage({
+    parts: [{ type: "text", kind: "text", text: "@Euge te paso la dirección" }],
+  }));
+  await settle();
+  assertEquals(records[0].content.mentions, undefined);
+});
+
+Deno.test("the caption seat carries mentions too — the bridge encodes captions as well", async () => {
   const records: WADispatchRecord[] = [];
   const { log } = harness((record) => {
     records.push(record);
     return Promise.resolve("wmw.out.10");
-  }, {
-    directory: () => Promise.resolve([{ address: "5492605550108", name: "Euge" }]),
   });
   log.push(outboundMessage({
+    payload: { mentions: [{ address: "5492605550108", name: "Euge" }] },
     parts: [
       { type: "text", kind: "text", text: "@Euge mirá la foto" },
       {

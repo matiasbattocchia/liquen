@@ -31,7 +31,7 @@ import type { Credentials } from "../../store/credentials.ts";
 import { type GrantBroker, tokenOf } from "../../proxy/grants.ts";
 import { DispatchError } from "../errors.ts";
 import { timedFetch } from "../http.ts";
-import { GRAPH, placeOf } from "./teams.ts";
+import { GRAPH, isTeamsAddress, placeOf } from "./teams.ts";
 
 export interface TeamsRoomsDeps {
   broker: Pick<GrantBroker, "issue" | "accessTokenFor" | "refusal">;
@@ -146,6 +146,9 @@ export function teamsRooms(deps: TeamsRoomsDeps): RoomsPort {
     });
 
   return {
+    // a Teams chat or channel mentions; a mail thread on the same account does not
+    mentions: (conversation) =>
+      Promise.resolve(conversation === undefined || isTeamsAddress(conversation) ? {} : undefined),
     open: async ({ connection, members, name, kind }) => {
       const g = await as(connection);
       const others = [...new Set(members)].filter((m) => m !== g.self);

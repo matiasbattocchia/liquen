@@ -26,7 +26,7 @@ import { createDispatcher, type DispatcherDeps } from "../dispatcher.ts";
 import type { DeliveryPatch, Reader, Subscriber } from "../../store/log.ts";
 import type { Credentials } from "../../store/credentials.ts";
 import type { Event, EventId, FilePart, MessageEvent } from "../../types.ts";
-import { type Directory, encodeSlackText } from "../mentions.ts";
+import { encodeSlackText } from "../mentions.ts";
 import { toSlack } from "../flavor.ts";
 import { retag, taggedOf } from "../../sender.ts";
 import { findRoot, orgFlag } from "../../config.ts";
@@ -159,10 +159,6 @@ export interface SlackDispatchDeps {
   react?: SlackReact;
   /** Absent = it cannot edit or delete either — same rule, same stamp. */
   amend?: SlackAmend;
-  /** The conversation's name directory (§3 mentions): lets the agent's `@Name` tokens
-   *  claim user ids for the wire encoding. Specials (`@here`) and bare ids encode
-   *  regardless; unclaimed names stay literal text. */
-  directory?: Directory;
   /** The name the workspace knows a person by, by their email (`users.lookupByEmail`):
    *  a principal's line crossing from another surface wears it in its tag, as their own
    *  workspace would say it. Absent, or no such person ⇒ the tag the mirror wrote. */
@@ -229,10 +225,9 @@ export function createSlackDispatch(deps: SlackDispatchDeps): () => Promise<void
       const text = who && name && name !== who.tagged
         ? toSlack(retag(raw, who.tagged, name))
         : said;
-      // the agent mentions as a human (`@Name`, `#chan`, `@here`) — encode to the
-      // wire's forms here at the frontier; unclaimed names stay literal text
-      const dir = /[@#]/.test(text) ? await deps.directory?.("slack", target.channel) : null;
-      const encoded = text ? encodeSlackText(text, dir ?? []) : text;
+      // the mentions the send resolved (§3), `@here` and bare ids beside them, in the
+      // wire's forms
+      const encoded = text ? encodeSlackText(text, event.payload?.mentions ?? []) : text;
       // the thread is the referent's ROOT: a reply to a reply lands in the same thread
       const threadTs = re && ref ? tsOf(await deps.rootOf?.(ref)) ?? re : re;
       const { ts, user } = await deps.post(target, encoded, voice, files, threadTs);
@@ -523,7 +518,6 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     storage: store.storage(),
   });
 
-  const { logDirectory } = await import("../mentions.ts");
   // the referent's row, by its external id: a reply row's ref names the thread root
   const rootOf = async (externalId: string): Promise<string | undefined> => {
     const [row] = await log.read({ externalId, types: ["message"] });
@@ -535,7 +529,6 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     post,
     react,
     amend,
-    directory: logDirectory((q) => log.read(q)),
     nameByEmail,
     rootOf,
     setDelivery: (id, patch) => log.setDelivery(id, patch),

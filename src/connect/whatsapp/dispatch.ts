@@ -41,7 +41,7 @@ import type {
   TextPart,
 } from "../../types.ts";
 import { externalId, SERVICE, type WAContent } from "./ingest.ts";
-import { type Directory, whatsappMentions } from "../mentions.ts";
+import { whatsappMentions } from "../mentions.ts";
 import { toWhatsApp } from "../flavor.ts";
 import { findRoot, orgFlag, settingsOf } from "../../config.ts";
 import { timedFetch } from "../http.ts";
@@ -75,10 +75,6 @@ export interface WhatsAppDispatchDeps {
   subscribe: Subscriber["subscribe"];
   send: WASend;
   mediaUrl?: WAMediaUrl;
-  /** The conversation's name directory (§3 mentions): lets the agent's `@Name` tokens
-   *  claim addresses — the bridge does the wire encoding (`@digits` + MentionedJID).
-   *  Absent ⇒ mentions ship as literal text. */
-  directory?: Directory;
   setDelivery?: (id: EventId, patch: DeliveryPatch) => Promise<void>;
   store?: DispatcherDeps<unknown>["store"];
   read: Reader["read"];
@@ -102,16 +98,13 @@ export function createWhatsAppDispatch(deps: WhatsAppDispatchDeps): () => Promis
     onError: deps.onError,
     onSent: deps.onSent,
     post: async ({ contents }, event) => {
-      // the agent mentions as a human (`@Name`) — the directory claims the tokens,
-      // the BRIDGE encodes (its `encodeMentions`: text messages and captions alike).
-      // Unclaimed tokens stay literal text — the honest nothing.
-      if (deps.directory) {
-        const dir = await deps.directory(SERVICE, event.envelope.conversation.address);
-        for (const c of contents) {
-          if (c.content.kind === "reaction" || !c.content.text) continue;
-          const claimed = whatsappMentions(c.content.text, dir);
-          if (claimed.length) c.content.mentions = claimed;
-        }
+      // the people the send resolved (§3 mentions), each content handed the ones its text
+      // or caption writes: the BRIDGE encodes them (`encodeMentions`)
+      const said = event.payload?.mentions ?? [];
+      for (const c of contents) {
+        if (c.content.kind === "reaction" || !c.content.text || said.length === 0) continue;
+        const claimed = whatsappMentions(c.content.text, said);
+        if (claimed.length) c.content.mentions = claimed;
       }
       const minutes = event.agent && deps.engagedMinutes
         ? await deps.engagedMinutes(event.agent.id)
@@ -344,13 +337,11 @@ export async function runDispatch(): Promise<() => Promise<void>> {
     await bridgeSend((await knobs()).bridgeUrl, token)(record, media, engagedUntil);
   const org = await liveConfig(root, log);
 
-  const { logDirectory } = await import("../mentions.ts");
   const stop = createWhatsAppDispatch({
     subscribe: (l, o) => log.subscribe(l, o),
     read: (q) => log.read(q),
     send,
     mediaUrl,
-    directory: logDirectory((q) => log.read(q)),
     engagedMinutes: async (agentId) => settingsOf(await org(), agentId).engagedMinutes,
     setDelivery: (id, patch) => log.setDelivery(id, patch),
     store: log,
