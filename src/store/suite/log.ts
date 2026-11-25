@@ -127,6 +127,50 @@ export function logSuite(s: Substrate): void {
     });
   });
 
+  Deno.test("names: each set of names the rows wear once, first worn first, under the query's filters and law (§8)", async () => {
+    await withLog(async (log) => {
+      const worn = (
+        id: string,
+        room: string,
+        roomName: string,
+        sender: string,
+        name: string,
+      ): MessageEvent => ({
+        ...msg(id, room, "hola", sender),
+        envelope: {
+          service: "local",
+          connection_address: "org",
+          conversation: { address: room, kind: "direct" as const, name: roomName },
+          sender: { address: sender, name },
+        },
+      });
+      await log.publish(worn("01", "549261", "Lucas Manu", "549261", "Lucas Fallet La Rocca"));
+      await log.publish(worn("02", "549261", "Lucas Manu", "549261", "Lucas Manu"));
+      await log.publish(worn("03", "549261", "Lucas Manu", "549261", "Lucas Fallet La Rocca"));
+      await log.publish(worn("04", "549262", "Megavalo", "549262", "Osvaldo Herrera"));
+      if (!log.names) throw new Error("the log reads no names");
+
+      const lucas = await log.names({ conversations: ["549261"] });
+      assertEquals(lucas.map((r) => [r.senderName, r.first, r.last]), [
+        ["Lucas Fallet La Rocca", "01", "03"], // worn twice, one set, from its first row to its last
+        ["Lucas Manu", "02", "02"],
+      ]);
+      assertEquals(lucas[0].conversationName, "Lucas Manu");
+      assertEquals(lucas[0].conversation, "549261");
+      assertEquals(lucas[0].service, "local");
+      assertEquals((await log.names({ senders: ["549262"] })).map((r) => r.senderName), [
+        "Osvaldo Herrera",
+      ]);
+      assertEquals((await log.names({ afterId: "03" })).map((r) => r.senderName), [
+        "Osvaldo Herrera",
+      ]);
+      // what the law hides, its names hide
+      const only = { sql: "events.conversation_address = $c", params: { c: "549262" } };
+      assertEquals((await log.names({ law: only })).map((r) => r.conversationName), ["Megavalo"]);
+      await assertRejects(() => log.names!({ filter: () => true }), Error, "cannot narrow names");
+    });
+  });
+
   Deno.test("the search column is every part's words: text, a file's name+caption, a data part's leaves+text (§6)", async () => {
     await withLog(async (log) => {
       const parted = (id: string, parts: MessageEvent["parts"]): MessageEvent => ({

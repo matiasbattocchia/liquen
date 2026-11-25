@@ -1524,6 +1524,28 @@ Deno.test("what a header failed to say shows on the doc's heading and on its ind
   );
 });
 
+Deno.test("the names a doc's party also goes by show on its heading and on its index line", () => {
+  const docs: DocEntry[] = [
+    {
+      ...doc("agent", "memory", "papa", { load: "always" }, "- Vive en San Rafael."),
+      names: ["claudio dario Battocchia"],
+    },
+    {
+      ...doc("agent", "memory", "lucas", { description: "Lucas, amigo abogado" }),
+      names: ["Lucas Fallet La Rocca", "Batto"],
+    },
+  ];
+  const text = systemSections(docs).map((s) => s.text).join("\n\n");
+  assertStringIncludes(
+    text,
+    "[/org/data/agents/a1/papa.md] also: claudio dario Battocchia\n- Vive en San Rafael.",
+  );
+  assertStringIncludes(
+    text,
+    "- [/org/data/agents/a1/lucas.md] Lucas, amigo abogado · also: Lucas Fallet La Rocca, Batto",
+  );
+});
+
 Deno.test("a prefix names a doc that came and one that went", () => {
   const was = systemSections([agenda("- a")]);
   const is = systemSections([doc("agent", "memory", "people", { load: "always" }, "- Ana")]);

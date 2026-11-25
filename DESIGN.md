@@ -2586,6 +2586,31 @@ names as if they were named: a nickname that is nobody's saved name reaches its 
 through a profile. Profiles live in the agent's scope, one per person or group, and the
 principal's own loads always (`80-people`).
 
+**A person is their address; a name is a way to reach it.** The two ways a person is
+named meet only there: a profile's keywords are the principal's names, and the wire names
+the same address its own way, as a saved contact, a pushname, a group's new subject. So:
+
+- **A doc wears its party's other names.** A doc about one party (at most one address per
+  service, as a person's profile or a group's) shows `also: …` on its heading and its
+  index line: every name its addresses wore in the log, as the chat's name or as a
+  sender's, each once (case, accents and decoration aside), minus what its keywords and
+  its description say, the first worn first, at most five (`worn.ts`). The harness keeps
+  them, never the doc, so they cannot go stale. The log's `names` query reads them without
+  reading rows, under the reader's law; a process reads an address's whole history once and
+  then only the rows after its last read, and a new name joins at the end, so the prefix
+  holds still. A doc naming several addresses on one service is about a matter, and its
+  names are its members'.
+- **A name brings the docs of the addresses it reached.** Past its keywords, a `search`
+  whose `in` or `from` reached an address puts first every doc whose `conversations` hold
+  it: a person found by a name their profile never wrote down still brings their profile.
+- **A name that reached several says whose the lines are.** When `in` reaches more than
+  one conversation, or `from` more than one person, with lines in the log (one only in an
+  address book stands as its `<contact>`), the page opens with a line naming each,
+  the latest heard first: the name it goes by now, its address, and its profile or that it
+  has none. A person with several addresses is one, through the profile holding them all.
+  The lines stay everyone's, since an ambiguity is search's answer, as `send` and a
+  mention refuse one instead; past twelve, the line counts the rest and no docs come.
+
 **A fact has one place to go** (`70-memory`), the first that fits: the profile of the
 person or group it is about, made the first time there is something to keep; a doc of its
 own for a matter several people share, conditional on their chats; and the memory that

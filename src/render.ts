@@ -272,18 +272,24 @@ function flaws(h: DocEntry["header"]): string[] {
   return (h.problems ?? []).map((p) => `header: ${p}`);
 }
 
+/** The names a doc's party wore that it does not say, as its heading and its index line
+ *  show them (`worn.ts`). */
+function also(d: DocEntry): string | undefined {
+  return d.names?.length ? `also: ${d.names.join(", ")}` : undefined;
+}
+
 /** An inlined always-doc: a provenance header, then its body. The handle is the header's
  *  own — the same string the index prints and the read takes; a memory's adds how full it
- *  is, and any doc's what its header failed to say. */
+ *  is, any doc's the names its party also goes by and what its header failed to say. */
 function section(d: DocEntry): string {
-  const tail = [fill(d.header).trim(), ...flaws(d.header)].filter(Boolean).join(" · ");
+  const tail = [fill(d.header).trim(), also(d), ...flaws(d.header)].filter(Boolean).join(" · ");
   return `[${d.header.handle}]${tail ? ` ${tail}` : ""}\n${d.body ?? ""}`;
 }
 
 /** The pull-index: one pointer line per doc not inlined — its handle in the brackets an
- *  inlined doc wears, then how full a memory is, its description, its keywords and what
- *  its header failed to say, each when it has one. The opening line says what the handle
- *  opens with, which is the substrate's. */
+ *  inlined doc wears, then how full a memory is, its description, its keywords, the names
+ *  its party also goes by and what its header failed to say, each when it has one. The
+ *  opening line says what the handle opens with, which is the substrate's. */
 function renderIndex(pointers: DocEntry[], on: Env["docs"] = "filesystem"): string {
   const lines = pointers.map((d) => {
     const { description, keywords } = d.header;
@@ -291,6 +297,7 @@ function renderIndex(pointers: DocEntry[], on: Env["docs"] = "filesystem"): stri
       fill(d.header).trim(),
       description,
       keywords?.length && `keywords: ${keywords.join(", ")}`,
+      also(d),
       ...flaws(d.header),
     ].filter(Boolean).join(" · ");
     return `- [${d.header.handle}]${tail ? ` ${tail}` : ""}`;

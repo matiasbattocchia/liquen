@@ -164,6 +164,8 @@ export function scoped(log: Log, policy: Policy): Log {
           reads: both(opts.reads, using),
         })) as Appender["publishAndRelease"],
     read: (q = {}) => log.read({ ...q, law: both(q.law, using) }),
+    // the names a row wears are the row's: what the law hides, it hides here too
+    ...(log.names ? { names: (q = {}) => log.names!({ ...q, law: both(q.law, using) }) } : {}),
     subscribe: (listener, opts = {}) =>
       log.subscribe(listener, { ...opts, law: both(opts.law, using) }),
   };

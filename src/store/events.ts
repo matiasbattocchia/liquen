@@ -8,7 +8,7 @@
  */
 
 import type { Conversation, Draft, Envelope, Event } from "../types.ts";
-import type { ReadQuery } from "./log.ts";
+import type { NameRow, ReadQuery } from "./log.ts";
 import { foldName, nameWords } from "./names.ts";
 import { turnLockOf } from "./lock.ts";
 
@@ -138,6 +138,77 @@ export function build(
   q: ReadQuery,
   dialect: Dialect,
 ): { sql: string; params: (string | number)[] } {
+  const { clause, params } = whereOf(q, dialect);
+  // append order = `id` (store-minted UUIDv7 — lexical order is mint order, §3).
+  // limit ⇒ the most recent N: fetch DESC and reverse in read(); first ⇒ the earliest N,
+  // fetched ASC as they stand; else natural append order.
+  // a cap + a JS filter ⇒ NO SQL limit: read() cuts AFTER the predicate (RLS-before-LIMIT),
+  // so the SQL can't know how deep the N visible rows reach. The law needs none of this:
+  // it is in the WHERE, and the engine fills the window with visible rows itself.
+  if (q.limit !== undefined && q.first !== undefined) {
+    throw new Error("read: `limit` and `first` are exclusive");
+  }
+  const cap = q.limit ?? q.first;
+  const order = q.first !== undefined ? "ASC" : "DESC";
+  if (cap !== undefined) {
+    if (q.filter !== undefined) {
+      return { sql: `SELECT * FROM events ${clause} ORDER BY id ${order}`, params };
+    }
+    return {
+      sql: `SELECT * FROM events ${clause} ORDER BY id ${order} LIMIT ?`,
+      params: [...params, cap],
+    };
+  }
+  return { sql: `SELECT * FROM events ${clause} ORDER BY id ASC`, params };
+}
+
+/** The names a ReadQuery's rows wear (`Reader.names`): one row per distinct set of
+ *  service, addresses and names, with the first and the last id that wore it, the first
+ *  worn first. A JS `filter` cannot narrow a set the engine already grouped, so it is
+ *  refused; a cap has nothing to cut. */
+export function buildNames(
+  q: ReadQuery,
+  dialect: Dialect,
+): { sql: string; params: (string | number)[] } {
+  if (q.filter !== undefined) throw new Error("names: a `filter` cannot narrow names");
+  const { clause, params } = whereOf(q, dialect);
+  const keys = "service, conversation_address, sender_address, conversation_name, sender_name";
+  return {
+    sql: `SELECT ${keys}, MIN(id) AS first, MAX(id) AS last FROM events ${clause} ` +
+      `GROUP BY ${keys} ORDER BY first ASC`,
+    params,
+  };
+}
+
+/** A names row as the engine hands it back. */
+export interface NameColumns {
+  service: string | null;
+  conversation_address: string | null;
+  sender_address: string | null;
+  conversation_name: string | null;
+  sender_name: string | null;
+  first: string;
+  last: string;
+}
+
+/** A names row as the Reader hands it back, the absent columns left out. */
+export function nameRowOf(r: NameColumns): NameRow {
+  return {
+    ...(r.service !== null ? { service: r.service } : {}),
+    ...(r.conversation_address !== null ? { conversation: r.conversation_address } : {}),
+    ...(r.sender_address !== null ? { sender: r.sender_address } : {}),
+    ...(r.conversation_name !== null ? { conversationName: r.conversation_name } : {}),
+    ...(r.sender_name !== null ? { senderName: r.sender_name } : {}),
+    first: r.first,
+    last: r.last,
+  };
+}
+
+/** The ReadQuery's filters as one WHERE clause: what a read and a names query share. */
+function whereOf(
+  q: ReadQuery,
+  dialect: Dialect,
+): { clause: string; params: (string | number)[] } {
   const where: string[] = [];
   const params: (string | number)[] = [];
   const eq = (col: string, v: string | undefined) => {
@@ -235,28 +306,7 @@ export function build(
   if (q.copies === false) where.push(dialect.lacks("via"));
   // the law (§6): named bindings, supplied by read() beside the positional ones
   if (q.law !== undefined) where.push(`(${q.law.sql})`);
-  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  // append order = `id` (store-minted UUIDv7 — lexical order is mint order, §3).
-  // limit ⇒ the most recent N: fetch DESC and reverse in read(); first ⇒ the earliest N,
-  // fetched ASC as they stand; else natural append order.
-  // a cap + a JS filter ⇒ NO SQL limit: read() cuts AFTER the predicate (RLS-before-LIMIT),
-  // so the SQL can't know how deep the N visible rows reach. The law needs none of this:
-  // it is in the WHERE, and the engine fills the window with visible rows itself.
-  if (q.limit !== undefined && q.first !== undefined) {
-    throw new Error("read: `limit` and `first` are exclusive");
-  }
-  const cap = q.limit ?? q.first;
-  const order = q.first !== undefined ? "ASC" : "DESC";
-  if (cap !== undefined) {
-    if (q.filter !== undefined) {
-      return { sql: `SELECT * FROM events ${clause} ORDER BY id ${order}`, params };
-    }
-    return {
-      sql: `SELECT * FROM events ${clause} ORDER BY id ${order} LIMIT ?`,
-      params: [...params, cap],
-    };
-  }
-  return { sql: `SELECT * FROM events ${clause} ORDER BY id ASC`, params };
+  return { clause: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
 }
 
 /** The search column (§6) — every part's words, part by part, one rule per part TYPE:

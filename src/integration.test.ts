@@ -3892,6 +3892,80 @@ Deno.test("search by keyword: a name only a doc knows points at the conversation
   }
 });
 
+Deno.test("search by a name several people wear: a line says whose the lines are, each with their profile or none", async () => {
+  const root = await Deno.makeTempDir();
+  await laid(root);
+  await Deno.mkdir(`${root}/agents/a1/profiles`, { recursive: true });
+  const profile = (name: string, address: string, keywords: string) =>
+    Deno.writeTextFile(
+      `${root}/agents/a1/profiles/${name}.md`,
+      `---\nkind: memory\nload: conditional\nkeywords: [${keywords}]\n` +
+        `conversations: [whatsapp:${address}]\n---\n- ${name}\n`,
+    );
+  await profile("lautaro-etios", "5492610000001", "Lauti, Lautaro");
+  await profile("lautaro-estrada", "5492610000002", "Lautaro Estrada");
+  await profile("lucas", "5492610000004", "Lucas Manu");
+  const said = (hours: number, address: string, room: string, name: string, text: string) => ({
+    ts: new Date(Date.now() - hours * 3_600_000).toISOString(),
+    type: "message" as const,
+    envelope: {
+      service: "whatsapp" as const,
+      connection_address: WA.address,
+      conversation: { address, kind: "direct" as const, name: room },
+      sender: { address, name },
+    },
+    parts: [{ type: "text" as const, kind: "text" as const, text }],
+  });
+  const old: Draft<MessageEvent>[] = [
+    said(43, "5492610000001", "Lautaro", "Lauti", "la escribanía el jueves"),
+    said(42, "5492610000002", "Lautaro Estrada", "Lautaro Estrada", "los cheques"),
+    said(41, "5492610000003", "🇦🇷 Lautaro Motta", "Lautaro Motta", "el set del sábado"),
+    // his profile knows him as Lucas Manu; the wire also calls him by his full name
+    said(40, "5492610000004", "Lucas Manu", "Lucas Fallet La Rocca", "probé el buscador"),
+  ];
+  try {
+    await scenario(
+      [
+        ok([{ kind: "tool_use", name: "search", input: { in: "lautaro" } }], "tool_use"),
+        ok([{ kind: "tool_use", name: "search", input: { from: "Fallet" } }], "tool_use"),
+        ok([{ kind: "assistant", text: "listo" }], "end_turn"),
+      ],
+      async ({ publish, read }) => {
+        await publish(principalMsg("qué me dijo Lautaro"));
+        await waitFor(async () => (await read("tool_result")).length === 2);
+        const [lautaro, fallet] = (await read("tool_result")).map((r) =>
+          (r as ToolResultEvent).parts[0].data.output as string
+        );
+        const at = (name: string) => `${root}/agents/a1/profiles/${name}.md`;
+        // the latest heard first, each with the name it goes by now
+        assertEquals(
+          lautaro.split("\n")[0],
+          `"lautaro" names 3 conversations here, and the lines below are all of theirs: ` +
+            `🇦🇷 Lautaro Motta (5492610000003, no profile) · ` +
+            `Lautaro Estrada (5492610000002, profile ${at("lautaro-estrada")}) · ` +
+            `Lautaro (5492610000001, profile ${at("lautaro-etios")}). ` +
+            "To read one alone, search again with its address as `in`.",
+        );
+        for (const text of ["la escribanía el jueves", "los cheques", "el set del sábado"]) {
+          assertStringIncludes(lautaro, text);
+        }
+        // a name the profile never wrote down reaches his address, and the address his profile
+        const lucas = at("lucas");
+        assertEquals(
+          fallet.split("\n")[0],
+          `<doc handle="${lucas}" keywords="Lucas Manu" conversations="whatsapp:5492610000004"/>`,
+        );
+        assertStringIncludes(fallet, "probé el buscador");
+      },
+      {},
+      old,
+      { docs: await docsAt(root) },
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("search `from` takes the key a line wears: who among us wrote it, never a name", async () => {
   const dir = await Deno.makeTempDir();
   const log = await orgLog(dir);

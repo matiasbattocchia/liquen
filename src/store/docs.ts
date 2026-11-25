@@ -106,6 +106,9 @@ export interface Where {
 export interface DocEntry {
   header: DocHeader;
   body?: string;
+  /** The names the doc's party wore in the log that the doc does not say (`worn.ts`): the
+   *  harness's, never the doc's own, so its heading and index line show them as `also`. */
+  names?: string[];
 }
 
 /** The agent a cascade is resolved for, and the conversations its session has in view. */

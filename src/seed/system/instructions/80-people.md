@@ -28,7 +28,10 @@ your workspace's `profiles/` folder, each line grounded.
   Its `keywords` are every name your principal calls them by, nicknames first, then the
   groups they belong to, always plural. One is their tier, such as `family`, `friends`,
   `work` or `services`, and `acquaintances` when none fits; others sort them further, like
-  `djs`. Its `conversations` are each chat with them, on every service.
+  `djs`. Its `conversations` are each chat with them, on every service. The names their
+  chats go by on the wire, a saved contact or the name they show, stand beside the profile
+  as `also`, kept for you: a name there that is not theirs means the profile holds the
+  wrong chat.
 - Your principal writes to each person their own way. Keep a few of their lines to each, as
   they wrote them, with their ids: examples of how to write there. Examples for a whole
   tier go in your principal's profile.

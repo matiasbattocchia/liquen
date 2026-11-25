@@ -37,11 +37,14 @@ import { egressOf, usageOf } from "../log.ts";
 import { createLocker, type Lease, LeaseLost } from "../lock.ts";
 import {
   build,
+  buildNames,
   contains,
   cutOf,
   type Dialect,
   eventOf,
   externalOf,
+  type NameColumns,
+  nameRowOf,
   offerOf,
   type Row,
   rowOf,
@@ -499,6 +502,12 @@ export async function openPgLog(
         }
       }
       return query.limit !== undefined ? out.reverse() : out;
+    },
+
+    async names(query) {
+      const built = buildNames(query, PG);
+      const c = compile(built.sql, built.params, query.law?.params ?? {});
+      return (await rows<NameColumns>(sql, c.text, c.params)).map(nameRowOf);
     },
 
     subscribe(listener: Listener, opts: SubscribeOptions = {}): () => void {

@@ -17,7 +17,12 @@ under the account's `<conn>`, with the `address` to write to — so someone you 
 never heard from is findable too; a book that could not be asked is said in a line of its own.
 An `in` or `from` that one of a doc's `keywords` holds finds that doc, which stands first as a
 `<doc>` line with its `handle` and the `conversations` it names, and those conversations are
-searched as if named: "el Juancho" reaches his chat through his profile.
+searched as if named: "el Juancho" reaches his chat through his profile. A doc whose
+`conversations` hold an address the name reached stands first the same way, keyword or not:
+a name only the wire knows still brings the profile. A name that reaches several
+conversations (`in`) or people (`from`) with lines here opens the page with a line naming
+each, with its address and its profile or none; the lines below are all of theirs, and its
+address reads one alone.
 A page of one conversation that reaches its newest line opens on the docs that name it,
 each whole under its `[handle]`: what you keep of the people there. That page is the
 reading `send` asks for, so a send into that conversation goes the first time.

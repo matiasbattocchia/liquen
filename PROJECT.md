@@ -7743,6 +7743,27 @@ puts on the doc's heading and index line. Every header in the seed, new, vibes, 
 two orgs and sole-bot reads the same columns as before, but for that note, which got its
 description and keywords back.
 
+### A person is their address, and a name only reaches it (2026-11-25) — LANDED
+
+Reorganizing matias's memory on new showed names doing the work addresses should: three
+Lautaros, two of them in one car sale, whose facts the mind had merged under one; Lucas
+Manu, the saved contact, filed in a profile while his lines as Lucas Fallet La Rocca, his
+pushname, went to the memory that loads always; a "Leonardo Sobisch" the wire calls
+Leonardo Lazarte. The log already held every name each address wore. Now:
+
+- the log answers `names(query)`, each distinct set of service, addresses and names its
+  rows wear with their first and last id, under the reader's law (SQLite and Postgres,
+  one builder);
+- a doc about one party shows `also: …`, the names its addresses wore that it does not say
+  (`worn.ts`), each once, the first worn first, read whole once per address and then from
+  the rows after the last read: 149 ms the first step on new's log, 1 ms after;
+- a `search` whose name reached an address brings the docs naming it, keyword or not;
+- a name that reached several conversations or people opens the page with a line naming
+  each, with its address and its profile or none.
+
+On new, the first pass found thirteen profiles with names they never wrote: Papá is "claudio
+dario Battocchia", Luciano goes by "Huevo", Carlos Rossi is saved as "Nuevo Carlos Rossi".
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

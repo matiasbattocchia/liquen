@@ -98,6 +98,7 @@ import type { ArtifactsPort } from "./exec/publish.ts";
 import type { ConversationRow } from "./store/connections.ts";
 import { momentOf } from "./moment.ts";
 import { calendarEntries, dayOf, daySection, docEntries, docName, nextDay } from "./agenda.ts";
+import { oneParty, withWorn } from "./worn.ts";
 import type { Gates, Owed } from "./store/gates.ts";
 import type { Sweeper } from "./store/sweep.ts";
 import { type Files, kindOf, type MediaBlock, type MediaLoader, mimeOf } from "./store/media.ts";
@@ -1236,7 +1237,7 @@ export interface XiPorts {
    *  asking — what `search` reads. The window stays the session's own view (`log`); this
    *  reaches every room of the agent's, its siblings' included. Read-only, and main lifts
    *  it off the same connections map. Absent (an edge port, a test): `log` answers. */
-  history?: Pick<Reader, "read">;
+  history?: Pick<Reader, "read" | "names">;
   /** The model edge. main picks it (Anthropic today) and it travels down the chain unchanged
    *  — the transport is where another provider adapts in, so nothing above it changes. */
   transport: ModelTransport;
@@ -1587,7 +1588,8 @@ async function think(
 ): Promise<Draft<Event>[]> {
   const home = sessionAddress(config.agentId, config.sessionId); // where this turn speaks (§4)
   const cascade = { agent: config.agentId, inView: inViewOf(events) };
-  const docs = await ports.docs.list(cascade);
+  // each profile with the names its person wore on the wire and it never wrote down (§8)
+  const docs = await withWorn(await ports.docs.list(cascade), ports.log);
   // the anchor (§5): the volatile environment, plus what is still in the air. A pending gate
   // is STATE, not history — the transcript already closed those calls with
   // `pending_approval`, so the only place they belong is the block that is rewritten every
@@ -4842,10 +4844,10 @@ async function search(
   // a doc's keywords name its people and places the way the principal does (§8): "el
   // Gonza" is a keyword of a profile long before it is anyone's saved name, and the
   // conversations the doc names are where that name points
-  const [inDocs, fromDocs] = await Promise.all([
-    keyworded(ports, self, inName),
-    keyworded(ports, self, asked),
-  ]);
+  const headers = (await ports.docs.list({ agent: self.id })).map((d) => d.header)
+    .filter((h) => h.kind !== "tool");
+  const inDocs = keyworded(headers, inName);
+  const fromDocs = keyworded(headers, asked);
   const [conversations, spoke, contacts, account] = await Promise.all([
     rooms(log, inName, addressesOf(inDocs)),
     people(log, asked),
@@ -4863,7 +4865,27 @@ async function search(
       ...addressesOf(fromDocs),
     ]),
   ];
-  const docs = [...new Map([...inDocs, ...fromDocs].map((d) => [d.handle, d])).values()];
+  // the addresses a name reached are who it named, and the docs that name those addresses
+  // say who they are (§8): a person found by a name their profile never wrote down still
+  // brings their profile. A name that reached a crowd brings none: its line asks for more
+  const reached = [
+    ...new Set([...(inName === undefined ? [] : conversations ?? []), ...(senders ?? [])]),
+  ];
+  const naming = reached.length > NAMED_SHOWN
+    ? []
+    : headers.filter((h) => (h.conversations ?? []).some((w) => reached.includes(w.address)));
+  const docs = [
+    ...new Map([...inDocs, ...fromDocs, ...naming].map((d) => [d.handle, d])).values(),
+  ];
+  // a name that reached several people or rooms says whose the lines are, before them
+  const whose = [
+    ...(inName !== undefined && conversations
+      ? [await reachedLine(log, inName, "in", conversations, headers)]
+      : []),
+    ...(asked !== undefined && senders
+      ? [await reachedLine(log, asked, "from", senders, headers, contacts?.hits)]
+      : []),
+  ].filter((l): l is string => l !== undefined);
   const profiles = await profiled(log, [args.in, asked], contacts, account, self, ports);
   // a number in neither place is still somebody's to the wire: who it reaches is the page
   if (senders !== undefined && senders.length === 0 && profiles.length === 0 && docs.length === 0) {
@@ -4938,6 +4960,7 @@ async function search(
     ? [`— older matches not shown — search again with before="${page[0].ts}" to read on —`]
     : [];
   const out = [
+    ...whose,
     ...kept.map((d) => d.text),
     ...docs.filter((d) => !kept.some((k) => k.handle === d.handle)).map(docEl),
     ...books,
@@ -4948,18 +4971,81 @@ async function search(
   return out.length === 0 ? "nothing matched" : out.join("\n");
 }
 
-/** The docs a name is a keyword of (§8): every doc the agent reads, any kind but a tool's,
- *  with a keyword that holds the name, case and accents set aside. */
-async function keyworded(
-  ports: XiPorts,
-  self: { id: string },
-  name: string | undefined,
-): Promise<DocHeader[]> {
+/** The docs a name is a keyword of (§8): of the docs the agent reads, those with a keyword
+ *  that holds the name, case and accents set aside. */
+function keyworded(headers: DocHeader[], name: string | undefined): DocHeader[] {
   const want = name === undefined ? "" : foldName(name);
   if (want === "") return [];
-  return (await ports.docs.list({ agent: self.id })).map((d) => d.header).filter((h) =>
-    h.kind !== "tool" && (h.keywords ?? []).some((k) => foldName(k).includes(want))
+  return headers.filter((h) => (h.keywords ?? []).some((k) => foldName(k).includes(want)));
+}
+
+/** How many people or rooms a name's line lists before it counts the rest, and how many a
+ *  name may reach and still bring the docs that name them. */
+const NAMED_SHOWN = 12;
+
+/** The line that opens a search whose name reached more than one person (`from`) or room
+ *  (`in`), §6: each with the name it goes by now, its address and its profile, or that it
+ *  has none, the latest heard first. A person with several addresses is one, through the
+ *  profile that holds them all. The lines below stay everyone's, since an ambiguity is
+ *  search's answer; this says whose they are. */
+async function reachedLine(
+  log: Pick<Reader, "names">,
+  name: string,
+  as: "in" | "from",
+  addresses: string[],
+  headers: DocHeader[],
+  booked: { address: string; name?: string }[] = [],
+): Promise<string | undefined> {
+  if (addresses.length < 2) return undefined;
+  const rows = log.names
+    ? await log.names(as === "in" ? { conversations: addresses } : { senders: addresses })
+    : [];
+  const heard = new Map<string, { name?: string; last: string }>(
+    addresses.map((a) => [a, { last: "" }]),
   );
+  for (const r of rows) {
+    const address = as === "in" ? r.conversation : r.sender;
+    const worn = as === "in" ? r.conversationName : r.senderName;
+    const had = address === undefined ? undefined : heard.get(address);
+    if (!had || r.last < had.last || !worn) continue;
+    heard.set(address!, { name: worn, last: r.last });
+  }
+  // the line is about the lines: an address with none here stands as its book's `<contact>`
+  for (const [address, { last }] of heard) if (last === "") heard.delete(address);
+  for (const c of booked) {
+    const had = heard.get(c.address);
+    if (had && had.name === undefined && c.name) heard.set(c.address, { ...had, name: c.name });
+  }
+  // the profiles: docs about one party, which is who an address is
+  const parties = new Map<
+    string,
+    { addresses: string[]; name?: string; last: string; of: string[] }
+  >();
+  for (const [address, { name: worn, last }] of heard) {
+    const of = headers.filter((h) =>
+      oneParty(h.conversations) && h.conversations!.some((w) => w.address === address)
+    ).map((h) => h.handle);
+    const key = of.length === 1 ? of[0] : address;
+    const had = parties.get(key);
+    if (!had) parties.set(key, { addresses: [address], ...(worn ? { name: worn } : {}), last, of });
+    else {
+      had.addresses.push(address);
+      if (last > had.last) Object.assign(had, { last, ...(worn ? { name: worn } : {}) });
+    }
+  }
+  if (parties.size < 2) return undefined;
+  const sorted = [...parties.values()].sort((
+    a,
+    b,
+  ) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
+  const each = sorted.slice(0, NAMED_SHOWN).map((p) =>
+    `${p.name ?? p.addresses[0]} (${p.addresses.join(", ")}, ` +
+    `${p.of.length > 0 ? `profile ${p.of.join(", ")}` : "no profile"})`
+  );
+  const more = sorted.length > NAMED_SHOWN ? ` · and ${sorted.length - NAMED_SHOWN} more` : "";
+  const who = as === "in" ? "conversations" : "people";
+  return `"${name}" names ${sorted.length} ${who} here, and the lines below are all of theirs: ` +
+    `${each.join(" · ")}${more}. To read one alone, search again with its address as \`${as}\`.`;
 }
 
 /** The conversation addresses a set of docs names. */

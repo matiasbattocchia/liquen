@@ -89,6 +89,7 @@ import { foldName } from "./names.ts";
 import { keptIn } from "./storage.ts";
 import {
   build,
+  buildNames,
   cutOf,
   type Dialect,
   DROP_THREAD,
@@ -97,6 +98,8 @@ import {
   MAIL_GROUPS,
   MAIL_MAILBOXES,
   MAIL_THREADS,
+  type NameColumns,
+  nameRowOf,
   offerOf,
   type Row,
   rowOf,
@@ -261,9 +264,26 @@ export interface PublishOptions {
    *  Checked in the same transaction as `check`. */
   reads?: Law;
 }
+/** One set of names some rows wear (`names`): the service and the two addresses they are
+ *  keyed on, the names they carry for each, and the first and the last row that wore the
+ *  set — ids, so in append order. */
+export interface NameRow {
+  service?: string;
+  conversation?: string;
+  sender?: string;
+  conversationName?: string;
+  senderName?: string;
+  first: EventId;
+  last: EventId;
+}
+
 export interface Reader {
   /** QUERY. A point-in-time slice in append order. The escape hatch beyond a pushed event. */
   read(query?: ReadQuery): Promise<Event[]>;
+  /** The names the rows a query reaches wear, one row per distinct set, the first worn
+   *  first: who an address has been called, without reading its rows. The query's filters
+   *  and law narrow as they do a read's; `limit`, `first` and `filter` do not apply. */
+  names?(query: ReadQuery): Promise<NameRow[]>;
   /** The law, asked of ONE event — as it would stand in the log, whether or not it does.
    *  What `publish` asks of every draft under a `check`. */
   admits(law: Law, event: { ts?: string; envelope: Envelope }): Promise<boolean>;
@@ -1041,6 +1061,16 @@ export async function openLog(
         if (cap !== undefined && out.length >= cap) break;
       }
       return Promise.resolve(query.limit !== undefined ? out.reverse() : out);
+    },
+
+    names(query: ReadQuery): Promise<NameRow[]> {
+      try {
+        const { sql, params } = buildNames(query, SQLITE);
+        const rows = db.prepare(sql).all(query.law?.params ?? {}, ...params);
+        return Promise.resolve((rows as unknown as NameColumns[]).map(nameRowOf));
+      } catch (err) {
+        return Promise.reject(err);
+      }
     },
 
     subscribe(listener: Listener, opts: SubscribeOptions = {}): () => void {
