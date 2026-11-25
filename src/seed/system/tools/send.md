@@ -22,7 +22,11 @@ what they said.
   like `whatsapp` where you hold one account. Needed only when `to` is an address nobody here
   has written to yet, and more than one of your accounts could reach it
 - text: the message body or the attachment caption; omit only when reacting or sending files
-  without a caption
+  without a caption. To mention someone, write `@` and then the name their lines wear, as
+  written, or their address (`@Ana María`, `@5492615550101`): it goes out as the service's
+  own mention, which notifies them. Only someone who has written in that conversation can be
+  mentioned; any other `@` stays plain text. On Slack, `#name` links a channel and `@here`,
+  `@channel` summon the room
 - re: target message `id`. REQUIRED with `react`. OPTIONAL with `text` and/or `files` (depends
   on the `action`). Only needed to answer something the conversation has moved on from. To
   press an option of an `<interactive>` message, reply to it with the option's `title` as
