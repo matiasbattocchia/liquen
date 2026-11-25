@@ -7700,7 +7700,11 @@ Telegram's dispatcher answered an account with no session `503`, which the sweep
 again up to its ceiling. Now a signed-out account's surfaces are not live (the `aliases`
 view, SQLite and Postgres), so fan-out skips them until it signs in again, and Telegram
 tells an account that will not open by itself from one still opening (`Accounts.downOf`):
-signed out is a `401`, removed a `404`, both final, and only the rest a `503`.
+signed out is a `401`, removed a `404`, both final, and only the rest a `503`. Removing the
+connection then left its 254 failed copies on the ladder: the sweep would have queued them
+with no dispatcher to take them, and a sign-in of the same account would have posted them
+all. A removal now gives up the sends still waiting on the connection (`Sweeper.abandon`:
+failed, `404`, "the connection was removed"), and says how many.
 
 ### What is open (2026-10-20)
 

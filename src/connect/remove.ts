@@ -3,11 +3,13 @@
  *
  * The target is what `liquen status` prints: a connection as `<service>:<address>`, or a
  * service's vault key no live connection authenticates with (a token grant, which has no
- * row; an app registration a door keeps for the next grant). Three
+ * row; an app registration a door keeps for the next grant). Four
  * records answer for a connection, and each is undone in its own terms:
  *
  *   the row      soft-deleted: the publish gate closes, and the history it already ingested
  *                keeps its identity and its readers.
+ *   its sends    what was sent through it and has not gone out fails for good (`abandon`),
+ *                so nothing waits there for the day the same account signs in again.
  *   the secret   deleted from the vault — unless another live connection authenticates
  *                with the same one, which keeps it.
  *   the scope    `connections.<service>` is disabled once the service has no live
@@ -22,6 +24,7 @@
 
 import type { ConnectionRow, Connections } from "../store/connections.ts";
 import type { Credentials } from "../store/credentials.ts";
+import type { Sweeper } from "../store/sweep.ts";
 
 /** Where each service's side of a grant is revoked, as its owner finds it. */
 const REVOKE_AT: Record<string, string> = {
@@ -38,7 +41,7 @@ const REVOKE_AT: Record<string, string> = {
 };
 
 export interface RemoveDeps {
-  store: Pick<Connections, "connections" | "deleteConnections">;
+  store: Pick<Connections, "connections" | "deleteConnections"> & Pick<Sweeper, "abandon">;
   creds: Pick<Credentials, "list" | "delete">;
   /** Disable `connections.<service>`, its knobs kept; whether it was enabled. */
   disable: (service: string) => Promise<boolean>;
@@ -73,6 +76,10 @@ export async function removeConnection(target: string, deps: RemoveDeps): Promis
     }
     await deps.store.deleteConnections([{ service: row.service, address: row.address }]);
     said.push(`${target} removed — nothing new enters through it; what it brought in stays`);
+    const dropped = await deps.store.abandon(row.service, row.address, new Date().toISOString());
+    if (dropped > 0) {
+      said.push(`${dropped} sends still waiting on it will not go out, now or at a sign-in`);
+    }
     if (sharer) {
       said.push(`its secret ${key} stays — ${sharer.service}:${sharer.address} uses it too`);
     } else if (key && await deps.creds.delete(key)) {

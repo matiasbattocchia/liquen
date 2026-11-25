@@ -35,7 +35,7 @@ import {
 } from "../connections.ts";
 import { routedSession } from "../../session.ts";
 import { type Gates, owedOf, type RulingRow } from "../gates.ts";
-import { RETRY_BACKOFF_MS, STALLED_AFTER_MS, type Sweeper } from "../sweep.ts";
+import { ABANDONED, RETRY_BACKOFF_MS, STALLED_AFTER_MS, type Sweeper } from "../sweep.ts";
 import type { Event, PermissionRequestEvent, ToolUseEvent } from "../../types.ts";
 import { count, type Db, rows, type Sql } from "./sql.ts";
 
@@ -644,6 +644,23 @@ export function pgSweeper(
              AND status ->> 'state' IN ('queued', 'failed')`,
           [id, now, by.id, by.session_id],
         )) > 0
+      );
+    },
+    abandon(service, connection, now) {
+      return serial((tx) =>
+        count(
+          tx,
+          `UPDATE events SET
+             status = json_patch(status, jsonb_build_object(
+               'state', 'failed', 'failed_at', $1::text, 'error', $4::text, 'error_code', 404)),
+             updated_at = $1::text
+           WHERE type = 'message' AND agent_id IS NOT NULL AND external_id IS NULL
+             AND NOT flag(extra, 'delta')
+             AND service = $2::text AND connection_address = $3::text
+             AND status ->> 'state' IN ('queued', 'failed')
+             AND status ->> 'withdrawn_at' IS NULL`,
+          [now, service, connection, ABANDONED],
+        )
       );
     },
   };

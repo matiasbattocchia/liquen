@@ -69,7 +69,15 @@ export interface Sweeper {
    *  queued or failed is withdrawn; true when it was. A withdrawn row is never offered
    *  again, whatever a post already in flight stamps. */
   withdraw(id: EventId, now: string, by: { id: string; session_id: string }): Promise<boolean>;
+  /** Fail for good the sends on a removed connection that have not gone out, queued or
+   *  failed: `404`, so the ladder never offers them again, and a sign-in of the same account
+   *  later finds nothing waiting to go. The agent's own are told undelivered as any other.
+   *  Returns how many. */
+  abandon(service: string, connection: string, now: string): Promise<number>;
 }
+
+/** What a send abandoned with its connection says, on the row the agent may be told of. */
+export const ABANDONED = "the connection was removed";
 
 /** The dispatcher's own rows (`isOutbound`, minus the state it reads off the lifecycle).
  *  Presence is excluded by the one thing that makes it presence: `extra.delta` says the row
@@ -153,6 +161,15 @@ export function createSweeper(db: DatabaseSync): Sweeper {
        AND json_extract(status, '$.state') IN ('queued', 'failed')
      RETURNING id`,
   );
+  const drop = db.prepare(
+    `UPDATE events SET
+       status = json_patch(status, json_object(
+         'state', 'failed', 'failed_at', ?1, 'error', '${ABANDONED}', 'error_code', 404)),
+       updated_at = ?1
+     WHERE ${OURS} AND service = ?2 AND connection_address = ?3
+       AND json_extract(status, '$.state') IN ('queued', 'failed')
+       AND json_extract(status, '$.withdrawn_at') IS NULL`,
+  );
   const ids = (rows: unknown[]) =>
     Promise.resolve((rows as { id: string }[]).map((r) => r.id).sort());
   return {
@@ -169,5 +186,7 @@ export function createSweeper(db: DatabaseSync): Sweeper {
     corrected: (now) => ids(correct.all(now)),
     withdraw: (id, now, by) =>
       Promise.resolve(unoffer.all(id, now, by.id, by.session_id).length > 0),
+    abandon: (service, connection, now) =>
+      Promise.resolve(Number(drop.run(now, service, connection).changes)),
   };
 }

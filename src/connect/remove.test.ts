@@ -3,8 +3,13 @@ import type { ConnectionRow } from "../store/connections.ts";
 import { removeConnection, type RemoveDeps } from "./remove.ts";
 
 /** The map, the vault and the catalog as plain values, and what each call did to them. */
-function fake(rows: ConnectionRow[], keys: string[], enabled: string[]) {
-  const state = { rows: [...rows], keys: [...keys], enabled: [...enabled] };
+function fake(rows: ConnectionRow[], keys: string[], enabled: string[], waiting = 0) {
+  const state = {
+    rows: [...rows],
+    keys: [...keys],
+    enabled: [...enabled],
+    abandoned: [] as string[],
+  };
   const deps: RemoveDeps = {
     store: {
       connections: () => Promise.resolve([...state.rows]),
@@ -13,6 +18,10 @@ function fake(rows: ConnectionRow[], keys: string[], enabled: string[]) {
           !gone.some((g) => g.service === r.service && g.address === r.address)
         );
         return Promise.resolve();
+      },
+      abandon: (service, connection) => {
+        state.abandoned.push(`${service}:${connection}`);
+        return Promise.resolve(waiting);
       },
     },
     creds: {
@@ -55,6 +64,26 @@ Deno.test("a connection goes with its secret, and its last one disables the serv
     said.includes("no google connection is left: connections.google is disabled, its knobs kept"),
     true,
   );
+});
+
+Deno.test("the sends still waiting on a removed connection are given up, and the removal says how many", async () => {
+  const { state, deps } = fake(
+    [{ service: "slack", address: "T1", credentialKey: "slack:T1:org" }],
+    ["slack:T1:org"],
+    ["slack"],
+    254,
+  );
+  const said = await removeConnection("slack:T1", deps);
+  assertEquals(state.abandoned, ["slack:T1"]);
+  assertEquals(said[1], "254 sends still waiting on it will not go out, now or at a sign-in");
+  // none waiting, nothing said of them
+  const quiet = fake(
+    [{ service: "slack", address: "T1", credentialKey: "slack:T1:org" }],
+    ["slack:T1:org"],
+    ["slack"],
+  );
+  const words = await removeConnection("slack:T1", quiet.deps);
+  assertEquals(words.some((w) => w.includes("will not go out")), false);
 });
 
 Deno.test("a secret another live connection authenticates with stays, and the service stays on", async () => {

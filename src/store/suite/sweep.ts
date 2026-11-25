@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import type { Log } from "../log.ts";
-import { RETRY_BACKOFF_MS, STALLED_AFTER_MS } from "../sweep.ts";
+import { ABANDONED, RETRY_BACKOFF_MS, STALLED_AFTER_MS } from "../sweep.ts";
 import type { Draft, Event, MessageEvent } from "../../types.ts";
 import { cast, type Substrate, withStore } from "./mod.ts";
 
@@ -275,6 +275,33 @@ export function sweepSuite(s: Substrate): void {
       });
       assertEquals(await log.undelivered(iso(now)), []);
       assertEquals(await log.corrected(iso(now)), [id]);
+    });
+  });
+
+  Deno.test("a removed connection's sends not out are given up for good — never offered again, the model's told — and the rest are left as they are", async () => {
+    await withLog(async (log) => {
+      const transient = await failed(log, 503, 2 * MIN); // a mirror's copy, the ladder's
+      const waiting = await sent(log, "w"); // the model's own, still queued
+      const out = await sent(log, "o");
+      await log.setDelivery(out, {
+        external_id: "slack:T1:C1:o",
+        status: { state: "dispatched", dispatched_at: iso(T0) },
+      });
+      await log.upsertConnections([{ service: "slack", address: "T2" }]);
+      const elsewhere = (await log.publish({
+        ...outbound("x"),
+        envelope: { ...outbound("x").envelope, connection_address: "T2" },
+      }))!.id;
+      assertEquals(await log.abandon("slack", "T1", iso(T0)), 2);
+      for (const id of [transient, waiting]) {
+        const e = await row(log, id);
+        assertEquals([e.status?.state, e.status?.error_code], ["failed", 404]);
+        assertEquals(e.status?.error, ABANDONED);
+      }
+      assertEquals((await row(log, out)).status?.state, "dispatched");
+      assertEquals((await row(log, elsewhere)).status?.state, "queued");
+      assertEquals(await log.sweep(iso(T0 + 2 * MIN)), 0);
+      assertEquals(await log.undelivered(iso(T0)), [waiting]);
     });
   });
 }

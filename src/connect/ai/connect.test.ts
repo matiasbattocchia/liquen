@@ -98,7 +98,11 @@ Deno.test("a model key comes back out by its vault key", async () => {
   await withVault(async (creds) => {
     await connectAi(parseAiArgs(["google", "--agent", "ana"]), "k", { creds, probe: took });
     const said = await removeConnection("ai:google:ana", {
-      store: { connections: () => Promise.resolve([]), deleteConnections: () => Promise.resolve() },
+      store: {
+        connections: () => Promise.resolve([]),
+        deleteConnections: () => Promise.resolve(),
+        abandon: () => Promise.resolve(0),
+      },
       creds,
       disable: () => Promise.resolve(false),
       services: ["token", "ai"],
