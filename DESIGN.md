@@ -877,7 +877,7 @@ Common base = `id · ts · type · envelope · agent? · payload? · extra? · s
 | `permission_request` | xi, from inside the call | approver card; *n/a to model — the ANCHOR carries what waits* | ignore | parts(data:{tool,call,detail}) · payload{ref_id→tool_use} |
 | `permission_response` | nu (auto) · the door (a terminal's `/y`·`/n`) · the mirror's fan-in (a surface's `/y`·`/n` or reaction) · xi (the agent's withdrawal) · main (a lapsed ask) | nu; `<permission_response re verdict>` in the session room — the ask itself draws nothing, its `pending_approval` result carries the handle | act on an allow; think on the principal's deny; a lapse wakes nobody | parts(data:{behavior,scope,reason?,lapsed?}, text? — the principal's line) · payload{ref_id→tool_use} |
 | `summary` | nu, in the idle gap after a turn, or inside a turn that ran away (§5) | leading text block (§5) | look again (idle, the think a dead turn left owed, or the running turn's next step) | parts(text) · payload{covers, running?} |
-| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) · xi, raising an unload in the idle gap (§5) · a connector, when an owned account signs out (§5) | `<system kind="alarm">` carrying the note; an unload's `<system kind="unload" since="…">`; a sign-out's `<system kind="signed_out" since="…">` | **think** — news that wakes NOW (past the digest, past `sleepHours`); a sign-out waits as the world's lines do | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} · extra{timer}, extra{unload: {since, through}} or extra{signed_out: {service, address}} |
+| `alarm` | the clock, firing a timer row (§10) · task (stall-retry) · xi, raising an unload in the idle gap (§5) · a connector, when an owned account signs out (§5) | `<system kind="alarm">` carrying the note; an unload's `<system kind="unload" since="…">` carrying what to tidy; a sign-out's `<system kind="signed_out" since="…">` | **think** — news that wakes NOW (past the digest, past `sleepHours`); a sign-out waits as the world's lines do | parts(text, kind `alarm`) · payload{ref_id→the scheduling use} · extra{timer}, extra{unload: {since, through}} or extra{signed_out: {service, address}} |
 | `error` | nu · xi · the checkpoint · the mirror | **system** + Stream | ignore | parts(data:{error}) · extra{consumed} — what a failed request read (the model's, a checkpoint's) · payload{ref_id} — the call a word is said of, or the line that settled no card |
 | `delta` | main (presence, §9): the mind has started a kind of work | *n/a to model* — the mirror crosses it to every surface as `[agent thinking...]` | ignore | parts(data:{kind: thinking · checkpoint}) |
 | `anchor` | nu, with a step's first row, when the state moved since the last (§5) | `mid_conv_system` where its step read it: the sections that moved; crosses to no surface | ignore | parts(text, kind anchor: `now:` and the ambient lines) · payload{turn_id} |
@@ -2215,10 +2215,15 @@ layer**:
   the gist; what a span taught as fact (who someone is, what they prefer, what was
   promised) belongs in a doc, as `70-memory` says, and the turn that writes it is the
   **unload** (`unload.ts`). `decide`'s fifth verdict, `unload`, spends the gap on a notice
-  rather than a model call: an `alarm` the harness raises with no note and
-  `extra.unload: {since, through}`, rendered `<system kind="unload" since="…">`. It wakes
+  rather than a model call: an `alarm` the harness raises with
+  `extra.unload: {since, through}`, rendered `<system kind="unload" since="…">`. Its text
+  is what to tidy while the docs are open (`tidying`): each memory of the agent's scope or
+  the shared one past its size, and each entry whose end has passed (a done item, a dated
+  line whose last day is over, a grounding range that closed), by its doc and its opening
+  words, ten quoted and the rest counted per doc. It is read when the notice is raised and
+  stored with it, so the line never changes under the cache. It wakes
   like any alarm, and the turn it opens is an ordinary think: it reads the window, writes
-  its docs and closes on `<|SILENCE|>`. The instruction stands in the prefix from the
+  its docs, tidies what the notice names and closes on `<|SILENCE|>`. The instruction stands in the prefix from the
   start and the notice is a stored row, so neither is a tail of its own, and the writes
   stand in the window whether a checkpoint follows or not. Its **cursor** is the `through`
   of the latest notice a closing answered; one whose turn failed or was cut moves
@@ -2580,6 +2585,13 @@ puts a `<doc handle keywords conversations>` line first and searches the convers
 names as if they were named: a nickname that is nobody's saved name reaches its chat
 through a profile. Profiles live in the agent's scope, one per person or group, and the
 principal's own loads always (`80-people`).
+
+**A fact has one place to go** (`70-memory`), the first that fits: the profile of the
+person or group it is about, made the first time there is something to keep; a doc of its
+own for a matter several people share, conditional on their chats; and the memory that
+loads always for what belongs to nobody in particular. So what loads every turn stays the
+org's standing facts, and a person's facts load with their chats. An entry about a dated
+event ends on its day, and the unload notice names what has ended (§5 "Unload").
 
 **The model reads before it writes.** A model's `send` into a conversation the window holds
 nothing of, no line since the checkpoint and no page that showed its newest line, is

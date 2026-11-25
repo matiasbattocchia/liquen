@@ -7706,6 +7706,26 @@ with no dispatcher to take them, and a sign-in of the same account would have po
 all. A removal now gives up the sends still waiting on the connection (`Sweeper.abandon`:
 failed, `404`, "the connection was removed"), and says how many.
 
+### Memories piled into the doc that loads always, and nothing ended (2026-11-25) — FIXED
+
+On new the mind's `memories.md`, which loads every turn, stood at 592% of its 2,200
+characters: about 75 entries, a quarter of them about days already past, a fifth about
+people whose profile existed, and some 25 people with no profile at all. `70-memory` said
+to keep "facts about the organization or a person" in the memory that loads always, while
+`80-people` gave everyone a profile; the one-liner an unload writes fit the first rule and
+cost one append. Nothing ended either: entries rarely carried the day they lapse, "prune
+from time to time" never came up, and the heading's percentage was read when nothing was
+being written. `70-memory` now orders where a fact goes: the person's or group's profile,
+then a doc for a matter several people share, conditional on their chats, then the memory
+that loads always for what belongs to nobody. An entry about a dated event ends on its day
+and is deleted at the next unload (a board's record keeps its words without the `@`), and
+what the calendar or a chat holds with nothing waiting needs no memory, while a standing
+obligation keeps its state. The unload notice names the memories over their size and the
+entries past their end (`tidying` in `unload.ts`: done items, dated lines whose last day is
+over, grounding ranges that closed), read off the agent's and the shared docs when the
+notice is raised and stored as its text, so the agent prunes in the turn it already spends
+on its docs.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

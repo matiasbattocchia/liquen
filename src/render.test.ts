@@ -2543,6 +2543,37 @@ Deno.test("an unload's notice names where its span starts, by the line's handle"
   assert(!texts.some((s) => s.includes('kind="alarm"')));
 });
 
+Deno.test("an unload's notice carries what it asks to tidy", () => {
+  const t = (m: number) => `2026-07-20T10:0${m}:00Z`;
+  const tidy = "memories over their size:\n- /org/agents/a1/memories.md 592% of 2,200 chars";
+  const notice: Event = {
+    id: "0190a0b0-0000-7000-8000-0000000000e2",
+    ts: t(1),
+    type: "alarm",
+    envelope: {
+      service: "local",
+      connection_address: "default",
+      conversation: { address: "mind@a1" },
+    },
+    extra: {
+      unload: {
+        since: "0190a0b0-0000-7000-8000-00000003f9a2",
+        through: "0190a0b0-0000-7000-8000-0000000000e1",
+      },
+    },
+    parts: [{ type: "text", kind: "alarm", text: tidy }],
+  } as Event;
+  const { messages } = render({
+    events: [mindMsg("e01", t(0), "hola", false), notice],
+    docs: [],
+    session: SESSION,
+    zone: "UTC",
+    now: t(2),
+  });
+  const texts = blocksOf(messages).map(txt);
+  assert(texts.some((s) => s.includes(`<system kind="unload" since="03f9a2">${tidy}</system>`)));
+});
+
 Deno.test("a sign-out says the account and since when, and names connect only to an agent offered it", () => {
   const t = (m: number) => `2026-11-14T17:0${m}:00Z`;
   const line = signedOutLine(

@@ -166,7 +166,7 @@ import {
 // principal's rows, which carry agent.id (and via the harness, session_id) but no turn_id
 import { checkpoint, type ModelTransport, nu, type TurnConfig } from "./nu.ts";
 import { compactionSpan, overflowed, runaway, tooLong } from "./compact.ts";
-import { foldsUnread, unloadNotice, unloadSpan } from "./unload.ts";
+import { foldsUnread, tidying, unloadNotice, unloadSpan } from "./unload.ts";
 
 /* ── the poke, the class filter, and the owed-derivation ──────────────── */
 
@@ -298,10 +298,26 @@ function gap(events: Event[], session: Session, wake: Wake, patient: boolean): D
 }
 
 /** The unload's work (unload.ts): no model call, only the notice, whose wake is the turn
- *  that writes the span down. */
-function raiseUnload(events: Event[], session: Session): Draft<Event>[] {
+ *  that writes the span down. It names what to tidy among the memories the agent can write:
+ *  its own scope's and the shared one's. */
+async function raiseUnload(
+  events: Event[],
+  session: Session,
+  config: AgentConfig,
+  ports: XiPorts,
+): Promise<Draft<Event>[]> {
   const span = unloadSpan(events, session);
-  return span ? [unloadNotice(session, span)] : [];
+  if (!span) return [];
+  const today = dayOf(new Date().toISOString(), config.timezone);
+  const cascade = { agent: config.agentId, inView: inViewOf(events) };
+  const memories = (await ports.docs.list(cascade))
+    .filter((d) => d.header.kind === "memory" && d.header.scope !== "system");
+  const kept = await Promise.all(memories.map(async (d) => ({
+    handle: d.header.handle,
+    chars: d.header.chars,
+    body: d.body ?? await ports.docs.read(cascade, d.header) ?? "",
+  })));
+  return [unloadNotice(session, span, today ? tidying(kept, today) : "")];
 }
 
 /* ── attention (§2): three wake classes over the unanswered news ────────── */
@@ -1451,7 +1467,7 @@ export async function xi(
       : signal.aborted
       ? []
       : v === "unload"
-      ? raiseUnload(events, session)
+      ? await raiseUnload(events, session, config, ports)
       : v === "think"
       ? [
         ...await standingDenies(events, session, ports),

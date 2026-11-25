@@ -147,6 +147,7 @@ goes with its words. Each skill the system describes is one file under
 | A line's `id`, as the ground of a memory | ✓ | Conduct |
 | `<checkpoint>`, as short-term memory | ✓ | Conduct |
 | `<system kind="unload" since="…">` | ✓ | Asks for conduct: write the span down, answer nobody |
+| Its text: `memories over their size:`, `entries past their end:`, each a list by handle | ✓ | Asks for conduct: tidy what it names in the same turn |
 
 ## Agenda · `instructions/90-agenda.md`
 

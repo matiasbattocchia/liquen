@@ -47,6 +47,7 @@ import { canned, members, scripted } from "./testing.ts";
 import { shortId, textOf } from "./render.ts";
 import { answer, answerRows, isRefusal, refusalText, type Said } from "./verdict.ts";
 import type {
+  AlarmEvent,
   Draft,
   Event,
   Json,
@@ -3279,6 +3280,57 @@ Deno.test("an exec tool's result carries its run's facts in extra.exec — the m
   } finally {
     await log.close();
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("unload: the notice names the memories over their size and the entries past their end, read when it is raised", async () => {
+  const root = await Deno.makeTempDir();
+  const docs = await docsAt(root);
+  await Deno.mkdir(`${root}/agents/a1`, { recursive: true });
+  await Deno.writeTextFile(
+    `${root}/agents/a1/memories.md`,
+    [
+      "---",
+      "kind: memory",
+      "load: always",
+      "---",
+      "- @1 Jan 2020 Isidris Sunset (1 Jan 2020, 8865fb)",
+      "- @1 Jan 2099 Cierre de la escuela (1 Jan 2020, 5cb51c)",
+      "- @6 Jan 2020 every year Cumple (1 Jan 2020, aa11bb)",
+      "- Lu en Córdoba. (2 Jan 2020–15 Jan 2020, 8be1d0)",
+      `- ${"x".repeat(2_300)}`,
+    ].join("\n"),
+  );
+  try {
+    await scenario(
+      [
+        ok([{ kind: "assistant", text: "respuesta" }], "end_turn"),
+        ok([{ kind: "assistant", text: "<|SILENCE|>" }], "end_turn"), // the unload's turn
+        ok([{ kind: "assistant", text: "## checkpoint" }], "end_turn"),
+      ],
+      async ({ publish, read }) => {
+        await publish(principalMsg("hola"));
+        await waitFor(async () => (await read("alarm")).length === 1);
+        const [notice] = await read("alarm");
+        const text = (notice as AlarmEvent).parts[0].text;
+        const memories = `${root}/agents/a1/memories.md`;
+        assert(text.startsWith("memories over their size:\n"), text);
+        assert(text.includes(`- ${memories} 114% of 2,200 chars\n`), text);
+        assert(text.includes(`- ${memories}: @1 Jan 2020 Isidris Sunset`), text);
+        assert(text.includes(`- ${memories}: Lu en Córdoba.`), text);
+        assert(!text.includes("Cierre de la escuela"), text); // a day still ahead
+        assert(!text.includes("Cumple"), text); // a repeat never ends
+        // the docs are tidied after: the notice stays as it was raised
+        await Deno.writeTextFile(memories, "---\nkind: memory\nload: always\n---\n");
+        await waitFor(async () => (await read("summary")).length === 1);
+        assertEquals(((await read("alarm"))[0] as AlarmEvent).parts[0].text, text);
+      },
+      { compactAt: 1, keepRecent: 0 },
+      [],
+      { docs },
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });
 

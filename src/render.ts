@@ -259,7 +259,7 @@ export const MEMORY_CHARS = 2_200;
 
 /** How full a memory is, as its heading and its index line show it: ` 20% of 2,200 chars`.
  *  Empty for any other doc. */
-function fill(h: DocEntry["header"]): string {
+export function fill(h: Pick<DocEntry["header"], "chars">): string {
   if (h.chars === undefined) return "";
   return ` ${Math.round(h.chars / MEMORY_CHARS * 100)}% of ${
     MEMORY_CHARS.toLocaleString("en-US")
@@ -2695,11 +2695,11 @@ export function errorTextOf(e: HarnessErrorEvent): string {
  *  asked for. `<system>` because the harness is the one speaking — the note is quoted, not
  *  ventriloquized as the principal. No room to name: an alarm fires in the session that
  *  armed it, which is the session reading it. A sign-out names `connect` only to an agent
- *  the request offers it. */
+ *  the request offers it. An unload carries what it asks to tidy (unload.ts `tidying`). */
 function alarmLine(e: AlarmEvent, zone?: string, offered?: ReadonlySet<string>): string {
   const span = unloadOf(e);
-  if (span) return systemEl("unload", "", [`since="${shortId(span.since)}"`]);
   const text = e.parts[0]?.text ?? "";
+  if (span) return systemEl("unload", text, [`since="${shortId(span.since)}"`]);
   if (signedOutOf(e)) {
     const again = offered?.has("connect") ? "; connect signs it in again" : "";
     return systemEl("signed_out", `${text}${again}`, [`since="${hhmm(e.ts, zone)}"`]);
