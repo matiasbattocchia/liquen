@@ -4289,6 +4289,27 @@ facts that land late** (Teams' kind lookup retried, an `external_id` for convers
 answers at boot any it finds unanswered, so a crash between the answer and the row leaves
 no sent message without its call; worth it once scripts see real use).
 
+Low priority, from reorganizing matias's memory (2026-11-25):
+
+- **The agent's docs under version control.** An org's `data/` is gitignored, so the
+  agent's docs keep no history, and §8's unload deletes entries every time it runs: an
+  entry pruned by mistake is gone without a trace. A commit of the agent's docs after each
+  unload, and after any doc write outside one, makes every prune reversible and every day's
+  learning and forgetting a diff the principal can read. To settle: one repo per agent
+  under `data/agents/<name>/` or one for `data/`; how the anchor's `git` line reads with a
+  repo nested in the org's; and the database tier, where the `docs` table needs a history
+  table of its own instead.
+- **Checking the docs.** Header problems already show where the doc is shown (§8). The rest
+  of what silently fails in a doc could show the same way:
+  - a cited id that names no line in the log, an invented citation
+  - a link to a profile that does not exist
+  - a dated line the agenda cannot read, which never reaches `today` nor fires its
+    reminder
+  - a `conversations` address the log has never seen
+
+  Checking an entry's facts against the lines it cites is the scribe's dreaming pass,
+  above.
+
 - **The decision model's other questions.** Wake or wait is answered (§2, the traffic
   light); act or stay silent, which tier drafts, and which contact a name means are the
   same shape, one pass at a fraction of a think, and the principal's approvals are labels
