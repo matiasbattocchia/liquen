@@ -266,17 +266,24 @@ export function fill(h: Pick<DocEntry["header"], "chars">): string {
   } chars`;
 }
 
+/** What a doc's header failed to say, as its heading and its index line show it: one
+ *  `header: …` apiece. */
+function flaws(h: DocEntry["header"]): string[] {
+  return (h.problems ?? []).map((p) => `header: ${p}`);
+}
+
 /** An inlined always-doc: a provenance header, then its body. The handle is the header's
  *  own — the same string the index prints and the read takes; a memory's adds how full it
- *  is. */
+ *  is, and any doc's what its header failed to say. */
 function section(d: DocEntry): string {
-  return `[${d.header.handle}]${fill(d.header)}\n${d.body ?? ""}`;
+  const tail = [fill(d.header).trim(), ...flaws(d.header)].filter(Boolean).join(" · ");
+  return `[${d.header.handle}]${tail ? ` ${tail}` : ""}\n${d.body ?? ""}`;
 }
 
 /** The pull-index: one pointer line per doc not inlined — its handle in the brackets an
- *  inlined doc wears, then how full a memory is, its description and its keywords, each
- *  when it has one. The opening line says what the handle opens with, which is the
- *  substrate's. */
+ *  inlined doc wears, then how full a memory is, its description, its keywords and what
+ *  its header failed to say, each when it has one. The opening line says what the handle
+ *  opens with, which is the substrate's. */
 function renderIndex(pointers: DocEntry[], on: Env["docs"] = "filesystem"): string {
   const lines = pointers.map((d) => {
     const { description, keywords } = d.header;
@@ -284,6 +291,7 @@ function renderIndex(pointers: DocEntry[], on: Env["docs"] = "filesystem"): stri
       fill(d.header).trim(),
       description,
       keywords?.length && `keywords: ${keywords.join(", ")}`,
+      ...flaws(d.header),
     ].filter(Boolean).join(" · ");
     return `- [${d.header.handle}]${tail ? ` ${tail}` : ""}`;
   });

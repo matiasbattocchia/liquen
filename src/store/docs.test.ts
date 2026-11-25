@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { columnsOf, type DocEntry, openFileDocs } from "./docs.ts";
+import { columnsOf, type DocEntry, frontmatterOf, openFileDocs, readHeader } from "./docs.ts";
 
 /** Write `<root>/<rel>.md` with `content` (parent dirs created). */
 async function put(root: string, rel: string, content: string) {
@@ -95,16 +95,19 @@ Deno.test("load: always ⇒ body is inlined; otherwise header-only pointer", asy
   });
 });
 
-Deno.test("the description is the frontmatter's, parsed as YAML (quotes and colons handled)", async () => {
+Deno.test("the description is the header's, quoted or bare, colons and all", async () => {
   await withRoot(async (root) => {
     await put(
       root,
       "shared/skills/x",
       '---\nkind: skill\ndescription: "ratio a:b, quoted"\n---\nbody',
     );
-    const [d] = await openFileDocs(root).list({ agent: "a1" });
-    assertEquals(d.header.description, "ratio a:b, quoted");
-    assertEquals(d.header.load, "lazy");
+    await put(root, "shared/skills/y", "---\nkind: skill\ndescription: ratio: a to b\n---\nbody");
+    const [x, y] = await openFileDocs(root).list({ agent: "a1" });
+    assertEquals(x.header.description, "ratio a:b, quoted");
+    assertEquals(x.header.load, "lazy");
+    assertEquals(y.header.description, "ratio: a to b");
+    assertEquals(y.header.problems, undefined);
   });
 });
 
@@ -171,20 +174,118 @@ Deno.test("a conditional doc is whole while any of its conversations is in view,
   });
 });
 
-Deno.test("header lists take YAML lists or a comma line, and a number is its digits", () => {
+/** The columns a header block declares, read as a doc's would be. */
+const columns = (block: string) => columnsOf(readHeader(block));
+
+Deno.test("header lists take `- ` items, a bracketed line or a bare comma line", () => {
+  const said: ReturnType<typeof columns> = {
+    kind: "memory",
+    load: "lazy",
+    keywords: ["el Gonza", "Gonzalo"],
+    conversations: [{ service: "whatsapp", address: "5491165" }],
+  };
+  assertEquals(columns("keywords: el Gonza, Gonzalo ,\nconversations: [whatsapp:5491165]"), said);
   assertEquals(
-    columnsOf({ keywords: "el Gonza, Gonzalo ,", conversations: [5491165, "whatsapp:5491165"] }),
-    {
-      kind: "memory",
-      load: "lazy",
-      keywords: ["el Gonza", "Gonzalo"],
-      conversations: [{ service: "whatsapp", address: "5491165" }],
-    },
+    columns("keywords: [el Gonza, 'Gonzalo']\nconversations:\n  - whatsapp:5491165"),
+    said,
   );
+  assertEquals(
+    columns('keywords:\n- "el Gonza"\n- Gonzalo\nconversations: whatsapp:5491165'),
+    said,
+  );
+  // a quoted item keeps its commas
+  assertEquals(columns(`keywords: ["Pérez, Juan", Juancho]`).keywords, ["Pérez, Juan", "Juancho"]);
+  // an apostrophe inside an item is a letter
+  assertEquals(columns("keywords: [O'Brien, Ana]").keywords, ["O'Brien", "Ana"]);
   // split at the first colon: the address keeps its own
-  assertEquals(columnsOf({ conversations: "email:a:b@x.io" }).conversations, [
+  assertEquals(columns("conversations: email:a:b@x.io").conversations, [
     { service: "email", address: "a:b@x.io" },
   ]);
+});
+
+Deno.test("a header value is its line as written: colons, hashes and quotes are text", () => {
+  const read = (line: string) => columns(`kind: memory\n${line}\nload: lazy`).description;
+  assertEquals(
+    read("description: Cuotas (club, fútbol): montos vigentes y qué está pago"),
+    "Cuotas (club, fútbol): montos vigentes y qué está pago",
+  );
+  assertEquals(read("description: Cumples de Abedules #loris"), "Cumples de Abedules #loris");
+  assertEquals(read("description: @rubi y su grupo"), "@rubi y su grupo");
+  assertEquals(read('description: Francisco "Fran" Tarantuviez'), 'Francisco "Fran" Tarantuviez');
+  // one pair of quotes around the whole value is quoting
+  assertEquals(read('description: "a: b \\"c\\""'), 'a: b "c"');
+  assertEquals(read("description: 'it''s here'"), "it's here");
+  assertEquals(columns("kind: \"skill\"\nload: 'always'").kind, "skill");
+});
+
+Deno.test("an indented line continues the field above it; comments and blank lines say nothing", () => {
+  assertEquals(
+    columns(
+      "# who reads this\nkind: skill\n\ndescription: Write a script that sends; one\n" +
+        "  loop instead of one turn per item. Includes the two lines\n  that connect it.\n",
+    ),
+    {
+      kind: "skill",
+      load: "lazy",
+      description:
+        "Write a script that sends; one loop instead of one turn per item. Includes the two lines that connect it.",
+    },
+  );
+  // a list item's wrapped line joins the item
+  assertEquals(columns("keywords:\n  - Ana\n  - Alberto\n    Gómez").keywords, [
+    "Ana",
+    "Alberto Gómez",
+  ]);
+});
+
+Deno.test("a header line it cannot read is a problem named by its line, and the rest stands", () => {
+  const text =
+    "---\nkind: memory\ndescription: pagos\nesto no es un campo\nload: always\n---\nbody";
+  const header = frontmatterOf(text)!;
+  assertEquals(header.problems, ['line 4 is not "key: value"']);
+  assertEquals(columnsOf(header), {
+    kind: "memory",
+    load: "always",
+    description: "pagos",
+    problems: ['line 4 is not "key: value"'],
+  });
+  // a line on the margin that opens with `- ` under a field with a value is not its item
+  assertEquals(columns("description: x\n- y").problems, ['line 3 is not "key: value"']);
+  assertEquals(columns("load: lazy\nload: always").problems, [
+    '"load" is set twice; line 3 counts',
+  ]);
+  assertEquals(columns("load: lazy\nload: always").load, "always");
+});
+
+Deno.test("a value the columns do not know is a problem that says what the doc does meanwhile", () => {
+  assertEquals(columns("kind: memroy").problems, [
+    'kind "memroy" is not instruction, skill, memory or tool; counts as a memory',
+  ]);
+  assertEquals(columns("kind: memroy").kind, "memory");
+  assertEquals(columns("load: alwyas").problems, [
+    'load "alwyas" is not always, lazy or conditional; loads lazily',
+  ]);
+  assertEquals(columns("load: conditional").problems, [
+    'load "conditional" names no conversations; loads lazily',
+  ]);
+  assertEquals(columns("load: conditional\nconversations: [5491165, whatsapp:5491165]"), {
+    kind: "memory",
+    load: "conditional",
+    conversations: [{ service: "whatsapp", address: "5491165" }],
+    problems: ['conversation "5491165" is not service:address; left out'],
+  });
+  // an empty value is an absent one
+  assertEquals(columns("kind:\nload:\ndescription:"), { kind: "memory", load: "lazy" });
+});
+
+Deno.test("a header problem rides the doc's listing", async () => {
+  await withRoot(async (root) => {
+    await put(root, "agents/a1/notes", "---\nkind: memory\nload: alwyas\n---\nnote");
+    const [listed] = await openFileDocs(root).list({ agent: "a1" });
+    assertEquals(listed.header.problems, [
+      'load "alwyas" is not always, lazy or conditional; loads lazily',
+    ]);
+  });
 });
 
 Deno.test("non-.md files are ignored; a missing scope lists empty; missing read ⇒ null", async () => {

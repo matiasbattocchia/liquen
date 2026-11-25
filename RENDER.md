@@ -127,6 +127,7 @@ goes with its words. Each skill the system describes is one file under
 | `NN% of 2,200 chars` | ✓ | |
 | `# On-demand docs` index | ✗ | Its opener line |
 | `· keywords: …` on an index line | ✗ | |
+| `header: …` on a heading or an index line | ✗ | What the doc's header failed to say, and what the doc does meanwhile |
 | Three scopes | ✓ | |
 | Header `kind` `description` `load` | ✓ | A format the agent writes |
 | Header lists `keywords` `conversations` | ✓ | A format the agent writes |

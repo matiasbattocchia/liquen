@@ -7726,6 +7726,23 @@ over, grounding ranges that closed), read off the agent's and the shared docs wh
 notice is raised and stored as its text, so the agent prunes in the turn it already spends
 on its docs.
 
+### A doc's header is read as written, and what it fails to say shows (2026-11-25) — LANDED
+
+On new the principal corrected the mind for asking whether to check that his son's
+football fee was paid: its `pagos-mensuales.md` said November was paid on the 10th. The
+note's header held `description: Cuotas y pagos mensuales de Matías (club, fútbol, …):
+montos vigentes y qué está pago`; YAML reads the `): ` as a second key and throws, and the
+reader took a header that threw as empty. Since Nov 14 the note had no description and no
+keywords, lazy by default, and its index line was the path and its fill alone. Nothing told
+the mind. A header is now read by its own grammar (`readHeader`): `key: value` lines whose
+value is the rest of the line, indented continuations, `- ` items, one pair of quotes as
+quoting; it never fails whole. What it cannot read, a field set twice, a `kind` or `load`
+it does not know, `conditional` with no conversations (which went lazy in silence too) and
+a conversation that is not `service:address` ride the header as `problems`, which render
+puts on the doc's heading and index line. Every header in the seed, new, vibes, turtle's
+two orgs and sole-bot reads the same columns as before, but for that note, which got its
+description and keywords back.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

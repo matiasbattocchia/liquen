@@ -7,8 +7,8 @@
  *   system → shared → agent
  *
  * **One discovery rule, every scope**: walk the scope directory recursively; a file is a doc
- * iff it is `.md` AND opens with YAML frontmatter — *a doc declares itself*. `kind` comes
- * from the frontmatter (`kind: instruction|skill|memory|tool`, default `memory`); folder
+ * iff it is `.md` AND opens with a `--- … ---` header — *a doc declares itself*. `kind` comes
+ * from the header (`kind: instruction|skill|memory|tool`, default `memory`); folder
  * structure is pure convention, invisible to the code. This is what lets the agent scope BE
  * the agent's workspace (`agents/<name>/`): a cloned repo's READMEs have no frontmatter and
  * are ignored, while the agent's own frontmattered notes anywhere in its home are its docs.
@@ -33,15 +33,20 @@
  * A doc's `name` is its path relative to the scope dir, minus `.md` (so `instructions`, or a
  * foldered `skills/deploy`); its handle is the file's absolute path, the argument `aread`
  * takes wherever the shell stands — an attach puts it in the caller's directory, and a path
- * counted from anywhere else sends the model looking. The columns are the file's YAML
- * frontmatter, projected. Reads are fresh from disk (multi-process, like the log). On the
- * table (`doctable.ts` on SQLite, `pg/docs.ts` on Postgres) this same port is SELECTs over
- * `docs`, the columns projected from the row's text by the same parser — a row with no
- * frontmatter is likewise not listed — and the handle is the row's key, `scope/name`.
+ * counted from anywhere else sends the model looking. The columns are the file's header,
+ * read by `readHeader` and projected by `columnsOf`. Reads are fresh from disk
+ * (multi-process, like the log). On the table (`doctable.ts` on SQLite, `pg/docs.ts` on
+ * Postgres) this same port is SELECTs over `docs`, the columns projected from the row's
+ * text by the same reader — a row with no header is likewise not listed — and the handle
+ * is the row's key, `scope/name`.
+ *
+ * A header is Markdown that reads like YAML, written by people and agents as prose, so its
+ * reader takes each line as written (`readHeader`). What it cannot read, and a column
+ * whose value it does not know, are the header's `problems`: render shows them where the
+ * doc's handle stands, so whoever wrote the header sees what it failed to say.
  */
 
 import { resolve } from "node:path";
-import { parse as parseYaml } from "@std/yaml";
 import type { AgentId } from "../types.ts";
 
 export type DocScope = "system" | "shared" | "agent";
@@ -49,6 +54,7 @@ export type DocKind = "instruction" | "skill" | "memory" | "tool";
 export type DocLoad = "always" | "lazy" | "conditional";
 
 const KINDS: readonly string[] = ["instruction", "skill", "memory", "tool"];
+const LOADS: readonly string[] = ["always", "lazy", "conditional"];
 
 /** Workspace noise never scanned for docs (the agent scope is a working directory). */
 const SKIP_DIRS = new Set([".git", "node_modules", ".out"]);
@@ -73,9 +79,19 @@ export interface DocHeader extends DocRef {
   keywords?: string[];
   /** A memory's size, its body's characters: what its budget figure counts, loaded or not. */
   chars?: number;
+  /** What the header says that could not be read or is not known, each in words that say
+   *  what to fix and what the doc does meanwhile: its heading and its index line show them. */
+  problems?: string[];
   /** The adapter's address for the doc — what render prints and what the agent's own read
    *  takes, one string. Files: the file's absolute path. */
   handle: string;
+}
+
+/** A doc's header as read: each field, the text of its line or the items of its list, and
+ *  the lines that are neither. */
+export interface Header {
+  fields: Record<string, string | string[]>;
+  problems: string[];
 }
 
 /** A conversation as a doc names it: its service and its address there, written
@@ -168,44 +184,100 @@ export function openFileDocs(root: string): Docs {
   };
 }
 
-/** The header columns a doc's frontmatter declares: `kind` (unknown or absent ⇒ `memory`),
- *  `load` (`always`; `conditional` when it names `conversations` to load with; else
- *  `lazy`), a non-empty `description`, its `keywords` and its `conversations`. */
+/** The header columns a doc declares: `kind` (unknown or absent ⇒ `memory`), `load`
+ *  (`always`; `conditional` when it names `conversations` to load with; else `lazy`), a
+ *  non-empty `description`, its `keywords` and its `conversations`; and the header's
+ *  problems, the reader's and each value these columns do not know. */
 export function columnsOf(
-  frontmatter: Record<string, unknown>,
-): Pick<DocHeader, "kind" | "load" | "description" | "keywords" | "conversations"> {
-  const k = frontmatter.kind;
-  const description = frontmatter.description;
-  const conversations = listOf(frontmatter.conversations).flatMap((c) => {
+  header: Header,
+): Pick<DocHeader, "kind" | "load" | "description" | "keywords" | "conversations" | "problems"> {
+  const { fields } = header;
+  const problems = [...header.problems];
+  const kind = textOf(fields.kind);
+  const said = textOf(fields.load);
+  const description = textOf(fields.description);
+  const conversations = listOf(fields.conversations).flatMap((c) => {
     const at = c.indexOf(":");
-    return at > 0 && at < c.length - 1
-      ? [{ service: c.slice(0, at).trim(), address: c.slice(at + 1).trim() }]
-      : [];
+    if (at > 0 && at < c.length - 1) {
+      return [{ service: c.slice(0, at).trim(), address: c.slice(at + 1).trim() }];
+    }
+    problems.push(`conversation "${c}" is not service:address; left out`);
+    return [];
   });
-  const keywords = listOf(frontmatter.keywords);
-  const load = frontmatter.load === "always"
+  const keywords = listOf(fields.keywords);
+  if (kind && !KINDS.includes(kind)) {
+    problems.push(`kind "${kind}" is not instruction, skill, memory or tool; counts as a memory`);
+  }
+  if (said === "conditional" && conversations.length === 0) {
+    problems.push(`load "conditional" names no conversations; loads lazily`);
+  } else if (said && !LOADS.includes(said)) {
+    problems.push(`load "${said}" is not always, lazy or conditional; loads lazily`);
+  }
+  const load = said === "always"
     ? "always"
-    : frontmatter.load === "conditional" && conversations.length > 0
+    : said === "conditional" && conversations.length > 0
     ? "conditional"
     : "lazy";
   return {
-    kind: typeof k === "string" && KINDS.includes(k) ? k as DocKind : "memory",
+    kind: kind && KINDS.includes(kind) ? kind as DocKind : "memory",
     load,
-    ...(typeof description === "string" && description.length > 0 ? { description } : {}),
+    ...(description ? { description } : {}),
     ...(keywords.length > 0 ? { keywords } : {}),
     ...(conversations.length > 0 ? { conversations } : {}),
+    ...(problems.length > 0 ? { problems } : {}),
   };
 }
 
-/** A header list as strings: a YAML list or a comma-separated line, each item trimmed and
- *  the empty ones dropped. YAML reads a bare number as a number, and its digits are the
- *  item either way. */
-function listOf(v: unknown): string[] {
-  const items = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [];
+/** A field's text: its line as written, one pair of quotes around it dropped. A list has
+ *  none. */
+function textOf(v: string | string[] | undefined): string | undefined {
+  return typeof v === "string" ? unquote(v) : undefined;
+}
+
+/** A header list as strings: its `- ` items, a `[a, b]` line or a bare `a, b` line, each
+ *  item trimmed, unquoted, and the empty ones dropped. An item that opens with a quote
+ *  runs to its closing quote, commas and all. */
+function listOf(v: string | string[] | undefined): string[] {
+  const items = Array.isArray(v) ? v : v === undefined ? [] : itemsOf(v);
   return items.flatMap((i) => {
-    const s = typeof i === "number" ? String(i) : typeof i === "string" ? i.trim() : "";
+    const s = unquote(i.trim()).trim();
     return s ? [s] : [];
   });
+}
+
+/** A list line's items, split at its commas: the brackets around it dropped, and a comma
+ *  inside an item that opens with a quote kept. */
+function itemsOf(line: string): string[] {
+  const t = line.trim();
+  const inner = t.startsWith("[") && t.endsWith("]") ? t.slice(1, -1) : t;
+  const items: string[] = [];
+  let item = "";
+  let quote: string | undefined;
+  for (const ch of inner) {
+    if (quote) {
+      if (ch === quote) quote = undefined;
+      item += ch;
+    } else if ((ch === '"' || ch === "'") && item.trim() === "") {
+      quote = ch;
+      item += ch;
+    } else if (ch === ",") {
+      items.push(item);
+      item = "";
+    } else {
+      item += ch;
+    }
+  }
+  items.push(item);
+  return items;
+}
+
+/** A value with one pair of matching quotes around it, as its words: `\"` and `\\` inside
+ *  double quotes, and `''` inside single ones, are the character they stand for. */
+function unquote(s: string): string {
+  if (s.length < 2 || s[0] !== s.at(-1)) return s;
+  if (s[0] === '"') return s.slice(1, -1).replace(/\\(["\\])/g, "$1");
+  if (s[0] === "'") return s.slice(1, -1).replaceAll("''", "'");
+  return s;
 }
 
 /** A listed doc from its header and its body, every adapter's: the body rides along when
@@ -236,11 +308,10 @@ export function inView(
     );
 }
 
-/** A doc's frontmatter, parsed from its whole text: `null` when it opens with no block,
- *  `{}` when the block is malformed. */
-export function frontmatterOf(text: string): Record<string, unknown> | null {
+/** A doc's header, read from its whole text: `null` when it opens with no block. */
+export function frontmatterOf(text: string): Header | null {
   const block = blockOf(text);
-  return block === null ? null : parseBlock(block);
+  return block === null ? null : readHeader(block);
 }
 
 /** The scope directories to walk, in cascade order. */
@@ -285,31 +356,59 @@ async function targetOf(path: string): Promise<{ isFile: boolean; isDirectory: b
   }
 }
 
-/** Parse a doc's YAML frontmatter, reading only up to the closing `---`.
- *  `null` when the file has NO frontmatter block (⇒ not a doc); `{}` when malformed. */
-async function readFrontmatter(path: string): Promise<Record<string, unknown> | null> {
+/** Read a doc's header, reading the file only up to the closing `---`.
+ *  `null` when the file has NO header block (⇒ not a doc). */
+async function readFrontmatter(path: string): Promise<Header | null> {
   const block = await readHead(path);
-  return block === null ? null : parseBlock(block);
+  return block === null ? null : readHeader(block);
 }
 
-/** A frontmatter block's YAML as a record; `{}` when it is not one, or malformed —
- *  malformed frontmatter never breaks context-building. */
-function parseBlock(block: string): Record<string, unknown> {
-  try {
-    const doc = parseYaml(block);
-    return doc && typeof doc === "object" && !Array.isArray(doc)
-      ? doc as Record<string, unknown>
-      : {};
-  } catch {
-    return {};
-  }
+/** A header block's fields. A line at the margin opens a field, `key: value`, and the
+ *  value is the rest of the line as written: a colon, a `#` or a quote inside it is text.
+ *  An indented line continues the field above it, joined with a space; a line opening `- `
+ *  under a field with no value of its own is an item of that field's list. Blank lines and
+ *  lines opening `#` say nothing. Any other line is a problem, named by its line in the
+ *  file, and the header never fails whole: every field it could read stands. */
+export function readHeader(block: string): Header {
+  const fields: Record<string, string | string[]> = {};
+  const problems: string[] = [];
+  let key: string | undefined;
+  block.split("\n").forEach((raw, i) => {
+    const line = raw.trimEnd();
+    const text = line.trimStart();
+    if (text === "" || text.startsWith("#")) return;
+    const n = i + 2; // the file's line: the opening `---` is the first
+    const field = /^([A-Za-z_][\w-]*)\s*:(.*)$/.exec(line);
+    if (field) {
+      key = field[1];
+      if (key in fields) problems.push(`"${key}" is set twice; line ${n} counts`);
+      fields[key] = field[2].trim();
+      return;
+    }
+    const value = key === undefined ? undefined : fields[key];
+    const item = /^-(?:\s+(.*))?$/.exec(text);
+    if (key !== undefined && item && (Array.isArray(value) || value === "")) {
+      fields[key] = [...(Array.isArray(value) ? value : []), item[1] ?? ""];
+      return;
+    }
+    if (key !== undefined && value !== undefined && line !== text) {
+      fields[key] = Array.isArray(value)
+        ? [...value.slice(0, -1), `${value.at(-1)} ${text}`]
+        : value
+        ? `${value} ${text}`
+        : text;
+      return;
+    }
+    problems.push(`line ${n} is not "key: value"`);
+  });
+  return { fields, problems };
 }
 
 /** A text's leading `--- … ---` block (content only), or null when it opens with none. */
 function blockOf(text: string): string | null {
   if (!text.startsWith("---\n") && !text.startsWith("---\r\n")) return null;
   const end = text.indexOf("\n---", 3);
-  return end === -1 ? null : text.slice(4, end);
+  return end === -1 ? null : text.slice(text.indexOf("\n") + 1, end).replaceAll("\r", "");
 }
 
 /** Read a file's leading `--- … ---` block (content only), stopping at the closing delimiter. */
@@ -330,7 +429,7 @@ async function readHead(path: string): Promise<string | null> {
       text += decoder.decode(chunk.subarray(0, n), { stream: true });
       if (text.length >= 4 && !text.startsWith("---\n") && !text.startsWith("---\r\n")) return null;
       const end = text.indexOf("\n---", 3);
-      if (end !== -1) return text.slice(4, end);
+      if (end !== -1) return text.slice(text.indexOf("\n") + 1, end).replaceAll("\r", "");
       if (text.length > 65536) return null; // opened but never closed — give up
     }
     return null;

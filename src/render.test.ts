@@ -1486,6 +1486,44 @@ Deno.test("a memory shows how full it is: on its heading, in its index line, on 
   );
 });
 
+Deno.test("what a header failed to say shows on the doc's heading and on its index line", () => {
+  const flawed = (d: DocEntry, problems: string[]): DocEntry => ({
+    ...d,
+    header: { ...d.header, problems },
+  });
+  const docs = [
+    flawed(
+      {
+        ...doc("agent", "memory", "people", { load: "always" }, "- Ana"),
+        header: { ...doc("agent", "memory", "people", { load: "always" }).header, chars: 5 },
+      },
+      ['line 3 is not "key: value"'],
+    ),
+    flawed(doc("agent", "instruction", "rules", { load: "always" }, "Sé breve."), [
+      'kind "intruction" is not instruction, skill, memory or tool; counts as a memory',
+    ]),
+    flawed(doc("shared", "skill", "deploy", { description: "how to ship" }), [
+      'load "alwyas" is not always, lazy or conditional; loads lazily',
+      'line 5 is not "key: value"',
+    ]),
+  ];
+  const text = systemSections(docs).map((s) => s.text).join("\n\n");
+  assertStringIncludes(
+    text,
+    '[/org/data/agents/a1/people.md] 0% of 2,200 chars · header: line 3 is not "key: value"\n- Ana',
+  );
+  assertStringIncludes(
+    text,
+    '[/org/data/agents/a1/rules.md] header: kind "intruction" is not instruction, skill, memory' +
+      " or tool; counts as a memory\nSé breve.",
+  );
+  assertStringIncludes(
+    text,
+    '- [/org/data/shared/deploy.md] how to ship · header: load "alwyas" is not always, lazy or ' +
+      'conditional; loads lazily · header: line 5 is not "key: value"',
+  );
+});
+
 Deno.test("a prefix names a doc that came and one that went", () => {
   const was = systemSections([agenda("- a")]);
   const is = systemSections([doc("agent", "memory", "people", { load: "always" }, "- Ana")]);

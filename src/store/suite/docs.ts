@@ -119,6 +119,7 @@ export function docsSuite(s: DocsSubstrate): void {
       ["agent", "a1", "weird", doc("quantum", "unknown kind ⇒ memory")],
       ["agent", "a1", "bare", "no frontmatter at all"],
       ["agent", "a1", "quoted", '---\nkind: skill\ndescription: "ratio a:b, quoted"\n---\nbody'],
+      ["agent", "a1", "bare-colon", "---\ndescription: pagos (club): montos\nload: alwyas\n---\nx"],
     ], async ({ docs }) => {
       const by = new Map((await docs.list({ agent: "a1" })).map((d) => [d.header.name, d.header]));
       assertEquals(by.get("anywhere/deep/note")!.kind, "skill");
@@ -130,6 +131,15 @@ export function docsSuite(s: DocsSubstrate): void {
       assertEquals(by.get("weird")!.kind, "memory");
       assertEquals(by.has("bare"), false); // no frontmatter ⇒ not a doc, as a file is not
       assertEquals(by.get("quoted")!.description, "ratio a:b, quoted");
+      // a header's line is its text, and what the columns do not know rides as a problem
+      assertEquals(by.get("bare-colon")!.description, "pagos (club): montos");
+      assertEquals(by.get("bare-colon")!.load, "lazy");
+      assertEquals(by.get("bare-colon")!.problems, [
+        'load "alwyas" is not always, lazy or conditional; loads lazily',
+      ]);
+      assertEquals(by.get("weird")!.problems, [
+        'kind "quantum" is not instruction, skill, memory or tool; counts as a memory',
+      ]);
     });
   });
 

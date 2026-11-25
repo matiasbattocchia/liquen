@@ -2603,8 +2603,8 @@ shows the room without its last word, so it reads nothing. A script's send is ex
 carries its author's words. A room with no line at all has nothing to read.
 
 **One discovery rule, every scope** (2026-08-04): walk the scope directory recursively; a
-file is a doc **iff it is `.md` and opens with YAML frontmatter** — *a doc declares
-itself*. `kind` rides in the frontmatter (default `memory`); folder structure is pure
+file is a doc **iff it is `.md` and opens with a `--- … ---` header** — *a doc declares
+itself*. `kind` rides in the header (default `memory`); folder structure is pure
 convention, plural by custom (`skills/`, `memories/`, `tools/`), invisible to the code. On
 the §9 layout the scope dirs are `system/` · `shared/` · `agents/<name>/` — so **the agent
 scope IS the agent's workspace**: a cloned repo's READMEs have no frontmatter and stay
@@ -2612,6 +2612,19 @@ files; the agent's frontmattered notes anywhere in its home are its docs. A doc'
 its scope-relative path (`instructions`, `skills/workflows`).
 A cascade is a PLACE, so whatever stands in it counts: a symlinked file is a doc and a
 symlinked folder is walked, and only a dangling link is nothing.
+
+**A header is Markdown that reads like YAML**, and the reader (`readHeader`) takes it as
+its writers do: people and agents writing a line of prose. A line at the margin is
+`key: value`, the value the rest of the line as written, so a colon, a `#` or a quote in
+a description is text; an indented line continues the field above; `- ` lines under an
+empty field are its list, beside `[a, b]` and a bare `a, b`; one pair of quotes around a
+value is quoting. The header never fails whole. A line that is no field, a field set
+twice, a `kind` or `load` the columns do not know, `conditional` with no conversations,
+and a conversation that is not `service:address` are the header's **problems**, each
+saying what to fix and what the doc does meanwhile; the doc's heading and its index line
+show them (`· header: load "alwyas" is not always, lazy or conditional; loads lazily`), so
+the writer sees what the header failed to say on every turn until it is fixed, however the
+file was written.
 
 Registers (same substrate, different rules):
 
@@ -2661,9 +2674,9 @@ docs {
 
 A row is a doc as a file is: its `text` is the whole document, and `kind`
 (`instruction · skill · memory · tool`, `tool` = MCP config), `description` and `load`
-(`always · lazy · conditional`), `keywords` and `conversations` are its frontmatter,
-projected by the reader — one parser, both substrates, and a row with no frontmatter is
-likewise not in the index. The handle is `scope/name`; the owner is whoever is asking, so
+(`always · lazy · conditional`), `keywords` and `conversations` are its header,
+projected by the reader with its problems — one reader, both substrates, and a row with no
+header is likewise not in the index. The handle is `scope/name`; the owner is whoever is asking, so
 an agent names its own doc the way it names a system one. Where the docs live is the
 catalog's `deployment.docs`: `filesystem`, files under the data root, or `database`, the
 table of the database
