@@ -121,6 +121,7 @@ import {
 } from "./session.ts";
 import {
   actedOn,
+  answeredThrough,
   AUTHOR_KEYS,
   authorKeyOf,
   BEFORE_HOURS,
@@ -924,11 +925,9 @@ function newsOf(events: Event[], session: Session): News[] {
     (e.type === "message" && !ownVoice(e, session) && !silenced(e) && !roomOnly(e));
   const last = lastClosing(events, session);
   if (last === -1) return events.filter(news);
-  // resolve the horizon to a POSITION — the window may be re-sorted for display (§5)
-  const horizon = events[last].extra?.consumed;
-  const h = typeof horizon === "string" ? events.findIndex((e) => e.id === horizon) : -1;
-  const from = h !== -1 ? h : last; // no/stale horizon → fall back to the closing's position
-  return events.slice(from + 1).filter(news);
+  // the horizon as a POSITION — the window may be re-sorted for display (§5); past an
+  // unload's closing it is the notice, which is answered, and what reached the turn is not
+  return events.slice(answeredThrough(events, session, last) + 1).filter(news);
 }
 
 /** Who asked for the work `v` opens (`Cause`, §9 presence). A think is asked for when its

@@ -566,20 +566,58 @@ export function closingBoundary(events: Event[], session: Session): number {
   );
 }
 
+/** The position past which the closing at `at` answered nothing (§5): its `extra.consumed`
+ *  horizon, the freshest row its step read, else the closing itself. An unload's turn reads
+ *  the window to write a span down and answers nobody (unload.ts), so a line that reached
+ *  it while it ran was read and never answered: for the closing that ends one, the horizon
+ *  is the notice that opened it. */
+export function answeredThrough(events: Event[], session: Session, at: number): number {
+  const consumed = events[at].extra?.consumed;
+  const h = typeof consumed === "string" ? events.findIndex((e) => e.id === consumed) : -1;
+  const horizon = h === -1 ? at : h;
+  const notice = unloadEndedAt(events, session, at);
+  return notice !== -1 && notice < horizon ? notice : horizon;
+}
+
+/** The unload notice whose turn the closing at `at` ends, or -1. The turn is the steps
+ *  since the session's last end before it, a closing or a failure, and what opened it is
+ *  what its first step read. */
+function unloadEndedAt(events: Event[], session: Session, at: number): number {
+  const toolTurns = new Set(
+    events.filter((e): e is ToolUseEvent => e.type === "tool_use").map((u) => u.payload.turn_id),
+  );
+  let first = events[at];
+  for (let i = at - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.envelope.conversation.address !== session.conversation) continue;
+    const step = e.payload?.turn_id;
+    if (e.type === "error") break;
+    if (
+      e.type === "message" && isSelf(e, session) &&
+      !(typeof step === "string" && toolTurns.has(step))
+    ) {
+      break;
+    }
+    if (typeof step === "string" && typeof e.extra?.consumed === "string") first = e;
+  }
+  const read = first.extra?.consumed;
+  const opener = typeof read === "string" ? events.findIndex((e) => e.id === read) : -1;
+  return opener !== -1 && unloadOf(events[opener]) ? opener : -1;
+}
+
 /** Non-self messages positioned at or before `boundary` that the boundary step never
- *  CONSUMED (per its `extra.consumed` horizon) — the race window: a message landing between
- *  the window-read and the closing's publish sits before the closing in the log yet is
- *  unprocessed INPUT, not history. Compaction reads it: never checkpoint these away. */
+ *  answered (`answeredThrough`) — the race window: a message landing between the
+ *  window-read and the closing's publish sits before the closing in the log yet is
+ *  unprocessed INPUT, not history, and so is one that reached an unload's turn. Compaction
+ *  reads it: never checkpoint these away. */
 export function deferredInput(
   events: Event[],
-  session: SessionRef,
+  session: Session,
   boundary: number,
 ): Set<Event> {
   const out = new Set<Event>();
   if (boundary < 0) return out;
-  const horizon = events[boundary].extra?.consumed;
-  const h = typeof horizon === "string" ? events.findIndex((e) => e.id === horizon) : boundary;
-  const from = h === -1 ? boundary : h;
+  const from = answeredThrough(events, session, boundary);
   for (let i = from + 1; i < boundary; i++) {
     const e = events[i];
     if (e.type === "message" && !isSelf(e, session)) out.add(e);

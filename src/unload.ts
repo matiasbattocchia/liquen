@@ -14,8 +14,9 @@
  * failed or was cut moves nothing, and the span stays owed. Past the cursor, a span is
  * owed when the checkpoint about to run would fold away a line someone else wrote (the
  * agent's own words answer lines; they teach nothing a line did not). An unload runs
- * between turns, as a checkpoint does, and only while no news waits: its turn's closing
- * consumes what the window held, so a line it reads would otherwise go unanswered.
+ * between turns, as a checkpoint does, and only while no news waits, since its turn answers
+ * nobody: a line that reaches it while it runs is still owed once it closes (`render.ts`
+ * `answeredThrough`), and the next look answers it.
  */
 
 import type { AlarmEvent, Draft, Event, EventId, Session } from "./types.ts";

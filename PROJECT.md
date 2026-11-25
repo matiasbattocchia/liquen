@@ -7679,6 +7679,18 @@ Each wire's rooms port says whether its lines mention (a Teams chat does, the sa
 account's mail does not) and which handles it links itself (Slack's `@here`, Telegram's
 `@username`).
 
+### A line that reached an unload's turn went unanswered (2026-11-25) — FIXED
+
+On new the mind asked Juani (OpenBSP) for his mail to invite him to the 11:30 call. A
+checkpoint was due, so the gap raised an unload, and his mail landed while that turn was
+writing memories. Its next step read the line, the turn closed on `<|SILENCE|>` as an
+unload does, and the closing's horizon, past the mail, counted it answered: no light, no
+wake, and the invitation never went. A closing that ends an unload's turn now answers
+through its notice alone (`answeredThrough` in `render.ts`, read by `newsOf` and by
+compaction's deferred input), so a line that reached the turn is news when it closes. The
+turn is told by what its first step read, the steps since the session's last closing or
+failure, so the turn after an unload that died is not taken for it.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

@@ -570,6 +570,44 @@ Deno.test("decide: an unload waits for quiet news, and a checkpoint that would f
   assertEquals(decide(after, SESSION, asleep, now), "compact");
 });
 
+Deno.test("decide: a line that reaches an unload's turn while it runs is still owed when the turn closes", () => {
+  // the agent asked for a mail and an unload is writing memories when the answer lands: a
+  // later step reads past it, and the turn closes silent, having answered nobody
+  const asked = [peerMsg(), selfMsg()];
+  const turn = (opener: Event): Event[] => {
+    const write = ev("tool_use", {
+      ...SELF,
+      payload: { turn_id: "U1" },
+      extra: { consumed: opener.id },
+      parts: [{ type: "data", kind: "tool_use", data: { name: "bash", input: {} } }],
+    } as Partial<Event>);
+    const wrote = ev("tool_result", { ...SELF, payload: { turn_id: "U1", ref_id: write.id } });
+    const answer = peerMsg();
+    const edit = ev("tool_use", {
+      ...SELF,
+      payload: { turn_id: "U2" },
+      extra: { consumed: wrote.id },
+      parts: [{ type: "data", kind: "tool_use", data: { name: "bash", input: {} } }],
+    } as Partial<Event>);
+    const edited = ev("tool_result", { ...SELF, payload: { turn_id: "U2", ref_id: edit.id } });
+    const closing = ev("message", {
+      ...SELF,
+      payload: { turn_id: "U3" },
+      extra: { silence: true, consumed: edited.id },
+      parts: [{ type: "text", kind: "text", text: "<|SILENCE|>" }],
+    } as Partial<Event>);
+    return [opener, write, wrote, answer, edit, edited, closing];
+  };
+  const unload = [...asked, ...turn(notice(asked[0].id, asked[1].id))];
+  assertEquals(decide(unload, SESSION, WAKE), "think");
+  assertEquals(decideOver(unload), "think"); // and no checkpoint folds it first
+  // a turn the line itself opened read it to answer it: the same shape owes nothing
+  assertEquals(decide([...asked, ...turn(peerMsg())], SESSION, WAKE), "ignore");
+  // an unload whose turn died is no turn's opener: the turn after it answered what it read
+  const died = [...asked, notice(asked[0].id, asked[1].id), err("overloaded")];
+  assertEquals(decide([...died, ...turn(peerMsg())], SESSION, WAKE), "ignore");
+});
+
 Deno.test("decide: a turn that died over budget compacts in the gap it left — the refused one whatever the budget", () => {
   // idle-after-error still holds: the failed think is not retried, the window is tidied
   assertEquals(

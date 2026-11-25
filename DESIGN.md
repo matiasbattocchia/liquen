@@ -2224,9 +2224,11 @@ layer**:
   nothing. An unload is owed when the checkpoint about to run would fold away a line
   someone else wrote past the cursor. The gap asks for it before the checkpoint, so the
   next look, past the unload's turn, compacts. An
-  unload's closing consumes everything its window held, so it runs only while no news
-  waits, and a checkpoint that would fold an unread line waits with it, until the digest
-  answers what was waiting. A window the API refused takes neither wait: it compacts.
+  unload's turn answers nobody, so it runs only while no news waits, and a checkpoint that
+  would fold an unread line waits with it, until the digest answers what was waiting. A
+  line that reaches the unload's turn while it runs is read and not answered: its closing
+  answers through the notice alone (`answeredThrough`), so the line is still news, and no
+  checkpoint folds it. A window the API refused takes neither wait: it compacts.
 - **One call, attempted one way.** nu owns the retry ladder and the stream, and hands
   compaction a *step-caller* rather than the transport: the checkpoint is retried over
   weather exactly as a think is (`RETRY_DELAYS_MS`, stopping the moment a cancel lands),
