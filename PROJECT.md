@@ -7764,6 +7764,21 @@ Leonardo Lazarte. The log already held every name each address wore. Now:
 On new, the first pass found thirteen profiles with names they never wrote: Papá is "claudio
 dario Battocchia", Luciano goes by "Huevo", Carlos Rossi is saved as "Nuevo Carlos Rossi".
 
+### A meeting the principal moved in a chat stayed at its old time (2026-11-26) — FIXED
+
+On new the mind had put the principal's 8:15 meeting with Claudia on the calendar and
+invited three people. At 8:15 Claudia asked to start at 8:30, and the judge lit it yellow:
+"it can wait for the next look (9:08), though the meeting starts now", a decision only the
+principal can make being capped at yellow. The principal answered by voice note with 11:00
+and Claudia agreed; the judge lit that red, the room being the principal's and the matter
+settled. The red covered the room up to its last line, the 8:30 request included, and every
+other room was red too, so the 9:08 digest never came due: the mind slept until the
+principal complained at 9:34, and moved the event in seconds. `decision.md` now lights
+green a change to the calendar that the principal and someone settle, a meeting set, moved
+or called off, wherever the floor is, since the calendar learns only what the assistant
+writes; a line about an event that starts before the next look is green, and the yellow cap
+holds only for a decision that can wait.
+
 ### What is open (2026-10-20)
 
 Every open note from 2026-09-26 on was read against the code at 0.1.63, with the older ones

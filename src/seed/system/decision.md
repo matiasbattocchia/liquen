@@ -30,11 +30,17 @@ these holds.
   way, "are you coming?".
 - Someone taking up what the principal's side asked for, who needs a detail to go on: where
   to send it, what time, which one, how to pay.
-- Something on today's calendar that is about to start or has changed.
+- Something on today's calendar starts before the next look and a line is about it, or the
+  event itself has changed: running late, asking to move it, "are we still on?".
+- The principal and someone settle what the calendar should show: a meeting set, moved to
+  another time or place, or called off. The calendar does not hear what was agreed in a
+  chat, and the assistant keeps it, so this is green even when the principal settled it
+  themselves in a room they hold.
 - An emergency, a deadline before the next look, a payment or booking that fails if left.
 
-A quarrel, a reproach, a feeling, a personal matter, or a decision only the principal can
-make is never green: the assistant cannot answer it for them, so it is yellow at most.
+A quarrel, a reproach, a feeling or a personal matter is never green, nor is a decision only
+the principal can make that can wait for the next look: the assistant cannot answer these
+for them, so they are yellow at most.
 
 **yellow**: worth reading at the next look, even when that is the morning.
 - A question or request for the principal that can wait for the next look.

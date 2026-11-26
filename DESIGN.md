@@ -182,8 +182,10 @@ day's calendar, and whose the room is, said outright: the principal holds the fl
 and past that nobody holds it. It reads them under `system/decision.md`, whose rubric
 lights a room the principal holds red unless a line there is green, a conversation the
 assistant is carrying green when a line there wants an answer, a bot's menu included, by
-night too, and red there only when the exchange is over, and a quarrel or a
-personal matter only the principal can answer yellow at most. It reads the
+night too, and red there only when the exchange is over, a change to the calendar the
+principal settles in a chat green wherever the floor is, since the calendar keeps only
+what the assistant writes, and a quarrel or a personal matter only the principal can
+answer yellow at most. It reads the
 principal's standing word too, the same for every room: the agent's own instructions, its
 memories and the profiles that load always, the principal's among them. Those close the
 system prompt on a cache mark, so a burst of rooms reads them back. The profiles about the
